@@ -1,5 +1,11 @@
 # Agent Evals
 
-个人玩具项目，探索 agent 评估和 sandbox。
+A personal toy project exploring agent evaluation and sandboxing.
 
-[设计原则](docs/design.md) · [MIT License](LICENSE)
+## Goal
+
+The long-term goal is a general-purpose tool for evaluating AI agent systems—their instructions, skills, workflows, configurations, and harnesses.
+
+Make agent changes measurable through repeatable tasks, controlled environments, and evidence-based comparisons of behavior, outcomes, cost, and latency.
+
+[Design principles](docs/design.md) · [MIT License](LICENSE)

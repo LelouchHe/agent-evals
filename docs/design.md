@@ -1,78 +1,78 @@
-# 设计原则
+# Design Principles
 
-个人玩具项目，从真实需求开始，逐步积累 agent 评估能力。本页记录已确认的方向，不预先定义完整 schema、插件系统或类层次。
+A personal toy project that grows from real evaluation needs. This document records agreed directions, not a complete schema, plugin system, or class hierarchy.
 
-## 从哪里开始
+## Starting Point
 
-- 从零开始实现，不整体迁入原有 skill-eval，也不使用旧 agent-eval 原型作为底座。
-- 参考已有评估中的经验，但不以兼容旧 schema、aggregator 或 viewer 为目标，不随初始化引入上游 skill 包。
-- 第一阶段先把 skill 评估场景做好，再用 workflow、config、harness 等真实场景检验是否需要扩展。
-- 抽象来自实际重复，不为了未来可能的需求提前造框架。
+- Start from scratch. Do not import the existing skill-eval package wholesale or use the old agent-eval prototype as the foundation.
+- Learn from earlier evaluation work without targeting compatibility with its schemas, aggregator, or viewer. Do not introduce upstream skill packages as part of initialization.
+- Make skill evaluation work first. Use real workflow, configuration, and harness evaluation scenarios to discover what needs to grow next.
+- Extract abstractions from actual repetition rather than anticipated requirements.
 
-## Case 是人能审阅的实验说明
+## A Case Is a Human-Readable Experiment Specification
 
-人工编写的 case 使用 YAML，集中描述：
+Use YAML for human-authored cases. Keep the following decisions together:
 
-- **任务**：用户输入、目标、约束。
-- **环境**：初始文件、搭建步骤、所需工具或服务，以及必要的故障情境。
-- **判分**：选择哪些 grader，检查条件、成功与失败标准、rubric。
-- **执行要求**：case 必需的能力和特有约束，例如超时。
+- **Task**: user input, goals, and constraints.
+- **Environment**: initial files, setup steps, required tools or services, and any failure conditions to exercise.
+- **Grading**: selected graders, checks, success and failure criteria, and rubrics.
+- **Execution requirements**: capabilities and case-specific constraints, such as a timeout.
 
-候选配置单独声明，让同一个 case 可以比较不同 skill、workflow、配置或 harness，而不用复制任务定义。
+Declare candidates separately so the same case can compare different skills, workflows, configurations, or harnesses without duplicating the task definition.
 
-环境准备优先使用明确的 fixture、命令或脚本，不让另一个 LLM 临场猜测如何搭建。YAML 描述实验，不发展成复杂的编程语言。
+Prefer explicit fixtures, commands, or scripts for environment setup rather than asking another LLM to improvise it. YAML describes the experiment; it should not become a complicated programming language.
 
-## Case 相关内容就近存放
+## Keep Case Assets Together
 
-例如：
+For example:
 
 ```text
 cases/
 ├── delegation-basic/
 │   ├── case.yml
 │   ├── fixtures/
-│   ├── setup.sh       # 按需
-│   └── check.py       # 按需
+│   ├── setup.sh       # optional
+│   └── check.py       # optional
 └── shared/
     └── fixtures/
 ```
 
-- 路径相对 case 定义文件解析，不依赖启动命令时的 cwd。
-- Fixture、专用 setup、检查代码与 case 放在一起；确认真实复用后再提取 shared。
-- Shared 必须显式引用，不通过隐藏的全局约定注入。
-- 共享的是定义和初始数据，不是可变运行状态。每次 run 使用独立副本，或只读使用共享输入。
-- 运行产物独立保存，不回写 case 或污染 fixture。
-- 不预建空目录，也不要求每个 case 都包含脚本。
+- Resolve paths relative to the case definition, not the invocation's current working directory.
+- Keep fixtures, dedicated setup, and case-specific checks beside the case. Extract shared assets only after real reuse appears.
+- Reference shared assets explicitly rather than injecting them through hidden global conventions.
+- Share definitions and initial data, not mutable runtime state. Each run gets an independent copy or read-only access to shared inputs.
+- Store run artifacts separately. Do not rewrite case definitions or contaminate fixtures.
+- Do not create empty directories in advance or require scripts for every case.
 
-## 执行与判分分开
+## Separate Execution from Grading
 
-主线是：
+The main flow is:
 
 ```text
 Case + Candidate + Environment
-    → 执行
-    → Evidence
-    → 一个或多个 Grader
-    → 结果与比较
+    -> Execution
+    -> Evidence
+    -> One or more Graders
+    -> Results and comparisons
 ```
 
-- **运行层**落实环境准备、agent 驱动、sandbox、超时、中断、证据采集与清理。
-- **证据**包括实际事件、输出、产物和测量数据，不只依赖被测 agent 的自述。
-- **Grader**读取证据，判断结果或行为。执行后可以重新判分，不必默认重新运行 agent。
-- Case 写判分要求；通用 grader 放代码里，专用检查可以引用 case 旁边的脚本，不把所有程序塞进 YAML。
+- The **execution layer** handles environment setup, agent interaction, sandboxing, timeouts, cancellation, evidence capture, and cleanup.
+- **Evidence** includes observed events, outputs, artifacts, and measurements, not just the evaluated agent's own account of what happened.
+- **Graders** consume evidence to assess outcomes or behavior. Regrading should not require rerunning the agent by default.
+- Cases declare grading requirements. Reusable graders live in code; dedicated checks may reference scripts beside the case. Do not embed every program in YAML.
 
-Skill、workflow、config、harness 不需要各自一条硬编码主流程。不同关注点主要通过 grader 表达；交互方式和证据采集的差异则由运行层处理。
+Skills, workflows, configurations, and harnesses do not each need a hard-coded execution pipeline. Different evaluation concerns mainly belong in graders; differences in interaction and evidence capture belong in the execution layer.
 
-## Sandbox 与运行环境
+## Sandboxing and Runtime Environments
 
-- 主攻 macOS，优先验证 MXC 作为跨平台受限执行封装，不自行维护多套平台启动逻辑。
-- MXC 不是整个评估系统：工作状态、候选配置、证据与评估流程仍由本项目管理。
-- 隔离边界、工作环境与状态、执行生命周期是不同职责，不因 SDK 接口统一就假设后端能力相同。
-- 明确必需能力并验证允许与拒绝两侧的行为；必需约束无法落实时，不自行退回裸执行。
-- 迁移或构造公开样例时，不带入个人配置、凭证或私有运行数据。
+- Focus on macOS first. Prioritize validating MXC as a cross-platform restricted-execution wrapper rather than maintaining separate platform launch implementations.
+- MXC is not the whole evaluation system. Workspace state, candidates, evidence, and evaluation flow remain this project's responsibility.
+- Isolation boundaries, working environments and state, and execution lifecycles are separate responsibilities. A shared SDK interface does not imply identical backend capabilities.
+- Declare required capabilities and verify both permitted and denied behavior. Do not fall back to unsandboxed execution when a required restriction cannot be enforced.
+- Keep personal configuration, credentials, and private run data out of public examples.
 
-## 数据集划分
+## Dataset Splits
 
-Case 可以按 train / dev / test 组织和筛选，但不为此先建训练平台。这里的 train 也可以指用于改进 prompt、workflow 或配置的案例，不一定涉及模型权重。
+Cases may be organized and selected as train, dev, or test data without first building a training platform. Here, train may mean examples used to improve prompts, workflows, or configurations rather than model weights.
 
-开发过程可反复观察 train / dev；test 用于保留验证，避免优化过程直接看到答案。划分时注意同源任务及近似变体的泄漏。Grader 自身的校准样本与候选方案测试集分开管理。
+Train and dev data may be inspected repeatedly during development. Keep test data for held-out validation and avoid exposing its answers to the optimization process. Watch for leakage across related tasks and near-duplicate variants. Manage grader calibration examples separately from candidate test sets.
