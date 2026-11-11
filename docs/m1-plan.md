@@ -1,6 +1,6 @@
 # M1: Filesystem Evaluation
 
-Status: implemented; the repair batch from the first read-only review is complete. Focused closure review and real-model smoke testing remain pending.
+Status: implemented. The bounded independent review, repairs, and focused closure verification are complete. Real-model smoke testing remains pending.
 
 ## Goal
 
@@ -44,7 +44,7 @@ The overall model is described in [architecture](architecture.md); case authorin
 - [x] Pass type checking, unit tests, real Seatbelt allow/deny tests, and controlled subprocess timeout/cleanup tests at normal suite concurrency.
 - [ ] Confirm runner/judge models, thinking settings, and a small smoke-test budget before any real-model execution. Routine tests do not call models.
 - [ ] After approval, verify one end-to-end case with Pi and both checkers. This proves integration, not that a skill improves behavior.
-- [ ] Complete one bounded independent read-only review Task, fix confirmed findings, and document the commands actually verified.
+- [x] Complete one bounded independent read-only review Task, fix confirmed findings, and document the commands actually verified.
 
 ## Delivered
 
@@ -70,7 +70,16 @@ npm run typecheck
 npm test
 ```
 
-The same gates passed from a clean clone after `npm ci` on Node 24.22.2 and macOS 15.5.
+The same gates passed from a clean clone after `npm ci` on Node 24.22.2 and macOS 15.5. Final implementation `fc2b131` passed both gates again during parent verification: 83 tests passed, with no failures or skips.
+
+### Review Closure
+
+- Independent read-only review covered `98d0b83..f44d29b`. Its six concrete findings were repaired in `c28bcd3`: replaced-root containment, ordinary background-process cleanup, FIFO evidence, final provider-error classification, regex execution bounds, and `unchanged: false` rejection.
+- Focused independent closure confirmed those original reproducers were addressed and identified a repair-introduced host-signaling capability through the writable process-group registry. `fc2b131` removed that host consumer and moved cleanup into the same Seatbelt instance as Pi.
+- Parent verification inspected the final authority boundary and reran `npm run typecheck` and `npm test`. A separate real Pi RPC/Seatbelt probe confirmed that a forged registry entry neither killed nor stopped an unrelated synthetic process: its heartbeat continued after teardown, while the owned shell was terminated. No model, network, or credentials were used.
+- This closes the reviewed concrete mechanisms, not universal containment of arbitrary child processes. The limitations below and real-model smoke acceptance remain separate.
+
+### Test Coverage
 
 The suite includes:
 
@@ -88,7 +97,6 @@ The suite includes:
 - Select runner and judge models, thinking settings, and a small smoke-test budget. The checked-in example deliberately uses placeholder models.
 - Run one approved end-to-end case with real Pi and both checkers. This proves integration, not skill improvement.
 - Confirm real model network behavior under the Seatbelt profile. The profile allows outbound network, but no live model traffic has been exercised; additional allowances may be required and should be derived from failure evidence.
-- Complete the focused closure review of the repair batch and triage its findings.
 
 ### Known Limitations
 
@@ -99,6 +107,7 @@ The suite includes:
 - The runner timeout bounds agent execution; each check receives the same budget, so total wall time can exceed it.
 - Fixture symlinks are copied as symlinks. Checks reject escaping links, but they are not a supported way to share data.
 - Background-process cleanup covers ordinary jobs in the Pi shell's tracked process groups. A child that deliberately creates a new session or process group (`setsid` or equivalent) is outside this contract.
+- If the in-sandbox supervisor is itself killed with `SIGKILL` before cleanup, tracked-group cleanup is not guaranteed. The host does not fall back to signaling groups from untrusted registry data.
 - The shell-group registry is not an authorization boundary. It is agent-writable input to the in-sandbox supervisor, whose signals are restricted by Seatbelt to the same sandbox; special/broadcast targets are rejected before signaling.
 - Regex evaluation is bounded by worker termination, not by proving a pattern's complexity. The accepted semantics remain JavaScript regex search.
 

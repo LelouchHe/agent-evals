@@ -23,7 +23,7 @@ Create an isolated run directory
 
 ## Current Status
 
-[M1](docs/m1-plan.md) is implemented: one local filesystem evaluation with a Pi RPC runner, direct macOS Seatbelt enforcement, and `file` and `judge` checkers. The checked-in example uses placeholder model names and does not call a model until an operator selects one. A real-model smoke test and independent review are still pending; routine tests never call a model.
+[M1](docs/m1-plan.md) is implemented: one local filesystem evaluation with a Pi RPC runner, direct macOS Seatbelt enforcement, and `file` and `judge` checkers. The checked-in example uses placeholder model names and does not call a model until an operator selects one. The bounded independent review and focused repair verification are complete; a real-model smoke test is still pending. Routine tests never call a model.
 
 Requirements: macOS with `sandbox-exec`, Node.js 24 or newer, and the `pi` CLI on `PATH` for runner and judge invocations.
 
