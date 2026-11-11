@@ -1,6 +1,6 @@
 # Case Configuration
 
-Status: agreed M1 authoring revision; not implemented. The current CLI still requires separate `--case` and `--candidate` files; see [the implemented records](cases.md#m1-supported-records).
+Status: agreed M1 authoring revision; not implemented. The current CLI still requires separate `--case` and `--candidate` files; see [the implemented records](cases.md#m1-supported-records). The pending revision and its acceptance are tracked separately in [the M1 plan](m1-plan.md#single-file-authoring-revision).
 
 This scope supersedes the earlier `extends` and recursive-override proposal. Support one file and disjoint top-level composition only. Do not implement inheritance, nested merging, deletion operators, or automatic migration between implementation types.
 
@@ -74,6 +74,13 @@ The resolver does not understand these labels or skill parameters. The Pi runner
 
 The common part is not executed as an extra unnamed case. Execute a selected case through the ordinary single-case execution path. A helper may iterate over cases without introducing a separate lifecycle or requiring that their results be compared.
 
+## Case Selection and Identity
+
+- When `cases` is present, require a non-empty mapping whose names are non-empty strings and whose entries are mappings.
+- Require an explicit selection from that mapping, even if it contains only one entry. A missing or unknown selection is an error; do not implicitly execute all cases.
+- A document without `cases` is one ordinary case and does not require a synthetic name.
+- Identify a run's case by its source configuration path and optional selected case name. Names are metadata, not filesystem paths; do not use them to construct result directories.
+
 ## Disjoint Top-Level Composition
 
 For each selected case:
@@ -95,6 +102,8 @@ Mappings and arrays are whole values supplied by one side. There is no array app
 
 Use one file. Do not support `extends`, imported case collections, nested `cases` inside a case entry, template interpolation, a variable-expression language, or implicit environment expansion in this revision.
 
+Reject YAML anchors, aliases, and merge-key syntax in the new format rather than reintroducing configuration reuse through the parser. Literal text containing characters such as `&`, `*`, or `<<` is not itself such syntax; rejection must be based on parsed YAML structure, not a text search. The current M1 parser permits ordinary aliases and does not enable merge-key expansion by default, so these new restrictions require explicit implementation rather than an assumption about library defaults.
+
 All authoring assets are relative to that file's directory. Check targets remain relative to the evaluated workspace. One declaring directory per runner/checker record is sufficient; do not add a per-field source-directory API for a multi-file problem that this scope does not have.
 
 Preserve source locations while parsing and selecting fields: the source file/line for final values and, where applicable, the named case that supplied them. All nested values in a top-level field come from its one declaration; there is no winning-value or override history to reconstruct.
@@ -111,10 +120,12 @@ Do not reuse the existing M1 `validate` methods unchanged as if they were pure i
 
 ## Run Records and Implementation Boundary
 
-Retain the actual resolved, non-sensitive configuration used by each run, together with its source/case identity and sufficient version or content identification for the evaluated resources. Unchanged paths do not imply unchanged content, and editing YAML later must not change the meaning of an old result.
+Retain the actual resolved, non-sensitive configuration passed to execution, together with the source configuration path and optional case name. This is part of the revision: changing YAML later must not erase which declared parameters an old run used.
 
-Do not retain secret values. For environment-provided credentials, retain only their declared variable names. Configuration/version evidence is not a commitment to full filesystem snapshots, a generic tracer, or offline regrading of all checks.
+Resource-directory or fixture hashing, content/version identifiers, and resource snapshots are outside this revision's acceptance. An unchanged path does not prove unchanged content: the retained configuration alone cannot recover the earlier skill or fixture contents and does not guarantee complete reproduction. Do not imply those stronger guarantees in results or documentation.
 
-The existing M1 code does not yet support this single-file format, a `view` operation, source annotations, or complete resolved-configuration/resource-version retention. Its delivered two-file CLI and examples remain unchanged until migration.
+Do not retain secret values. For environment-provided credentials, retain only their declared variable names. This small configuration record is not a commitment to a generic tracer or offline regrading of all checks.
+
+The existing M1 code does not yet support this single-file format, a `view` operation, source annotations, or resolved-configuration retention. Its delivered two-file CLI and examples remain unchanged until migration.
 
 See [cases and configuration](cases.md) for shared authoring and implementation-selection rules, [architecture](architecture.md) for responsibilities, and [M1](m1-plan.md) for the delivered behavior.

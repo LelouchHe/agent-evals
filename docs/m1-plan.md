@@ -1,6 +1,6 @@
 # M1: Filesystem Evaluation
 
-Status: complete for the documented M1 scope. Implementation, bounded independent review, repairs, focused closure verification, and the approved real-model smoke have passed.
+Status: the original filesystem runtime and approved real-model smoke are complete. The agreed single-file authoring revision below is not implemented; its acceptance is separate from the completed runtime proof.
 
 ## Goal
 
@@ -40,11 +40,29 @@ The overall model is described in [architecture](architecture.md); case authorin
 
 ## Acceptance
 
+These completed checks cover the original runtime. The authoring revision has its own pending acceptance below.
+
 - [x] Write focused tests for each new behavior and prove they can fail with temporary mutations where practical.
 - [x] Pass type checking, unit tests, real Seatbelt allow/deny tests, and controlled subprocess timeout/cleanup tests at normal suite concurrency.
 - [x] Confirm runner/judge models, thinking settings, and a small smoke-test budget before any real-model execution. Routine tests do not call models.
 - [x] After approval, verify one end-to-end case with Pi and both checkers. This proves integration, not that a skill improves behavior.
 - [x] Complete one bounded independent read-only review Task, fix confirmed findings, and document the commands actually verified.
+
+## Single-File Authoring Revision
+
+Status: agreed; not implemented. [Case Configuration](configuration.md) is the authoritative behavior specification. Keep the existing delivered CLI and smoke evidence below as historical/current-runtime records until migration.
+
+Pending acceptance:
+
+- [ ] Load one ordinary case or common fields plus named `cases` from a single file. Reject repeated top-level fields without recursive merging or overrides.
+- [ ] Reject YAML anchors, aliases, and merge-key syntax in the new format; do not mistake literal text for YAML reuse syntax. Do not add `extends` or imported collections.
+- [ ] Require explicit selection for named cases, reject an empty `cases` mapping, and use non-empty string names only as metadata. Identify an ordinary case by its source path without a synthetic name.
+- [ ] Provide source-annotated `view` through the same resolver used for execution, without starting a harness, invoking a model, or requiring credentials. Runtime validation remains separate.
+- [ ] Retain the resolved non-sensitive configuration, source path, and optional case name per run. Resource/fixture hashing and resource snapshots are not required and complete reproduction is not claimed.
+- [ ] Migrate the CLI and checked-in example to the single-file contract and update the commands actually supported; do not keep Candidate as a required authoring entity.
+- [ ] Add focused parser/resolver/selection/view/result tests and pass `npm run check`. Keep routine gates model-free and perform the bounded implementation review required by the project workflow.
+
+This revision does not authorize another live-model smoke or renew the earlier invocation budget; any such rerun requires explicit approval.
 
 ## Delivered
 
