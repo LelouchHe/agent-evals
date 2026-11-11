@@ -62,6 +62,10 @@ runner:
 - One initial user message and one case/candidate pair per invocation.
 - Checks run after the agent stops and before the workspace is removed; full workspace snapshots are not retained.
 - The judge reads one selected file; there is no general evidence-reference language.
+- Checks read regular files only. A FIFO, device, socket, or directory is a check error rather than a blocking open or a passing observation.
+- The runner records each workspace directory's device and inode and rejects a path replaced during the run instead of following the replacement.
+- Pi bash commands run through a generated shell wrapper that terminates ordinary background jobs before the command returns. A process that deliberately leaves the shell's process group or session is outside this cleanup contract.
+- Catastrophic regular expressions are evaluated in a worker that is terminated on the check deadline or an internal 5-second ceiling.
 - The Seatbelt profile permits outbound network access for model calls. Real model traffic under the sandbox has not yet been smoke-tested.
 
 ## Layout

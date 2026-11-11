@@ -26,6 +26,7 @@ test("real Pi loads the example skill inside the isolated sandbox without a mode
 
   const process = await createPiProcess({
     executable,
+    runRootDir: root,
     thinking: "medium",
     dirs: { workspaceDir, homeDir, configDir, scratchDir },
     skills: [join(configDir, "skills", "write-file")],
@@ -64,6 +65,7 @@ test("real Pi rejects malformed skill frontmatter", { skip: process.platform !==
 
   const process = await createPiProcess({
     executable,
+    runRootDir: root,
     thinking: "medium",
     dirs: { workspaceDir, homeDir, configDir, scratchDir },
     skills: [join(configDir, "skills", "broken")],

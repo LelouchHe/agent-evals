@@ -171,6 +171,31 @@ test("pi runner reports an unexpected exit as an execution error", async (t) => 
   );
 });
 
+test("pi runner classifies a final native provider error as execution failure", async (t) => {
+  const dirs = await setup(t);
+  const fake = await createFakePi(t, "provider-error");
+  const runner = piRunner.create();
+  t.after(() => runner.stop());
+
+  await assert.rejects(
+    () => runner.run({ model: "test/model", executable: fake.executable }, context(dirs, 5_000)),
+    (error: unknown) => error instanceof PiSessionError && /401|provider request failed/.test(error.message),
+  );
+});
+
+test("pi runner ignores a recoverable earlier provider error when the final run succeeds", async (t) => {
+  const dirs = await setup(t);
+  const fake = await createFakePi(t, "retry-then-success");
+  const runner = piRunner.create();
+  t.after(() => runner.stop());
+
+  const outcome = await runner.run(
+    { model: "test/model", executable: fake.executable },
+    context(dirs, 5_000),
+  );
+  assert.equal(outcome.finalText, "Recovered after a retry.");
+});
+
 test("pi runner reports a startup failure without an unhandled rejection", async (t) => {
   const dirs = await setup(t);
   const fake = await createFakePi(t, "startup-crash");

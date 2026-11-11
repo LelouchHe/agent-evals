@@ -2,6 +2,7 @@ import { readdir } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { ConfigError, errorMessage, type ImplementationParams } from "./config.ts";
+import type { RunRoot } from "./workspace.ts";
 
 export interface RunnerContext {
   readonly workspaceDir: string;
@@ -36,9 +37,10 @@ export interface RunnerDefinition {
 }
 
 export interface CheckerContext {
-  readonly workspaceDir: string;
+  /** Prepared workspace root; its identity is verified for every operation. */
+  readonly workspace: RunRoot;
   /** Initial workspace snapshot, outside the evaluated agent's writable area. */
-  readonly baselineDir: string;
+  readonly baseline: RunRoot;
   readonly runRootDir: string;
   /** Directory of the case configuration that declared the checker. */
   readonly authoringDir: string;

@@ -43,7 +43,7 @@ class JudgeChecker implements Checker {
 
     let fileContent: string | null;
     try {
-      fileContent = (await readRunFile(context.workspaceDir, parsed.file)).toString("utf8");
+      fileContent = (await readRunFile(context.workspace, parsed.file)).toString("utf8");
     } catch (error) {
       if (isMissing(error)) {
         fileContent = null;
@@ -59,6 +59,7 @@ class JudgeChecker implements Checker {
       const result = await invokePi(
         {
           executable: parsed.executable,
+          runRootDir: judgeDir,
           model: parsed.model,
           thinking: parsed.thinking,
           dirs: {

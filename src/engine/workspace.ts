@@ -14,11 +14,72 @@ export class WorkspacePathError extends Error {
 }
 
 /**
- * Resolve a run-relative path without allowing it to leave the workspace.
- * Symlinks are resolved (including ancestor symlinks) and rejected when they
- * escape. A broken symlink is rejected rather than treated as a missing file.
+ * An opened run directory. The recorded device/inode pair lets later operations
+ * reject replacement of the directory path instead of trusting a new target.
  */
-export async function resolveWorkspacePath(rootDir: string, requestedPath: string): Promise<string> {
+export interface RunRoot {
+  readonly path: string;
+  readonly dev: bigint;
+  readonly ino: bigint;
+}
+
+export async function openRunRoot(path: string): Promise<RunRoot> {
+  const canonical = await realpath(path);
+  let handle;
+  try {
+    handle = await open(canonical, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);
+  } catch (error) {
+    throw new WorkspacePathError(`could not open run directory ${path}: ${errorMessage(error)}`);
+  }
+  try {
+    const stats = await handle.stat({ bigint: true });
+    if (!stats.isDirectory()) {
+      throw new WorkspacePathError(`run path is not a directory: ${path}`);
+    }
+    return { path: canonical, dev: stats.dev, ino: stats.ino };
+  } finally {
+    await handle.close();
+  }
+}
+
+/**
+ * Verify the directory path still refers to the prepared directory. A path
+ * replaced by a symlink or a different directory is rejected.
+ */
+export async function assertRunRoot(root: RunRoot): Promise<void> {
+  let entry;
+  try {
+    entry = await lstat(root.path, { bigint: true });
+  } catch (error) {
+    throw new WorkspacePathError(`run directory is no longer accessible: ${root.path}: ${errorMessage(error)}`);
+  }
+  if (entry.isSymbolicLink() || !entry.isDirectory() || entry.dev !== root.dev || entry.ino !== root.ino) {
+    throw new WorkspacePathError(`run directory was replaced after preparation: ${root.path}`);
+  }
+
+  let handle;
+  try {
+    handle = await open(root.path, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);
+  } catch (error) {
+    throw new WorkspacePathError(`run directory can no longer be opened safely: ${root.path}: ${errorMessage(error)}`);
+  }
+  try {
+    const stats = await handle.stat({ bigint: true });
+    if (!stats.isDirectory() || stats.dev !== root.dev || stats.ino !== root.ino) {
+      throw new WorkspacePathError(`run directory was replaced while opening it: ${root.path}`);
+    }
+  } finally {
+    await handle.close();
+  }
+}
+
+/**
+ * Resolve a run-relative path without allowing it to leave the prepared run
+ * root. The root identity is verified first, and symlinks (including ancestor
+ * symlinks) are rejected when they escape. A broken symlink is rejected rather
+ * than treated as a missing file.
+ */
+export async function resolveWorkspacePath(root: RunRoot, requestedPath: string): Promise<string> {
   if (typeof requestedPath !== "string" || requestedPath.length === 0) {
     throw new WorkspacePathError("path must be a non-empty string");
   }
@@ -32,10 +93,10 @@ export async function resolveWorkspacePath(rootDir: string, requestedPath: strin
   if (segments.some((segment) => segment === "..")) {
     throw new WorkspacePathError(`path must not contain "..": ${requestedPath}`);
   }
+  await assertRunRoot(root);
 
-  const root = await realpath(rootDir);
-  const target = resolve(root, requestedPath);
-  if (!isWithin(root, target)) {
+  const target = resolve(root.path, requestedPath);
+  if (!isWithin(root.path, target)) {
     throw new WorkspacePathError(`path escapes the run workspace: ${requestedPath}`);
   }
 
@@ -45,7 +106,7 @@ export async function resolveWorkspacePath(rootDir: string, requestedPath: strin
     try {
       const resolvedProbe = await realpath(probe);
       const resolvedTarget = missing.length === 0 ? resolvedProbe : join(resolvedProbe, ...missing);
-      if (!isWithin(root, resolvedTarget)) {
+      if (!isWithin(root.path, resolvedTarget)) {
         throw new WorkspacePathError(`path resolves outside the run workspace through a symlink: ${requestedPath}`);
       }
       return resolvedTarget;
@@ -64,7 +125,7 @@ export async function resolveWorkspacePath(rootDir: string, requestedPath: strin
       if (entry !== undefined) {
         throw new WorkspacePathError(`path contains a broken symlink: ${requestedPath}`);
       }
-      if (probe === root) {
+      if (probe === root.path) {
         throw new WorkspacePathError(`path escapes the run workspace: ${requestedPath}`);
       }
       missing.unshift(basename(probe));
@@ -73,11 +134,28 @@ export async function resolveWorkspacePath(rootDir: string, requestedPath: strin
   }
 }
 
-export async function readRunFile(rootDir: string, requestedPath: string): Promise<Buffer> {
-  const resolved = await resolveWorkspacePath(rootDir, requestedPath);
+/**
+ * Read a regular run file. Non-regular evidence is rejected without opening it,
+ * so a FIFO or device cannot block the engine or checks.
+ */
+export async function readRunFile(root: RunRoot, requestedPath: string): Promise<Buffer> {
+  const resolved = await resolveWorkspacePath(root, requestedPath);
+  let entry;
+  try {
+    entry = await lstat(resolved);
+  } catch (error) {
+    if (isMissing(error)) {
+      throw error;
+    }
+    throw new WorkspacePathError(`could not inspect ${requestedPath}: ${errorMessage(error)}`);
+  }
+  if (!entry.isFile()) {
+    throw new WorkspacePathError(`not a regular file: ${requestedPath}`);
+  }
+
   let handle;
   try {
-    handle = await open(resolved, constants.O_RDONLY | constants.O_NOFOLLOW);
+    handle = await open(resolved, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
   } catch (error) {
     if (isMissing(error)) {
       throw error;
@@ -100,12 +178,15 @@ export async function readRunFile(rootDir: string, requestedPath: string): Promi
   }
 }
 
-/** True when the run-relative file exists and is a regular file. */
-export async function runFileExists(rootDir: string, requestedPath: string): Promise<boolean> {
-  const resolved = await resolveWorkspacePath(rootDir, requestedPath);
+/** True only when the run-relative path is a regular file. */
+export async function runFileExists(root: RunRoot, requestedPath: string): Promise<boolean> {
+  const resolved = await resolveWorkspacePath(root, requestedPath);
   try {
     const stats = await lstat(resolved);
-    return stats.isFile();
+    if (stats.isFile()) {
+      return true;
+    }
+    throw new WorkspacePathError(`not a regular file: ${requestedPath}`);
   } catch (error) {
     if (isMissing(error)) {
       return false;

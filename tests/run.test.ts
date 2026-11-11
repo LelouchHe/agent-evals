@@ -147,6 +147,91 @@ test("integration: unchanged uses the engine baseline, which is outside agent ac
   assert.deepEqual(await readdir(tempParent), []);
 });
 
+test("integration: a replaced workspace root is rejected instead of reading outside evidence", async (t) => {
+  const outside = await makeTempDir(t, "ae-outside-root-");
+  await writeFile(join(outside, "hello.txt"), "outside-sentinel\n");
+  const runner = await createFakePi(t, "replace-root", outside);
+  const judge = await createFakePi(t, "judge-valid");
+  const { record, tempParent } = await runScenario(t, {
+    runnerExecutable: runner.executable,
+    judgeExecutable: judge.executable,
+    checks: [
+      { $type: "file", path: "hello.txt", exists: true },
+      { $type: "file", path: "hello.txt", matches: "outside-sentinel" },
+      { $type: "file", path: "hello.txt", unchanged: true },
+      {
+        $type: "judge",
+        model: "test/judge-model",
+        file: "hello.txt",
+        rubric: ["hello.txt exists"],
+        executable: judge.executable,
+      },
+    ],
+  });
+
+  assert.equal(record.status, "error", `checks: ${JSON.stringify(record.checks)}`);
+  assert.equal(record.checks.length, 4);
+  assert.ok(record.checks.every((check) => check.status === "error"), JSON.stringify(record.checks));
+  assert.match(record.checks.map((check) => check.reason).join(" "), /root|replac|outside/i);
+  assert.equal(await readFile(join(outside, "hello.txt"), "utf8"), "outside-sentinel\n");
+  assert.deepEqual(await readdir(tempParent), []);
+});
+
+test("integration: a final provider error is an execution error even with satisfied files", async (t) => {
+  const runner = await createFakePi(t, "provider-error");
+  const { record, tempParent } = await runScenario(t, {
+    runnerExecutable: runner.executable,
+    fixtureFiles: { "hello.txt": "Hello, world!\n" },
+    checks: [{ $type: "file", path: "hello.txt", exists: true }],
+  });
+
+  assert.equal(record.status, "error");
+  assert.equal(record.runner.status, "error");
+  assert.deepEqual(record.checks, []);
+  assert.match(record.error ?? "", /401|provider request failed/);
+  assert.deepEqual(await readdir(tempParent), []);
+});
+
+test("integration: a final provider error without satisfied files is also an execution error", async (t) => {
+  const runner = await createFakePi(t, "provider-error");
+  const { record, tempParent } = await runScenario(t, {
+    runnerExecutable: runner.executable,
+    checks: [{ $type: "file", path: "hello.txt", exists: true }],
+  });
+
+  assert.equal(record.status, "error");
+  assert.equal(record.runner.status, "error");
+  assert.deepEqual(record.checks, []);
+  assert.match(record.error ?? "", /401|provider request failed/);
+  assert.deepEqual(await readdir(tempParent), []);
+});
+
+test("integration: unchanged false is rejected before run resources", async (t) => {
+  const runner = await createFakePi(t, "success");
+  const scenario = await writeScenario(t, {
+    runnerExecutable: runner.executable,
+    checks: [{ $type: "file", path: "hello.txt", unchanged: false }],
+  });
+  const resultsDir = await makeTempDir(t, "ae-results-unchanged-");
+  const tempParent = await makeTempDir(t, "ae-runs-unchanged-");
+  const loadedCase = await loadCase(scenario.casePath);
+  const candidate = await loadCandidate(scenario.candidatePath);
+
+  await assert.rejects(
+    () =>
+      runEvaluation({
+        case: loadedCase,
+        candidate,
+        registry: testRegistry(),
+        resultsDir,
+        tempParent,
+      }),
+    ConfigError,
+  );
+  assert.deepEqual(await readdir(tempParent), []);
+  assert.deepEqual(await readdir(resultsDir), []);
+});
+
 test("integration: a normal failed file check is reported as fail", async (t) => {
   const runner = await createFakePi(t, "no-write");
   const { record, tempParent } = await runScenario(t, {
@@ -341,6 +426,82 @@ test("integration: CLI reports configuration errors with exit code 2", async (t)
   assert.deepEqual(await readdir(tempParent), []);
 });
 
+test("integration: FIFO evidence fails promptly and the CLI exits", { timeout: 30_000 }, async (t) => {
+  const runner = await createFakePi(t, "fifo");
+  const scenario = await writeScenario(t, {
+    runnerExecutable: runner.executable,
+    checks: [{ $type: "file", path: "hello.txt", matches: "anything" }],
+  });
+  const resultsDir = await makeTempDir(t, "ae-cli-fifo-results-");
+  const tempParent = await makeTempDir(t, "ae-cli-fifo-runs-");
+
+  const result = await runCli(
+    ["--case", scenario.casePath, "--candidate", scenario.candidatePath, "--results-dir", resultsDir],
+    { cwd: scenario.directory, TMPDIR: tempParent, timeoutMs: 10_000 },
+  );
+  assert.equal(result.timedOut, false, "CLI remained blocked on a FIFO");
+  assert.equal(result.code, 2, result.stderr);
+  const record = await readOnlyResult(resultsDir);
+  assert.equal(record.status, "error");
+  assert.equal(record.checks[0]?.status, "error");
+  assert.match(record.checks[0]?.reason ?? "", /regular file|FIFO|not a regular/);
+  assert.deepEqual(await readdir(tempParent), []);
+});
+
+test("integration: FIFO judge evidence fails promptly and the CLI exits", { timeout: 30_000 }, async (t) => {
+  const runner = await createFakePi(t, "fifo");
+  const judge = await createFakePi(t, "judge-valid");
+  const scenario = await writeScenario(t, {
+    runnerExecutable: runner.executable,
+    checks: [
+      {
+        $type: "judge",
+        model: "test/judge-model",
+        file: "hello.txt",
+        rubric: ["hello.txt exists"],
+        executable: judge.executable,
+      },
+    ],
+  });
+  const resultsDir = await makeTempDir(t, "ae-cli-fifo-judge-results-");
+  const tempParent = await makeTempDir(t, "ae-cli-fifo-judge-runs-");
+
+  const result = await runCli(
+    ["--case", scenario.casePath, "--candidate", scenario.candidatePath, "--results-dir", resultsDir],
+    { cwd: scenario.directory, TMPDIR: tempParent, timeoutMs: 10_000 },
+  );
+  assert.equal(result.timedOut, false, "CLI remained blocked on a FIFO");
+  assert.equal(result.code, 2, result.stderr);
+  const record = await readOnlyResult(resultsDir);
+  assert.equal(record.status, "error");
+  assert.equal(record.checks[0]?.status, "error");
+  assert.match(record.checks[0]?.reason ?? "", /regular file|FIFO|not a regular/);
+  assert.deepEqual(await readdir(tempParent), []);
+});
+
+test("integration: pathological regex is bounded and the CLI exits", { timeout: 30_000 }, async (t) => {
+  const runner = await createFakePi(t, "pathological");
+  const scenario = await writeScenario(t, {
+    runnerExecutable: runner.executable,
+    timeoutMs: 500,
+    checks: [{ $type: "file", path: "hello.txt", matches: "(a+)+$" }],
+  });
+  const resultsDir = await makeTempDir(t, "ae-cli-regex-results-");
+  const tempParent = await makeTempDir(t, "ae-cli-regex-runs-");
+
+  const result = await runCli(
+    ["--case", scenario.casePath, "--candidate", scenario.candidatePath, "--results-dir", resultsDir],
+    { cwd: scenario.directory, TMPDIR: tempParent, timeoutMs: 10_000 },
+  );
+  assert.equal(result.timedOut, false, "CLI remained blocked in regex evaluation");
+  assert.equal(result.code, 2, result.stderr);
+  const record = await readOnlyResult(resultsDir);
+  assert.equal(record.status, "error");
+  assert.equal(record.checks[0]?.status, "error");
+  assert.match(record.checks[0]?.reason ?? "", /regex|timed out|timeout/i);
+  assert.deepEqual(await readdir(tempParent), []);
+});
+
 test("integration: CLI cancellation interrupts and cleans up", async (t) => {
   const runner = await createFakePi(t, "hang");
   const scenario = await writeScenario(t, {
@@ -374,10 +535,17 @@ test("integration: CLI cancellation interrupts and cleans up", async (t) => {
   assert.equal(record.cleanup.status, "removed");
 });
 
+async function readOnlyResult(resultsDir: string): Promise<EvaluationRecord> {
+  const runDirectories = await readdir(resultsDir);
+  assert.equal(runDirectories.length, 1);
+  return JSON.parse(await readFile(join(resultsDir, runDirectories[0] ?? "", "result.json"), "utf8")) as EvaluationRecord;
+}
+
 async function runCli(
   args: string[],
-  options: { cwd: string; TMPDIR: string },
-): Promise<{ code: number | null; stdout: string; stderr: string }> {
+  options: { cwd: string; TMPDIR: string; timeoutMs?: number },
+): Promise<{ code: number | null; stdout: string; stderr: string; timedOut: boolean; durationMs: number }> {
+  const started = performance.now();
   const child = spawn(process.execPath, [join(import.meta.dirname, "..", "src", "cli.ts"), ...args], {
     cwd: options.cwd,
     env: { ...process.env, TMPDIR: options.TMPDIR },
@@ -391,6 +559,17 @@ async function runCli(
   child.stderr.on("data", (chunk: Buffer) => {
     stderr += chunk.toString("utf8");
   });
+  let timedOut = false;
+  const timer =
+    options.timeoutMs === undefined
+      ? undefined
+      : setTimeout(() => {
+          timedOut = true;
+          child.kill("SIGKILL");
+        }, options.timeoutMs);
   const code = await new Promise<number | null>((resolve) => child.on("exit", (value) => resolve(value)));
-  return { code, stdout, stderr };
+  if (timer !== undefined) {
+    clearTimeout(timer);
+  }
+  return { code, stdout, stderr, timedOut, durationMs: performance.now() - started };
 }

@@ -2,8 +2,8 @@
 // @ts-nocheck -- executable test fixture; runtime behavior is covered by tests.
 // Deterministic fake Pi RPC process for tests. Behavior is selected by a
 // "scenario" file beside this script; no model or network is involved.
-import { spawn } from "node:child_process";
-import { readFileSync, writeFileSync } from "node:fs";
+import { execFileSync, spawn } from "node:child_process";
+import { readFileSync, readdirSync, rmdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
 const here = dirname(process.argv[1] ?? process.cwd());
@@ -12,6 +12,7 @@ const [scenario = "success", extra = ""] = readFileSync(join(here, "scenario"), 
 let assistantText = null;
 let prompted = false;
 let buffer = "";
+const messages = [];
 
 if (scenario === "startup-crash") {
   process.exit(1);
@@ -25,8 +26,14 @@ function respond(id, command, data) {
   send({ id, type: "response", command, success: true, ...(data === undefined ? {} : { data }) });
 }
 
-function settle(text) {
+function settle(text, stopReason = "stop", errorMessage) {
   assistantText = text;
+  messages.push({
+    role: "assistant",
+    content: [{ type: "text", text: String(text) }],
+    stopReason,
+    ...(errorMessage === undefined ? {} : { errorMessage }),
+  });
   send({ type: "agent_end", messages: [], willRetry: false });
   send({ type: "agent_settled", aborted: false });
 }
@@ -51,6 +58,43 @@ function handlePrompt(command) {
     case "no-write":
       settle("Nothing to do.");
       break;
+    case "provider-error":
+      settle("provider request failed", "error", "synthetic 401 unauthorized");
+      break;
+    case "provider-error-pre-satisfied":
+      settle("provider request failed", "error", "synthetic 401 unauthorized");
+      break;
+    case "retry-then-success":
+      messages.push({
+        role: "assistant",
+        content: [{ type: "text", text: "transient failure" }],
+        stopReason: "error",
+        errorMessage: "synthetic 529 overloaded",
+      });
+      settle("Recovered after a retry.");
+      break;
+    case "pathological":
+      writeFileSync(join(process.cwd(), "hello.txt"), "a".repeat(40) + "!");
+      settle("Wrote a pathological string.");
+      break;
+    case "fifo":
+      execFileSync("/usr/bin/mkfifo", [join(process.cwd(), "hello.txt")]);
+      settle("Created a FIFO.");
+      break;
+    case "replace-root": {
+      const cwd = process.cwd();
+      try {
+        for (const entry of readdirSync(cwd)) {
+          rmSync(join(cwd, entry), { recursive: true, force: true });
+        }
+        rmdirSync(cwd);
+        symlinkSync(extra, cwd, "dir");
+        settle("Replaced the workspace root.");
+      } catch (error) {
+        settle(`replace-root failed: ${String(error?.code ?? error)}`);
+      }
+      break;
+    }
     case "success-no-newline":
       writeFileSync(join(process.cwd(), "hello.txt"), "Hello, world!");
       settle("Created hello.txt.");
@@ -173,6 +217,10 @@ function handleLine(line) {
   }
   if (command.type === "get_last_assistant_text") {
     respond(command.id, "get_last_assistant_text", { text: assistantText });
+    return;
+  }
+  if (command.type === "get_messages") {
+    respond(command.id, "get_messages", { messages });
     return;
   }
   if (command.type === "get_state") {

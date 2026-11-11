@@ -20,6 +20,7 @@ import {
   type RunnerOutcome,
 } from "./registry.ts";
 import { createResultDirectory, newRunId, writeResult, type EvaluationRecord, type RunStatus, type RunnerStatus } from "./results.ts";
+import { openRunRoot, type RunRoot } from "./workspace.ts";
 
 const DEFAULT_TIMEOUT_MS = 300_000;
 const CHECK_ABORT_GRACE_MS = 12_000;
@@ -98,6 +99,8 @@ export async function runEvaluation(request: RunRequest): Promise<EvaluationReco
       await cp(source, workspaceDir, { recursive: true, preserveTimestamps: true });
     }
     await cp(workspaceDir, baselineDir, { recursive: true, preserveTimestamps: true });
+    const workspaceRoot = await openRunRoot(workspaceDir);
+    const baselineRoot = await openRunRoot(baselineDir);
 
     runner = registered.runner.instance;
     const started = performance.now();
@@ -159,7 +162,7 @@ export async function runEvaluation(request: RunRequest): Promise<EvaluationReco
     };
     if (outcome !== undefined) {
       diagnostics.push(...outcome.diagnostics);
-      checks = await runChecks(registered.checks, request, root, workspaceDir, baselineDir, timeoutMs, abort.signal, () => {
+      checks = await runChecks(registered.checks, request, root, workspaceRoot, baselineRoot, timeoutMs, abort.signal, () => {
         cancelled = true;
       });
     }
@@ -271,8 +274,8 @@ async function runChecks(
   prepared: readonly PreparedCheck[],
   request: RunRequest,
   root: string,
-  workspaceDir: string,
-  baselineDir: string,
+  workspaceRoot: RunRoot,
+  baselineRoot: RunRoot,
   timeoutMs: number,
   signal: AbortSignal,
   markCancelled: () => void,
@@ -298,8 +301,8 @@ async function runChecks(
       controller.abort();
     }, timeoutMs);
     const promise = check.checker.check(check.params, {
-      workspaceDir,
-      baselineDir,
+      workspace: workspaceRoot,
+      baseline: baselineRoot,
       runRootDir: root,
       authoringDir: request.case.dir,
       input: request.case.config.input,

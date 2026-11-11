@@ -117,18 +117,22 @@ All fields except `$type` belong to the selected implementation. Unknown fields,
 | `executable` | Pi executable name or path. Defaults to `pi`. |
 | `envPassthrough` | Environment variable names copied from the invoking process. Use this for narrowly scoped credentials; other variables are not inherited. |
 
-The runner starts Pi in an empty or fixture-backed workspace, sends the case input as one user message, and lets Pi complete autonomous tool turns. The engine stops Pi and its owned process group before checks run.
+The runner starts Pi in an empty or fixture-backed workspace, sends the case input as one user message, and lets Pi complete autonomous tool turns. Pi bash invocations run through a generated custom shell that keeps ordinary background jobs in a tracked process group and terminates them before the command returns. The engine also stops Pi and every tracked shell group before checks run, including after timeout, cancellation, and an early Pi exit. A child that deliberately starts a new session or process group is outside this cleanup contract.
+
+A final assistant message with `stopReason: error` is an execution failure, not a failed check. This applies even when the workspace already satisfies every file check; intermediate retry errors are ignored when the final run succeeds.
 
 ### `file` Checker Parameters
 
 | Parameter | Meaning |
 |---|---|
 | `path` | Required run-relative path. Absolute paths and `..` are rejected. |
-| `exists` | Boolean. When present, produces one result. |
-| `matches` | A regular expression or list of them. Search semantics apply; a match need not cover the whole file. Each pattern produces one result. |
-| `unchanged` | Boolean. Compares the file with the initial baseline outside the agent's writable area. |
+| `exists` | Boolean. When present, produces one result. Only a regular file counts as existing; a non-regular path is a check error. |
+| `matches` | A regular expression or list of them. Search semantics apply; a match need not cover the whole file. Each pattern produces one result. Evaluation runs in a worker so a catastrophic expression is terminated by the check deadline or an internal 5-second ceiling. |
+| `unchanged` | May only be `true` when present; `false` is a configuration error, and no inverse `changed` feature exists. Compares the file with the initial baseline outside the agent's writable area. |
 
-At least one of `exists`, `matches`, or `unchanged` is required. Checks are capped at 1 MiB per file. A missing file is a failed check; an unsafe path, escaping symlink, unreadable file, or oversized file is a check error. Paths that traverse a symlink outside the workspace, including through an ancestor, are rejected rather than inspected.
+At least one of `exists`, `matches`, or `unchanged` is required. Checks are capped at 1 MiB per file. A missing file is a failed check; an unsafe path, escaping symlink, non-regular file, unreadable file, or oversized file is a check error. Paths that traverse a symlink outside the workspace, including through an ancestor, are rejected rather than inspected.
+
+The engine records the workspace directory's device and inode when it prepares the run. Every file, existence, unchanged, and judge-evidence operation verifies that identity first. If the agent removes the workspace and replaces that path with a symlink or another directory, checks fail with an error and never read the replacement's contents.
 
 The example's `matches` pattern tolerates one optional final newline. The checker does not rewrite or normalize file content.
 
@@ -141,7 +145,7 @@ The example's `matches` pattern tolerates one optional final newline. The checke
 | `file` | One run-relative evidence file. Missing evidence is stated explicitly in the prompt. |
 | `executable`, `envPassthrough` | Same meaning as for the runner. |
 
-The judge is a separate isolated Pi invocation with tools disabled. It receives the case input and selected file content, not the evaluated workspace or its own process environment besides the explicit allowlist. The verdict must be a JSON object with one boolean `pass` and a reason per rubric statement. A valid failing verdict is a failed check; a malformed or missing verdict is a checker error.
+The judge is a separate isolated Pi invocation with tools disabled. It receives the case input and selected file content, not the evaluated workspace or its own process environment besides the explicit allowlist. Evidence must be a regular file. The verdict must be a JSON object with one boolean `pass` and a reason per rubric statement. A valid failing verdict is a failed check; a malformed or missing verdict is a checker error.
 
 ### Trusted Implementation Directories
 

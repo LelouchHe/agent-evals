@@ -1,6 +1,7 @@
 import { ConfigError, errorMessage, type ImplementationParams } from "../../engine/config.ts";
 import type { CheckResult, Checker, CheckerContext, CheckerDefinition } from "../../engine/registry.ts";
-import { isMissing, readRunFile, runFileExists } from "../../engine/workspace.ts";
+import { isMissing, readRunFile, runFileExists, type RunRoot } from "../../engine/workspace.ts";
+import { evaluateRegexes } from "./regex.ts";
 
 const FILE_CHECK_KEYS = new Set(["path", "exists", "matches", "unchanged"]);
 const MAX_PATTERNS = 100;
@@ -32,7 +33,7 @@ class FileChecker implements Checker {
     if (parsed.exists !== undefined) {
       results.push(
         await condition(`${parsed.path} ${parsed.exists ? "exists" : "does not exist"}`, async () => {
-          const exists = await runFileExists(context.workspaceDir, parsed.path);
+          const exists = await runFileExists(context.workspace, parsed.path);
           if (exists === parsed.exists) {
             return pass(`${parsed.path} ${parsed.exists ? "is a regular file" : "is absent"}`);
           }
@@ -45,40 +46,46 @@ class FileChecker implements Checker {
       let content: Buffer | undefined;
       let readError: string | undefined;
       try {
-        content = await readRunFile(context.workspaceDir, parsed.path);
+        content = await readRunFile(context.workspace, parsed.path);
       } catch (error) {
         if (!isMissing(error)) {
           readError = errorMessage(error);
         }
       }
-      for (const [index, pattern] of parsed.patterns.entries()) {
-        const regex = parsed.matches?.[index];
-        const subject = `${parsed.path} matches /${truncate(pattern, 120)}/`;
-        if (readError !== undefined) {
-          results.push(errorResult(subject, readError));
-          continue;
+
+      if (readError !== undefined || content === undefined) {
+        for (const pattern of parsed.patterns) {
+          const subject = `${parsed.path} matches /${truncate(pattern, 120)}/`;
+          results.push(
+            readError !== undefined
+              ? errorResult(subject, readError)
+              : { ...fail(`${parsed.path} does not exist`), subject },
+          );
         }
-        if (content === undefined) {
-          results.push({ ...fail(`${parsed.path} does not exist`), subject });
-          continue;
+      } else {
+        const evaluation = await evaluateRegexes(content.toString("utf8"), parsed.patterns, context.signal);
+        for (const [index, pattern] of parsed.patterns.entries()) {
+          const subject = `${parsed.path} matches /${truncate(pattern, 120)}/`;
+          const compileError = evaluation.errors[index];
+          if (compileError !== undefined) {
+            results.push(errorResult(subject, `regular expression failed: ${compileError}`));
+            continue;
+          }
+          const matched = evaluation.matched[index];
+          if (matched === undefined) {
+            results.push(errorResult(subject, evaluation.failure ?? "regular expression did not finish evaluating"));
+            continue;
+          }
+          results.push({ ...(matched ? pass("pattern found") : fail("pattern not found")), subject });
         }
-        if (regex === undefined) {
-          results.push(errorResult(subject, "regular expression was not compiled"));
-          continue;
-        }
-        regex.lastIndex = 0;
-        results.push({
-          ...(regex.test(content.toString("utf8")) ? pass("pattern found") : fail("pattern not found")),
-          subject,
-        });
       }
     }
 
     if (parsed.unchanged === true) {
       results.push(
         await condition(`${parsed.path} unchanged since run start`, async () => {
-          const current = await readOptional(context.workspaceDir, parsed.path);
-          const baseline = await readOptional(context.baselineDir, parsed.path);
+          const current = await readOptional(context.workspace, parsed.path);
+          const baseline = await readOptional(context.baseline, parsed.path);
           if (current === undefined && baseline === undefined) {
             return pass("file is absent in both the run and the initial baseline");
           }
@@ -117,8 +124,8 @@ function parseParams(params: ImplementationParams): FileCheckParams {
   }
 
   const unchanged = params.unchanged;
-  if (unchanged !== undefined && typeof unchanged !== "boolean") {
-    throw new ConfigError("file checker parameter unchanged must be a boolean");
+  if (unchanged !== undefined && unchanged !== true) {
+    throw new ConfigError("file checker parameter unchanged may only be true or omitted; false is not supported");
   }
 
   let patterns: string[] = [];
@@ -153,9 +160,9 @@ function parseParams(params: ImplementationParams): FileCheckParams {
   return { path, ...(exists === undefined ? {} : { exists }), ...(unchanged === undefined ? {} : { unchanged }), patterns, matches };
 }
 
-async function readOptional(rootDir: string, path: string): Promise<Buffer | undefined> {
+async function readOptional(root: RunRoot, path: string): Promise<Buffer | undefined> {
   try {
-    return await readRunFile(rootDir, path);
+    return await readRunFile(root, path);
   } catch (error) {
     if (isMissing(error)) {
       return undefined;

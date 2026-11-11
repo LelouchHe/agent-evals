@@ -1,6 +1,6 @@
 # M1: Filesystem Evaluation
 
-Status: implemented except for real-model smoke testing and independent review.
+Status: implemented; the repair batch from the first read-only review is complete. Focused closure review and real-model smoke testing remain pending.
 
 ## Goal
 
@@ -52,8 +52,10 @@ The overall model is described in [architecture](architecture.md); case authorin
 - `src/engine` loads and validates YAML, resolves configuration-relative authoring assets, discovers trusted implementations from explicit directories, orchestrates the run, and writes a small result record.
 - `src/runners/pi` drives Pi through native RPC with one prompt and autonomous tool turns, bounded command and agent deadlines, process-group termination, and isolated HOME, Pi configuration, and scratch state.
 - `src/platform/macos` renders a deny-default Seatbelt profile and launches the sandboxed process group. Reads are limited to declared system/toolchain paths and run state; writes to run state; outbound network is allowed for model access.
-- `src/checkers/file` implements `exists`, regex-search `matches`, and `unchanged`, including ancestor and final-component symlink escape rejection.
-- `src/checkers/judge` runs an independent, tool-free Pi invocation over the task and one file and preserves one result per rubric statement.
+- `src/checkers/file` implements `exists`, regex-search `matches`, and `unchanged`, including ancestor and final-component symlink escape rejection. Runs record the workspace directory's device and inode and reject a replaced root. Only regular files are evidence; FIFO and other non-regular paths are errors without a blocking open. Regex matching runs in a worker that is terminated on the check deadline or an internal 5-second ceiling. `unchanged` may only be `true` or omitted.
+- `src/checkers/judge` runs an independent, tool-free Pi invocation over the task and one regular file and preserves one result per rubric statement.
+- The Pi runner classifies a final assistant `stopReason: error` as an execution failure, including with pre-satisfied files, while ignoring recoverable intermediate retry errors.
+- Pi bash commands use a generated custom shell wrapper. Ordinary background jobs stay in a tracked shell process group; the wrapper kills them before the command returns, and the engine kills every tracked group on timeout, cancellation, early Pi exit, and normal teardown.
 - `examples/write-file` is self-contained: an empty workspace, one English task message, one tiny project-owned skill, a case, and a candidate with placeholder models.
 - The `pi` runner and `judge` checker accept an optional `envPassthrough` allowlist so an operator can supply narrowly scoped credentials without inheriting the invoking environment.
 
@@ -74,8 +76,10 @@ The suite includes:
 
 - Real macOS Seatbelt probes that allow workspace reads/writes and deny reads, writes, and symlink escapes outside the workspace.
 - A real Pi RPC startup and skill-loading probe under the Seatbelt profile, using `get_commands` with no model call.
-- Deterministic fake Pi RPC processes for success, invalid protocol data, failed start, timeout, cancellation, owned-child termination, and SIGTERM escalation.
-- Integration tests for success, failed checks, checker failures, cleanup, fixture preservation, baseline isolation for `unchanged`, configuration rejection before resource creation, different invocation working directories, and CLI signal cancellation.
+- Real installed-Pi RPC bash probes under Seatbelt: ordinary background jobs are terminated before the command returns; an active wrapper shell group is terminated on session stop; output and exit status survive the wrapper. No prompt, model, network, or credentials are used.
+- Real Seatbelt root-replacement and FIFO probes through file and judge checks.
+- Deterministic fake Pi RPC processes for success, invalid protocol data, failed start, final provider error, error-then-success retry, timeout, cancellation, owned-child termination, and SIGTERM escalation.
+- Integration tests for success, failed checks, checker failures, cleanup, fixture preservation, baseline isolation for `unchanged`, a replaced workspace root, FIFO evidence, pathological regex bounds, configuration rejection before resource creation, different invocation working directories, and CLI signal cancellation.
 - File-checker and judge-checker unit tests for their complete parameter and result behavior.
 
 ## Remaining Work
@@ -83,7 +87,7 @@ The suite includes:
 - Select runner and judge models, thinking settings, and a small smoke-test budget. The checked-in example deliberately uses placeholder models.
 - Run one approved end-to-end case with real Pi and both checkers. This proves integration, not skill improvement.
 - Confirm real model network behavior under the Seatbelt profile. The profile allows outbound network, but no live model traffic has been exercised; additional allowances may be required and should be derived from failure evidence.
-- Complete independent read-only review and triage its findings.
+- Complete the focused closure review of the repair batch and triage its findings.
 
 ### Known Limitations
 
@@ -93,6 +97,8 @@ The suite includes:
 - Judge evidence is limited to one file. There is no generic evidence-reference language.
 - The runner timeout bounds agent execution; each check receives the same budget, so total wall time can exceed it.
 - Fixture symlinks are copied as symlinks. Checks reject escaping links, but they are not a supported way to share data.
+- Background-process cleanup covers ordinary jobs in the Pi shell's tracked process groups. A child that deliberately creates a new session or process group (`setsid` or equivalent) is outside this contract.
+- Regex evaluation is bounded by worker termination, not by proving a pattern's complexity. The accepted semantics remain JavaScript regex search.
 
 ## Trade-offs
 

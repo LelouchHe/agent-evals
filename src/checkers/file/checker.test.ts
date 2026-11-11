@@ -5,6 +5,7 @@ import { test } from "node:test";
 import { ConfigError } from "../../engine/config.ts";
 import type { CheckerContext } from "../../engine/registry.ts";
 import { makeTempDir } from "../../../tests/helpers/fake-pi-control.ts";
+import { openRunRoot } from "../../engine/workspace.ts";
 import { fileChecker } from "./checker.ts";
 
 async function setup(t: Parameters<typeof makeTempDir>[0]) {
@@ -16,10 +17,10 @@ async function setup(t: Parameters<typeof makeTempDir>[0]) {
   return { root, workspace, baseline };
 }
 
-function context(root: string, workspace: string, baseline: string): CheckerContext {
+async function context(root: string, workspace: string, baseline: string): Promise<CheckerContext> {
   return {
-    workspaceDir: workspace,
-    baselineDir: baseline,
+    workspace: await openRunRoot(workspace),
+    baseline: await openRunRoot(baseline),
     runRootDir: root,
     authoringDir: root,
     input: "task",
@@ -35,7 +36,7 @@ test("file checker passes existence and regex-search conditions", async (t) => {
 
   const results = await checker.check(
     { path: "hello.txt", exists: true, matches: ["world", "^Hello, world!\\n?$"] },
-    context(dirs.root, dirs.workspace, dirs.baseline),
+    await context(dirs.root, dirs.workspace, dirs.baseline),
   );
 
   assert.equal(results.length, 3);
@@ -51,7 +52,7 @@ test("regex search is not an implicit full-file match", async (t) => {
 
   const results = await checker.check(
     { path: "hello.txt", matches: ["Hello, world!", "^Hello, world!$"] },
-    context(dirs.root, dirs.workspace, dirs.baseline),
+    await context(dirs.root, dirs.workspace, dirs.baseline),
   );
   assert.deepEqual(results.map((result) => result.status), ["pass", "fail"]);
 });
@@ -62,7 +63,7 @@ test("file checker reports absent files as failed checks", async (t) => {
 
   const results = await checker.check(
     { path: "missing.txt", exists: true, matches: "anything" },
-    context(dirs.root, dirs.workspace, dirs.baseline),
+    await context(dirs.root, dirs.workspace, dirs.baseline),
   );
   assert.deepEqual(results.map((result) => result.status), ["fail", "fail"]);
   assert.match(results[1]?.reason ?? "", /does not exist/);
@@ -71,7 +72,7 @@ test("file checker reports absent files as failed checks", async (t) => {
 test("exists false passes for an absent file and fails for a present one", async (t) => {
   const dirs = await setup(t);
   const checker = fileChecker.create();
-  const contextValue = context(dirs.root, dirs.workspace, dirs.baseline);
+  const contextValue = await context(dirs.root, dirs.workspace, dirs.baseline);
 
   const absent = await checker.check({ path: "nope.txt", exists: false }, contextValue);
   assert.equal(absent[0]?.status, "pass");
@@ -86,7 +87,7 @@ test("unchanged compares the run file with the initial baseline", async (t) => {
   await writeFile(join(dirs.workspace, "keep.txt"), "original\n");
   await writeFile(join(dirs.baseline, "keep.txt"), "original\n");
   const checker = fileChecker.create();
-  const contextValue = context(dirs.root, dirs.workspace, dirs.baseline);
+  const contextValue = await context(dirs.root, dirs.workspace, dirs.baseline);
 
   const same = await checker.check({ path: "keep.txt", unchanged: true }, contextValue);
   assert.equal(same[0]?.status, "pass");
@@ -100,7 +101,7 @@ test("unchanged compares the run file with the initial baseline", async (t) => {
 test("unchanged distinguishes created and deleted files", async (t) => {
   const dirs = await setup(t);
   const checker = fileChecker.create();
-  const contextValue = context(dirs.root, dirs.workspace, dirs.baseline);
+  const contextValue = await context(dirs.root, dirs.workspace, dirs.baseline);
 
   await writeFile(join(dirs.workspace, "created.txt"), "new\n");
   const created = await checker.check({ path: "created.txt", unchanged: true }, contextValue);
@@ -125,6 +126,8 @@ test("file checker rejects invalid configuration", () => {
   assert.throws(() => validate({ path: "../outside", exists: true }), ConfigError);
   assert.throws(() => validate({ path: "a", exists: "yes" }), ConfigError);
   assert.throws(() => validate({ path: "a", includes: "x" }), ConfigError);
+  assert.throws(() => validate({ path: "a", unchanged: false }), ConfigError);
+  assert.throws(() => validate({ path: "a", unchanged: false, exists: true }), ConfigError);
 });
 
 test("file checker reports symlink escapes as check errors", async (t) => {
@@ -134,7 +137,7 @@ test("file checker reports symlink escapes as check errors", async (t) => {
   await symlink(outside, join(dirs.workspace, "escape.txt"));
   await symlink(join(dirs.root, "missing-target"), join(dirs.workspace, "broken.txt"));
   const checker = fileChecker.create();
-  const contextValue = context(dirs.root, dirs.workspace, dirs.baseline);
+  const contextValue = await context(dirs.root, dirs.workspace, dirs.baseline);
 
   const escaped = await checker.check({ path: "escape.txt", exists: true, matches: "secret" }, contextValue);
   assert.deepEqual(escaped.map((result) => result.status), ["error", "error"]);
@@ -153,7 +156,7 @@ test("file checker allows symlinks that stay inside the workspace", async (t) =>
 
   const results = await checker.check(
     { path: "link.txt", exists: true, matches: "inside" },
-    context(dirs.root, dirs.workspace, dirs.baseline),
+    await context(dirs.root, dirs.workspace, dirs.baseline),
   );
   assert.deepEqual(results.map((result) => result.status), ["pass", "pass"]);
 });
@@ -165,7 +168,7 @@ test("file checker refuses to read files over the bounded size", async (t) => {
 
   const results = await checker.check(
     { path: "large.txt", matches: "a" },
-    context(dirs.root, dirs.workspace, dirs.baseline),
+    await context(dirs.root, dirs.workspace, dirs.baseline),
   );
   assert.equal(results[0]?.status, "error");
   assert.match(results[0]?.reason ?? "", /check limit/);

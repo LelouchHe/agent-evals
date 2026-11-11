@@ -1,10 +1,11 @@
-import { access, mkdir, realpath, stat, writeFile } from "node:fs/promises";
+import { access, mkdir, readFile, realpath, stat, writeFile } from "node:fs/promises";
 import { constants } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { ConfigError, errorMessage } from "../../engine/config.ts";
 import { spawnSandboxed } from "../../platform/macos/launch.ts";
 import { writeSeatbeltPolicy, type SandboxPolicy } from "../../platform/macos/policy.ts";
 import { PiProcess, PiRpcError } from "./rpc.ts";
+import { stopTrackedShellProcesses } from "./shell-processes.ts";
 
 export const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
 export type ThinkingLevel = (typeof THINKING_LEVELS)[number];
@@ -18,6 +19,8 @@ export interface PiSessionDirs {
 
 export interface PiSessionConfig {
   readonly executable: string;
+  /** Run root used for read-only shell tooling and destructive cleanup state. */
+  readonly runRootDir: string;
   /** Omit only for model-free probes; normal runner and judge sessions require it. */
   readonly model?: string;
   readonly thinking: ThinkingLevel;
@@ -105,6 +108,7 @@ export async function invokePi(
     if (event.aborted === true) {
       throw new PiSessionError("Pi reported that the run was aborted", diagnosticsOf(process));
     }
+    await assertFinalAssistantHealthy(process);
     const data = (await process.command("get_last_assistant_text")) as { text?: unknown } | undefined;
     const finalText = typeof data?.text === "string" ? data.text : null;
     return { finalText, diagnostics: diagnosticsOf(process) };
@@ -117,8 +121,34 @@ export async function invokePi(
     }
     throw new PiSessionError(errorMessage(error), diagnosticsOf(process));
   } finally {
-    await process.stop();
+    await stopPiSession(process, config);
   }
+}
+
+/** Stop the Pi process first, then any shell process groups it leaves behind. */
+export async function stopPiSession(process: PiProcess, config: PiSessionConfig): Promise<void> {
+  let failure: unknown;
+  try {
+    await process.stop();
+  } catch (error) {
+    failure = error;
+  }
+  try {
+    await stopTrackedShellProcesses(shellStateDirectory(config));
+  } catch (error) {
+    failure ??= error;
+  }
+  if (failure !== undefined) {
+    throw failure;
+  }
+}
+
+export function shellToolsDirectory(config: PiSessionConfig): string {
+  return join(config.runRootDir, "tools");
+}
+
+export function shellStateDirectory(config: PiSessionConfig): string {
+  return join(config.dirs.scratchDir, "shell-groups");
 }
 
 /** Prepare isolated state and start an RPC process without prompting it. */
@@ -127,7 +157,17 @@ export async function createPiProcess(config: PiSessionConfig): Promise<PiProces
   await mkdir(config.dirs.homeDir, { recursive: true, mode: 0o700 });
   await mkdir(config.dirs.scratchDir, { recursive: true, mode: 0o700 });
   await mkdir(config.dirs.configDir, { recursive: true, mode: 0o700 });
-  await writeIsolatedSettings(config.dirs.configDir);
+
+  let shellPath: string | undefined;
+  if (config.tools !== null) {
+    const toolsDir = shellToolsDirectory(config);
+    await mkdir(toolsDir, { recursive: true, mode: 0o700 });
+    shellPath = join(toolsDir, "shell-wrapper.sh");
+    const source = await readFile(new URL("./shell-wrapper.sh", import.meta.url), "utf8");
+    await writeFile(shellPath, source, { mode: 0o700 });
+    await mkdir(shellStateDirectory(config), { recursive: true, mode: 0o700 });
+  }
+  await writeIsolatedSettings(config.dirs.configDir, shellPath);
 
   const policy = await buildPolicy(executable, config);
   const policyPath = await writeSeatbeltPolicy(config.dirs.scratchDir, policy);
@@ -175,6 +215,9 @@ export async function buildPolicy(executable: string, config: PiSessionConfig): 
   if (nodeModulesRoot !== undefined) {
     readableRoots.add(nodeModulesRoot);
   }
+  if (config.tools !== null) {
+    readableRoots.add(shellToolsDirectory(config));
+  }
 
   return {
     writableRoots: [config.dirs.workspaceDir, config.dirs.homeDir, config.dirs.configDir, config.dirs.scratchDir],
@@ -218,6 +261,7 @@ function buildEnvironment(config: PiSessionConfig): NodeJS.ProcessEnv {
     PI_SKIP_VERSION_CHECK: "1",
     PI_TELEMETRY: "0",
     LANG: "en_US.UTF-8",
+    ...(config.tools === null ? {} : { AGENT_EVALS_SHELL_STATE_DIR: shellStateDirectory(config) }),
   };
   for (const name of config.envPassthrough) {
     const value = process.env[name];
@@ -228,12 +272,13 @@ function buildEnvironment(config: PiSessionConfig): NodeJS.ProcessEnv {
   return env;
 }
 
-async function writeIsolatedSettings(configDir: string): Promise<void> {
+async function writeIsolatedSettings(configDir: string, shellPath?: string): Promise<void> {
   const settings = {
     quietStartup: true,
     defaultProjectTrust: "never",
     enableInstallTelemetry: false,
     retry: { enabled: false },
+    ...(shellPath === undefined ? {} : { shellPath }),
   };
   await writeFile(join(configDir, "settings.json"), JSON.stringify(settings, null, 2) + "\n", { mode: 0o600 });
 }
@@ -276,6 +321,35 @@ function findAncestor(path: string, name: string): string | undefined {
     current = parent;
   }
   return undefined;
+}
+
+async function assertFinalAssistantHealthy(process: PiProcess): Promise<void> {
+  const data = (await process.command("get_messages")) as { messages?: unknown } | undefined;
+  const messages = Array.isArray(data?.messages) ? data.messages : [];
+  let last: Record<string, unknown> | undefined;
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+    if (typeof message === "object" && message !== null && (message as { role?: unknown }).role === "assistant") {
+      last = message as Record<string, unknown>;
+      break;
+    }
+  }
+  if (last === undefined) {
+    throw new PiSessionError("Pi settled without a final assistant message", diagnosticsOf(process));
+  }
+  if (last.stopReason === "error") {
+    const detail = typeof last.errorMessage === "string" && last.errorMessage.length > 0
+      ? truncate(last.errorMessage, 500)
+      : "the provider or model run failed";
+    throw new PiSessionError(
+      `model request failed: ${detail}`,
+      [...diagnosticsOf(process), `assistant error: ${detail}`],
+    );
+  }
+}
+
+function truncate(value: string, limit: number): string {
+  return value.length <= limit ? value : value.slice(0, limit) + "…";
 }
 
 function diagnosticsOf(process: PiProcess): string[] {
