@@ -1,4 +1,6 @@
-# The agent starts in an empty workspace and is asked to create one file.
+# One source file. Common fields are invariants shared by every named case;
+# each case supplies its complete runner record. A top-level field may not
+# appear in both the common part and the selected case.
 input: Create hello.txt with exactly the content "Hello, world!".
 timeoutMs: 120000
 checks:
@@ -15,3 +17,25 @@ checks:
     file: hello.txt
     rubric:
       - hello.txt exists and its content is "Hello, world!", allowing one final newline.
+
+cases:
+  with-skill:
+    runner:
+      $type: pi
+      model: opencode-go/deepseek-v4.1-flash
+      # Omitted thinking uses the runner default (medium).
+      envPassthrough:
+        - OPENCODE_API_KEY
+      # Resolved relative to this file and loaded explicitly. Discovered skills,
+      # extensions, MCP servers, sessions, and global configuration stay disabled.
+      skills:
+        - skill
+
+  # The empty skills list is meaningful: automatic skill discovery stays disabled.
+  without-skill:
+    runner:
+      $type: pi
+      model: opencode-go/deepseek-v4.1-flash
+      envPassthrough:
+        - OPENCODE_API_KEY
+      skills: []

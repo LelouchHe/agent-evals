@@ -2,7 +2,7 @@
 
 A case is a human-readable, executable test definition. This document describes shared authoring principles and the implemented M1 records, not a complete general schema.
 
-The agreed M1 authoring revision is documented in [Case Configuration](configuration.md): one file, ordinary single cases or common fields plus named `cases`, disjoint top-level composition, and source-annotated `view`. There is no inheritance or overriding. This revision is not implemented yet; the current CLI still uses the two M1 files below.
+The implemented M1 authoring revision is documented in [Case Configuration](configuration.md): one file, ordinary single cases or common fields plus named `cases`, disjoint top-level composition, and source-annotated `view`. There is no inheritance or overriding.
 
 Write a case the way you would write a test: control the inputs, observe the outputs and side effects, and focus on one behavior. See [Cases as Tests](architecture.md#cases-as-tests) for the analogy, its limits, and the direction for mocked tools and services.
 
@@ -20,7 +20,7 @@ The input is a real message and prepared environment, not a requirement to fill 
 
 A case may be specific to the skill or capability under test. Reuse shared fields or cases only when the relevant expectations are genuinely shared; do not require every case to apply to every evaluated system. Named cases need not form a comparison group. Prefer explicit fixtures, commands, or scripts for setup rather than asking another LLM to improvise it.
 
-The next format does not require separate Candidate or Subject entities. A single saved document can be directly runnable, or named cases can supply top-level fields absent from the common part. Duplicate top-level fields are errors; nested values are not merged. Persist test inputs rather than depending on temporary shell parameters, and retain each run's resolved non-sensitive configuration and source/case identity. Resource-content hashing is outside this revision; configuration records alone do not preserve old skill or fixture contents.
+The implemented format does not require separate Candidate or Subject entities. A single saved document can be directly runnable, or named cases can supply top-level fields absent from the common part. Duplicate top-level fields are errors; nested values are not merged. Persist test inputs rather than depending on temporary shell parameters, and retain each run's resolved non-sensitive configuration and source/case identity. Resource-content hashing is outside this revision; configuration records alone do not preserve old skill or fixture contents.
 
 ## Keep Related Assets Together
 
@@ -75,13 +75,13 @@ checks:
 - Only `$type` has agreed engine-defined semantics in these records. `$ref`, `$env`, and arbitrary string interpolation are not implicit YAML capabilities.
 - Shared configuration should reuse the same implementation configuration shape rather than introduce judge-specific core sections.
 
-These fragments establish selection and parameter ownership. They do not define every case field or implement the planned composition layer.
+These fragments establish selection and parameter ownership. [Case Configuration](configuration.md) owns the composition and inspection rules.
 
-## M1 Supported Records
+## Implemented Records
 
-The delivered implementation supports a deliberately small, two-file shape. These records and the existing `--case` / `--candidate` CLI remain valid until migration; the agreed composition format is not available in code yet.
+The CLI resolves one YAML file. Without `cases`, the document is one ordinary case. With `cases`, top-level fields outside that mapping are common invariants, and exactly one named entry must be selected; fields are combined only when their top-level keys are disjoint.
 
-A case supplies one input message, an optional fixture directory, an optional execution timeout, and checks:
+An ordinary case supplies one input message, optional fixture and timeout fields, checks, and the runner:
 
 ```yaml
 input: Create hello.txt with exactly the content "Hello, world!".
@@ -98,12 +98,6 @@ checks:
     file: hello.txt
     rubric:
       - hello.txt exists and its content is "Hello, world!", allowing one final newline.
-```
-
-The current M1 candidate file selects the runner and its parameters. This is the existing implementation contract, not a requirement to retain a Candidate entity in the next format:
-
-```yaml
-name: pi-with-skill
 runner:
   $type: pi
   model: provider/model
@@ -111,6 +105,39 @@ runner:
   skills: [skill] # optional, resolved relative to this file
   envPassthrough: [API_KEY] # optional allowlist; values are not recorded
 ```
+
+Use common fields plus named `cases` when several tests share inputs and checks. Each selected entry supplies the fields the common part omits:
+
+```yaml
+input: Create hello.txt with exactly the content "Hello, world!".
+checks:
+  - $type: file
+    path: hello.txt
+    exists: true
+
+cases:
+  with-skill:
+    runner:
+      $type: pi
+      model: provider/model
+      skills: [skill]
+      envPassthrough: [API_KEY]
+  without-skill:
+    runner:
+      $type: pi
+      model: provider/model
+      skills: []
+      envPassthrough: [API_KEY]
+```
+
+Select a named case explicitly, even when only one exists:
+
+```sh
+node src/cli.ts run case.yml --case with-skill
+node src/cli.ts view case.yml --case with-skill
+```
+
+A top-level field repeated between the common part and the selected entry is an error, even when both values are identical. Sibling entries may repeat each other's fields because they are resolved independently. Case names are metadata only and never become filesystem paths or result-directory names. See [Case Configuration](configuration.md) for the complete composition and rejection rules.
 
 Within a runner or checker record, all fields except `$type` belong to the selected implementation. Unknown fields, unknown implementations, invalid regular expressions, and missing authoring assets are configuration errors reported before any runtime resource is created.
 
@@ -159,7 +186,7 @@ The judge is a separate isolated Pi invocation with tools disabled. It receives 
 The CLI loads the built-in `pi`, `file`, and `judge` implementations, then optional modules from explicitly supplied operator directories:
 
 ```sh
-node src/cli.ts --case case.yml --candidate candidate.yml \
+node src/cli.ts run case.yml --case with-skill \
   --runner-dir ./trusted/runners --checker-dir ./trusted/checkers
 ```
 

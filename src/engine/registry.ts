@@ -12,7 +12,7 @@ export interface RunnerContext {
   readonly runRootDir: string;
   /** The case's initial user message. An engine-owned value, not a runner parameter. */
   readonly input: string;
-  /** Directory of the candidate configuration that declared the runner. */
+  /** Directory of the case configuration that declared the runner. */
   readonly authoringDir: string;
   readonly timeoutMs: number;
   readonly signal: AbortSignal;

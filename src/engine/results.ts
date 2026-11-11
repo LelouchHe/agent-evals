@@ -1,6 +1,7 @@
 import { mkdir, rename, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { randomUUID } from "node:crypto";
+import type { CaseConfig } from "./config.ts";
 import type { CheckResult } from "./registry.ts";
 
 export type RunStatus = "pass" | "fail" | "error" | "timeout" | "cancelled";
@@ -14,12 +15,13 @@ export interface RunnerRecord {
 }
 
 export interface EvaluationRecord {
-  readonly schemaVersion: 1;
+  readonly schemaVersion: 2;
   readonly runId: string;
   readonly startedAt: string;
   readonly finishedAt: string;
-  readonly case: { readonly path: string };
-  readonly candidate: { readonly path: string; readonly name?: string };
+  readonly case: { readonly path: string; readonly name?: string };
+  /** The non-sensitive resolved configuration actually passed to execution. */
+  readonly resolvedConfig: CaseConfig;
   readonly status: RunStatus;
   readonly runner: RunnerRecord;
   readonly checks: readonly CheckResult[];

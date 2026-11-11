@@ -23,11 +23,11 @@ Create an isolated run directory
 
 ## Current Status
 
-[M1](docs/m1-plan.md) is implemented: one local filesystem evaluation with a Pi RPC runner, direct macOS Seatbelt enforcement, and `file` and `judge` checkers. The checked-in example selects OpenCode Go's DeepSeek Flash for both runner and judge and requires an explicit `OPENCODE_API_KEY` environment variable. The bounded independent review, focused repair verification, and approved real-model smoke are complete. The smoke verifies integration of the original two-file format, not that the skill improves behavior or that a later configuration-format migration has been live-model tested. Routine tests never call a model.
+[M1](docs/m1-plan.md) is implemented: one local filesystem evaluation with a Pi RPC runner, direct macOS Seatbelt enforcement, and `file` and `judge` checkers. The [single-file authoring revision](docs/configuration.md) is also implemented: one YAML file resolves either an ordinary case or common fields plus one selected named case, using disjoint top-level composition and source-annotated `view`. A run retains its resolved non-sensitive configuration together with the source path and optional case name.
 
-The agreed [M1 authoring revision](docs/configuration.md)—one file, optional named `cases` with disjoint top-level fields, and source-annotated `view`—is not implemented. It has no inheritance or recursive overrides. The commands below still require the current M1 case and candidate files.
+The checked-in example selects OpenCode Go's DeepSeek Flash for both runner and judge and requires an explicit `OPENCODE_API_KEY` environment variable. The bounded independent review, focused repair verification, and approved real-model smoke for the original runtime are complete. That historical smoke used the earlier two-file format; the migrated single-file loader and example have model-free test coverage only and have not been live-model tested. Routine tests never call a model.
 
-Requirements: macOS with `sandbox-exec`, Node.js 24 or newer, and the `pi` CLI on `PATH` for runner and judge invocations.
+Requirements: macOS with `sandbox-exec`, Node.js 24 or newer, and the `pi` CLI on `PATH` for runner and judge invocations. `view` does not need `pi`, a model, or provider credentials.
 
 The repository stays private during initial development. Reconsider publication once the initial skill-evaluation tooling is usable; visibility changes require explicit approval.
 
@@ -38,15 +38,21 @@ npm ci
 npm run check
 ```
 
-Run one case and candidate:
+Run one selected case:
 
 ```sh
-npm run eval -- --case examples/write-file/case.yml --candidate examples/write-file/candidate.yml
+npm run eval -- run examples/write-file/case.yml --case with-skill
 ```
 
-Before running the command, make `OPENCODE_API_KEY` available in the invoking process using your normal secret-management method; never put its value in example files. The example uses `opencode-go/deepseek-v4.1-flash` for both runner and judge, with thinking omitted to use their default (`medium`) and a 120-second execution budget per invocation. It prompts the agent to create `hello.txt`, checks its existence and content, and asks an independent judge whether the task was completed. Run a different example by passing its case and candidate paths to the same npm command.
+Inspect the resolved case and each top-level field's origin without starting a harness:
 
-`envPassthrough` forwards only the named variables; it does not inherit the operator environment. Results are written to `.eval-results/<run-id>/result.json` by default (`--results-dir` overrides this). Exit codes are `0` for a passing run, `1` for failing checks, and `2` for configuration, execution, timeout, cancellation, or checker errors.
+```sh
+npm run eval -- view examples/write-file/case.yml --case with-skill
+```
+
+Before running the command, make `OPENCODE_API_KEY` available in the invoking process using your normal secret-management method; never put its value in example files. The example uses `opencode-go/deepseek-v4.1-flash` for both runner and judge, with thinking omitted to use their default (`medium`) and a 120-second execution budget per invocation. It prompts the agent to create `hello.txt`, checks its existence and content, and asks an independent judge whether the task was completed. The example defines `with-skill` and `without-skill` cases that differ only in their explicit runner records; its names have no built-in A/B meaning and no comparison is performed.
+
+`envPassthrough` forwards only the named variables; it does not inherit the operator environment. Results are written to `.eval-results/<run-id>/result.json` by default (`--results-dir` overrides this). Each result retains the resolved non-sensitive configuration actually used, plus the source path and optional case name, so later edits to the YAML do not erase an old run's declared parameters. Case names are metadata only and never determine result paths. Exit codes are `0` for a passing run, `1` for failing checks, and `2` for configuration, execution, timeout, cancellation, or checker errors.
 
 ## Development
 
@@ -74,7 +80,7 @@ This advisory is temporarily accepted for the reviewed, pinned toolchain; the de
 ## Limitations
 
 - macOS only. There is no Linux or container backend.
-- One initial user message and one case/candidate pair per invocation.
+- One initial user message and one resolved case per invocation.
 - Checks run after the agent stops and before the workspace is removed; full workspace snapshots are not retained.
 - The judge reads one selected file; there is no general evidence-reference language.
 - Checks read regular files only. A FIFO, device, socket, or directory is a check error rather than a blocking open or a passing observation.
@@ -96,7 +102,6 @@ src/
 tests/             cross-module integration tests and shared test assets
 examples/write-file/
   case.yml
-  candidate.yml
   skill/SKILL.md
 docs/
 ```
@@ -107,7 +112,7 @@ Module unit tests are co-located with their modules; `tests/` holds cross-module
 
 - [Architecture](docs/architecture.md): overall direction, responsibilities, execution boundaries, and evidence collection.
 - [Cases and configuration](docs/cases.md): authoring principles, assets, implementation selection, and currently supported M1 records.
-- [Case configuration](docs/configuration.md): agreed, not-yet-implemented single-file authoring, disjoint top-level composition, and configuration inspection.
+- [Case configuration](docs/configuration.md): implemented single-file authoring, disjoint top-level composition, source-annotated `view`, and retained run configuration.
 - [M1 plan](docs/m1-plan.md): the first milestone's goal, implementation steps, acceptance, and trade-offs.
 
 Milestone plans own their delivery details. Larger milestones may split into plans such as `m1a-plan.md` and `m1b-plan.md`, with the parent retaining the overall goal and acceptance criteria.

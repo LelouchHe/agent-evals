@@ -1,6 +1,6 @@
 # M1: Filesystem Evaluation
 
-Status: the original filesystem runtime and approved real-model smoke are complete. The agreed single-file authoring revision below is not implemented; its acceptance is separate from the completed runtime proof.
+Status: the original filesystem runtime and its approved real-model smoke are complete. The single-file authoring revision is implemented and covered by model-free tests; it has not been live-model tested.
 
 ## Goal
 
@@ -31,7 +31,7 @@ The overall model is described in [architecture](architecture.md); case authorin
 - [x] Load YAML through a real parser, resolve authoring assets relative to their configuration, discover trusted implementations, and reject invalid configurations before execution.
 - [x] Atomically create a unique, neutrally named temporary run directory and copy the fixture without changing its source. Prepare separate per-run HOME, Pi configuration, and scratch directories.
 - [x] Apply a deny-default Seatbelt policy: permit fixture-copy writes, read-only system/toolchain access, and explicitly scoped configuration, scratch, process, and model-access permissions. Exclude unrelated operator data, inherited production capabilities, and undeclared agent resources.
-- [x] Drive Pi through RPC using the configured skill and input message. Keep case definitions, checkers, rubrics, candidate labels, and result records outside the evaluated agent's permitted data.
+- [x] Drive Pi through RPC using the configured skill and input message. Keep case definitions, checkers, rubrics, case names, and result records outside the evaluated agent's permitted data.
 - [x] Stop the evaluated agent before checks. Keep the temporary initial baseline needed for `unchanged` outside the evaluated agent's writable area.
 - [x] Implement `file` assertions: `exists`, regex-search `matches`, and `unchanged`. Return individual results; invalid regexes are configuration errors. Keep checks bounded, and do not retain an `includes` alias.
 - [x] Implement `judge` with an independent Pi invocation over selected task/file context and rubric statements. Preserve per-statement results and distinguish invalid verdicts from failed checks.
@@ -50,23 +50,26 @@ These completed checks cover the original runtime. The authoring revision has it
 
 ## Single-File Authoring Revision
 
-Status: agreed; not implemented. [Case Configuration](configuration.md) is the authoritative behavior specification. Keep the existing delivered CLI and smoke evidence below as historical/current-runtime records until migration.
+Status: implemented. [Case Configuration](configuration.md) is the authoritative behavior specification. The historical smoke below still describes the original two-file format.
 
-Pending acceptance:
+Acceptance:
 
-- [ ] Load one ordinary case or common fields plus named `cases` from a single file. Reject repeated top-level fields without recursive merging or overrides.
-- [ ] Reject YAML anchor declarations, alias nodes, and the scalar key `<<` in every mapping, quoted or not. Accept ordinary string values containing reuse-like text. Do not add `extends` or imported collections.
-- [ ] Require explicit selection for named cases, reject an empty `cases` mapping, and use non-empty string names only as metadata. Identify an ordinary case by its source path without a synthetic name.
-- [ ] Provide `view` through the execution resolver, annotating each top-level field with its source file, 1-based declaration line, and common/selected-case origin. Per-leaf annotations are not required. Do not start a harness, invoke a model, or require credentials; runtime validation remains separate.
-- [ ] Retain the resolved non-sensitive configuration, source path, and optional case name per run. Resource/fixture hashing and resource snapshots are not required and complete reproduction is not claimed.
-- [ ] Migrate the CLI and checked-in example to the single-file contract and update the commands actually supported; do not keep Candidate as a required authoring entity. Label the existing real-model smoke as validation of the original two-file format, not a live-model test of the migrated loader/example. Report the new format's model-free verification separately.
-- [ ] Add focused parser/resolver/selection/view/result tests and pass `npm run check`. Keep routine gates model-free and perform the bounded implementation review required by the project workflow.
+- [x] Load one ordinary case or common fields plus named `cases` from a single file. Reject repeated top-level fields without recursive merging or overrides.
+- [x] Reject YAML anchor declarations, alias nodes, and the scalar key `<<` in every mapping, quoted or not. Accept ordinary string values containing reuse-like text. Do not add `extends` or imported collections.
+- [x] Require explicit selection for named cases, reject an empty `cases` mapping, and use non-empty string names only as metadata. Identify an ordinary case by its source path without a synthetic name.
+- [x] Provide `view` through the execution resolver, annotating each top-level field with its source file, 1-based declaration line, and common/selected-case origin. Per-leaf annotations are not required. Do not start a harness, invoke a model, or require credentials; runtime validation remains separate.
+- [x] Retain the resolved non-sensitive configuration, source path, and optional case name per run. Resource/fixture hashing and resource snapshots are not required and complete reproduction is not claimed.
+- [x] Migrate the CLI and checked-in example to the single-file contract and update the commands actually supported; do not keep Candidate as a required authoring entity. Label the existing real-model smoke as validation of the original two-file format, not a live-model test of the migrated loader/example. Report the new format's model-free verification separately.
+- [x] Add focused parser/resolver/selection/view/result tests and pass the complete model-free gate.
+- [ ] Complete the bounded independent implementation review of this revision and record its closure.
 
 This revision does not authorize another live-model smoke or renew the earlier invocation budget; any such rerun requires explicit approval.
 
 ## Delivered
 
-- A TypeScript CLI runs one case and candidate: `node src/cli.ts --case <case.yml> --candidate <candidate.yml>`.
+- A TypeScript CLI resolves and runs or inspects one case: `node src/cli.ts run <config.yml> [--case <name>]` and `node src/cli.ts view <config.yml> [--case <name>]`.
+- `src/engine/authoring.ts` parses one YAML document with the installed `yaml` library, rejects unsupported reuse syntax and duplicate keys from the parsed structure, composes common and selected fields only when their top-level keys are disjoint, and records each final top-level field's source file, declaration line, and common/selected-case origin. Execution and `view` use this one resolver; `view` does not call run-only implementation validation.
+- A run result retains the source path, optional case name, and the non-sensitive resolved configuration under `resolvedConfig`. Case names are metadata only and never escape the result-directory layout. Resource contents and environment values are not retained.
 - `src/engine` loads and validates YAML, resolves configuration-relative authoring assets, discovers trusted implementations from explicit directories, orchestrates the run, and writes a small result record.
 - `src/runners/pi` drives Pi through native RPC with one prompt and autonomous tool turns, bounded command and agent deadlines, process-group termination, and isolated HOME, Pi configuration, and scratch state.
 - `src/platform/macos` renders a deny-default Seatbelt profile and launches the sandboxed process group. Reads are limited to declared system/toolchain paths and run state; writes to run state; outbound network is allowed for model access.
@@ -74,7 +77,7 @@ This revision does not authorize another live-model smoke or renew the earlier i
 - `src/checkers/judge` runs an independent, tool-free Pi invocation over the task and one regular file and preserves one result per rubric statement.
 - The Pi runner classifies a final assistant `stopReason: error` as an execution failure, including with pre-satisfied files, while ignoring recoverable intermediate retry errors.
 - Pi bash commands use a generated custom shell wrapper. Ordinary background jobs stay in a tracked shell process group; the wrapper kills them before the command returns. A sandbox-resident Node supervisor wraps Pi, reads the agent-writable tracked-group registry, and terminates groups on timeout, cancellation, early Pi exit, and normal teardown. The supervisor runs inside Seatbelt, so forged registry entries can target only same-sandbox processes; the host never signals groups from registry data.
-- `examples/write-file` is self-contained: an empty workspace, one English task message, one tiny project-owned skill, a case, and a candidate. Both model invocations select `opencode-go/deepseek-v4.1-flash`, omit thinking to use the default `medium`, and explicitly forward only `OPENCODE_API_KEY` as the provider credential.
+- `examples/write-file` is self-contained: an empty workspace, one English task message, one tiny project-owned skill, and one configuration file with `with-skill` and `without-skill` named cases. Both cases supply complete runner records, intentionally repeating the shared parameters, so neither depends on the common part for `runner`. Both model invocations select `opencode-go/deepseek-v4.1-flash`, omit thinking to use the default `medium`, and explicitly forward only `OPENCODE_API_KEY` as the provider credential.
 - The `pi` runner and `judge` checker accept an optional `envPassthrough` allowlist so an operator can supply narrowly scoped credentials without inheriting the invoking environment.
 
 Run records are written to `.eval-results/<run-id>/result.json` by default, with bounded diagnostics beside them. The runtime directory is removed after success, failed start, timeout, cancellation, and checker failure; only the initial baseline needed by `unchanged` exists during the run.
@@ -101,11 +104,13 @@ On Node 24.22.2 and macOS 15.5, implementation `fc2b131` passed type checking an
 
 ### Real-Model Smoke
 
-The approved `write-file` example passed in one evaluation invocation on 2026-11-11 using the original two-file format. This historical smoke is not evidence of live-model validation for a later single-file loader/example migration:
+The approved `write-file` example passed in one evaluation invocation on 2026-11-11 using the original two-file format. The old CLI invocation was:
 
 ```sh
 npm run eval -- --case examples/write-file/case.yml --candidate examples/write-file/candidate.yml
 ```
+
+That command shape is no longer accepted after the single-file migration. This historical smoke proves the original two-file runtime integration, checks, and cleanup; it is not a live-model test of the migrated single-file loader or example, whose coverage is model-free only.
 
 - Runner and judge: `opencode-go/deepseek-v4.1-flash`, each in its own isolated Pi invocation, default thinking `medium`, 120-second execution budget per invocation. The evaluation was not automatically rerun.
 - Result: `pass` in approximately 30 seconds; the runner completed in approximately 25 seconds. File existence, regex content matching, and the independent judge criterion all passed. Diagnostics were empty.
@@ -126,13 +131,15 @@ The suite includes:
 - Real Seatbelt root-replacement and FIFO probes through file and judge checks.
 - Deterministic fake Pi RPC processes for success, invalid protocol data, failed start, final provider error, error-then-success retry, timeout, cancellation, owned-child termination, and SIGTERM escalation.
 - Integration tests for success, failed checks, checker failures, cleanup, fixture preservation, baseline isolation for `unchanged`, a replaced workspace root, FIFO evidence, pathological regex bounds, configuration rejection before resource creation, different invocation working directories, and CLI signal cancellation.
+- Authoring parser/resolver tests against real YAML source positions: ordinary and named documents, explicit selection, empty or invalid case maps and names, common/selected collisions including identical values and nested-only differences, sibling independence, forbidden anchors/aliases/`<<` at nested positions, quoted and literal reuse-like text, duplicate keys, malformed shapes, incomplete fragments, and metadata-only names.
+- CLI integration for `view` and fake-runtime `run` from another working directory. `view` succeeds with `pi` unavailable and no provider credential, does not launch a harness canary, does not print an environment secret, and shows expected declaration lines. `view` and `run` are compared through the same resolved payload. A retained result is checked after the YAML is edited, and a path-like case name does not control the result location.
 - File-checker and judge-checker unit tests for their complete parameter and result behavior.
 - Real Git/Husky hook tests with isolated local bare remotes: valid commit/push, lint and formatting rejection without rewriting files, type and runtime-test failure rejection, and safeguards against validating a dirty worktree or a different outgoing commit.
 
 ## Known Limitations
 
 - macOS only; no Linux or container backend.
-- One initial user message and one case/candidate pair per invocation.
+- One initial user message and one resolved case per invocation.
 - Checks run after the agent stops but before workspace cleanup; full snapshots are not retained and results cannot be regraded after cleanup.
 - Judge evidence is limited to one file. There is no generic evidence-reference language.
 - Model networking was smoke-tested only with the example's OpenCode Go endpoint; other providers/endpoints remain unverified.

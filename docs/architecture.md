@@ -2,7 +2,7 @@
 
 This document records the system's overall direction and responsibility boundaries. Concrete delivery scope, implementation choices, and acceptance criteria belong in milestone plans.
 
-Configuration composition below is agreed direction, not implemented behavior. M1 still uses separate case/candidate files; see [the current records](cases.md#m1-supported-records) and [the planned composition contract](configuration.md).
+Configuration composition below is implemented for M1: one file resolves to one case, or to common fields plus one selected named case. See [the supported records](cases.md#implemented-records) and [the composition contract](configuration.md).
 
 ## Principles
 
@@ -39,7 +39,7 @@ Checks may assess the relationship between input and output messages, environmen
 
 ## Configuration Resolution
 
-Keep authoring composition separate from runtime execution. The agreed M1 revision resolves one file into a single case or combines common fields with a selected named case using disjoint top-level keys. A repeated top-level field is an error, even if its nested fields differ. Do not introduce inheritance or recursive overrides. The engine executes the complete case without interpreting case labels or skill-specific comparison categories.
+Keep authoring composition separate from runtime execution. The M1 resolver turns one file into a single case, or combines common fields with a selected named case using disjoint top-level keys. A repeated top-level field is an error, even if its nested fields differ. Do not introduce inheritance or recursive overrides. The engine executes the complete case without interpreting case labels or skill-specific comparison categories.
 
 The read-only `view` operation and execution share this resolver and its source locations. All authoring paths use the single file's directory. Inspection shows the final configuration without launching a harness or obtaining credentials; execution performs runtime validation separately. Each run retains the actual non-sensitive resolved configuration and source/case identity, rather than relying on the configuration file remaining unchanged. Resource-content hashing and snapshots are outside this authoring revision; its configuration record does not guarantee complete reproduction of earlier resource contents.
 

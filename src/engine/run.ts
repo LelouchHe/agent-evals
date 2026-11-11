@@ -5,10 +5,8 @@ import {
   ConfigError,
   errorMessage,
   resolveAuthoringAsset,
-  type CaseConfig,
-  type CandidateConfig,
   type ImplementationParams,
-  type Loaded,
+  type ResolvedCase,
 } from "./config.ts";
 import {
   requireChecker,
@@ -34,8 +32,7 @@ const CHECK_ABORT_GRACE_MS = 12_000;
 const MAX_RECORDED_TEXT = 4_000;
 
 export interface RunRequest {
-  readonly case: Loaded<CaseConfig>;
-  readonly candidate: Loaded<CandidateConfig>;
+  readonly case: ResolvedCase;
   readonly registry: Registry;
   readonly resultsDir: string;
   readonly signal?: AbortSignal;
@@ -127,7 +124,7 @@ export async function runEvaluation(request: RunRequest): Promise<EvaluationReco
         scratchDir,
         runRootDir: root,
         input: request.case.config.input,
-        authoringDir: request.candidate.dir,
+        authoringDir: request.case.dir,
         timeoutMs,
         signal: abort.signal,
       });
@@ -222,15 +219,15 @@ export async function runEvaluation(request: RunRequest): Promise<EvaluationReco
   }
 
   const record: EvaluationRecord = {
-    schemaVersion: 1,
+    schemaVersion: 2,
     runId,
     startedAt,
     finishedAt: new Date().toISOString(),
-    case: { path: request.case.path },
-    candidate: {
-      path: request.candidate.path,
-      ...(request.candidate.config.name === undefined ? {} : { name: request.candidate.config.name }),
+    case: {
+      path: request.case.path,
+      ...(request.case.name === undefined ? {} : { name: request.case.name }),
     },
+    resolvedConfig: request.case.config,
     status,
     runner: runnerRecord,
     checks,
@@ -249,9 +246,9 @@ function prepareImplementations(request: RunRequest): Promise<{
   checks: PreparedCheck[];
 }> {
   return (async () => {
-    const runnerDefinition = requireRunner(request.registry, request.candidate.config.runner.$type);
-    const runnerParams = paramsOf(request.candidate.config.runner);
-    await runnerDefinition.validate(runnerParams, request.candidate.dir);
+    const runnerDefinition = requireRunner(request.registry, request.case.config.runner.$type);
+    const runnerParams = paramsOf(request.case.config.runner);
+    await runnerDefinition.validate(runnerParams, request.case.dir);
 
     const checks: PreparedCheck[] = [];
     for (const record of request.case.config.checks) {
@@ -272,7 +269,7 @@ function prepareImplementations(request: RunRequest): Promise<{
   })();
 }
 
-async function validateFixture(loadedCase: Loaded<CaseConfig>): Promise<void> {
+async function validateFixture(loadedCase: ResolvedCase): Promise<void> {
   const fixture = loadedCase.config.fixture;
   if (fixture === undefined) {
     return;

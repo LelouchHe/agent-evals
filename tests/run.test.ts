@@ -4,7 +4,8 @@ import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { test } from "node:test";
 import { stringify } from "yaml";
-import { ConfigError, loadCandidate, loadCase } from "../src/engine/config.ts";
+import { loadCase } from "../src/engine/authoring.ts";
+import { ConfigError } from "../src/engine/config.ts";
 import { addChecker, addRunner, createRegistry } from "../src/engine/registry.ts";
 import { runEvaluation } from "../src/engine/run.ts";
 import type { EvaluationRecord } from "../src/engine/results.ts";
@@ -25,7 +26,6 @@ interface ScenarioOptions {
 async function writeScenario(t: Parameters<typeof makeTempDir>[0], options: ScenarioOptions) {
   const directory = await makeTempDir(t, "ae-scenario-");
   const casePath = join(directory, "case.yml");
-  const candidatePath = join(directory, "candidate.yml");
   const checks = options.checks ?? [
     { $type: "file", path: "hello.txt", exists: true, matches: "^Hello, world!\\n?$" },
     {
@@ -51,19 +51,6 @@ async function writeScenario(t: Parameters<typeof makeTempDir>[0], options: Scen
       ...(options.timeoutMs === undefined ? {} : { timeoutMs: options.timeoutMs }),
       ...(options.fixtureFiles === undefined ? {} : { fixture: "fixture" }),
       checks,
-    }),
-  );
-  if (options.skill === true) {
-    await mkdir(join(directory, "skill"));
-    await writeFile(
-      join(directory, "skill", "SKILL.md"),
-      "---\nname: tiny-write\ndescription: Write a file.\n---\n\nWrite it.\n",
-    );
-  }
-  await writeFile(
-    candidatePath,
-    stringify({
-      name: "integration",
       runner: {
         $type: "pi",
         model: "test/model",
@@ -73,7 +60,14 @@ async function writeScenario(t: Parameters<typeof makeTempDir>[0], options: Scen
       },
     }),
   );
-  return { directory, casePath, candidatePath };
+  if (options.skill === true) {
+    await mkdir(join(directory, "skill"));
+    await writeFile(
+      join(directory, "skill", "SKILL.md"),
+      "---\nname: tiny-write\ndescription: Write a file.\n---\n\nWrite it.\n",
+    );
+  }
+  return { directory, casePath };
 }
 
 test("runtime baseline is Node.js 24 or newer", () => {
@@ -100,7 +94,6 @@ async function runScenario(
   const configured = configure?.({ resultsDir, tempParent }) ?? {};
   const record = await runEvaluation({
     case: await loadCase(scenario.casePath),
-    candidate: await loadCandidate(scenario.candidatePath),
     registry: testRegistry(),
     resultsDir,
     tempParent,
@@ -227,13 +220,11 @@ test("integration: unchanged false is rejected before run resources", async (t) 
   const resultsDir = await makeTempDir(t, "ae-results-unchanged-");
   const tempParent = await makeTempDir(t, "ae-runs-unchanged-");
   const loadedCase = await loadCase(scenario.casePath);
-  const candidate = await loadCandidate(scenario.candidatePath);
 
   await assert.rejects(
     () =>
       runEvaluation({
         case: loadedCase,
-        candidate,
         registry: testRegistry(),
         resultsDir,
         tempParent,
@@ -345,13 +336,11 @@ test("integration: invalid configuration is rejected before any run resource", a
   const resultsDir = await makeTempDir(t, "ae-results-invalid-");
   const tempParent = await makeTempDir(t, "ae-runs-invalid-");
   const loadedCase = await loadCase(scenario.casePath);
-  const candidate = await loadCandidate(scenario.candidatePath);
 
   await assert.rejects(
     () =>
       runEvaluation({
         case: loadedCase,
-        candidate,
         registry: testRegistry(),
         resultsDir,
         tempParent,
@@ -365,23 +354,21 @@ test("integration: invalid configuration is rejected before any run resource", a
 test("integration: missing authoring assets fail before launch", async (t) => {
   const runner = await createFakePi(t, "success");
   const scenario = await writeScenario(t, { runnerExecutable: runner.executable, skill: true });
-  const candidateConfig = await loadCandidate(scenario.candidatePath);
+  const loadedCase = await loadCase(scenario.casePath);
   const modified = {
-    ...candidateConfig,
+    ...loadedCase,
     config: {
-      ...candidateConfig.config,
-      runner: { ...candidateConfig.config.runner, skills: ["missing-skill"] },
+      ...loadedCase.config,
+      runner: { ...loadedCase.config.runner, skills: ["missing-skill"] },
     },
   };
   const resultsDir = await makeTempDir(t, "ae-results-missing-");
   const tempParent = await makeTempDir(t, "ae-runs-missing-");
-  const loadedCase = await loadCase(scenario.casePath);
 
   await assert.rejects(
     () =>
       runEvaluation({
-        case: loadedCase,
-        candidate: modified,
+        case: modified,
         registry: testRegistry(),
         resultsDir,
         tempParent,
@@ -403,10 +390,7 @@ test("integration: CLI runs from a different cwd and resolves authoring assets",
   const tempParent = await makeTempDir(t, "ae-cli-runs-");
   const cwd = await makeTempDir(t, "ae-cli-cwd-");
 
-  const result = await runCli(
-    ["--case", scenario.casePath, "--candidate", scenario.candidatePath, "--results-dir", resultsDir],
-    { cwd, TMPDIR: tempParent },
-  );
+  const result = await runCli(["run", scenario.casePath, "--results-dir", resultsDir], { cwd, TMPDIR: tempParent });
   assert.equal(result.code, 0, result.stderr);
   assert.match(result.stdout, /run .*: pass/);
   assert.deepEqual(await readdir(tempParent), []);
@@ -417,7 +401,8 @@ test("integration: CLI runs from a different cwd and resolves authoring assets",
     await readFile(join(resultsDir, runDirectories[0] ?? "", "result.json"), "utf8"),
   ) as EvaluationRecord;
   assert.equal(record.status, "pass");
-  assert.equal(record.candidate.name, "integration");
+  assert.equal(record.case.name, undefined);
+  assert.equal(record.case.path, scenario.casePath);
 });
 
 test("integration: CLI reports configuration errors with exit code 2", async (t) => {
@@ -429,10 +414,10 @@ test("integration: CLI reports configuration errors with exit code 2", async (t)
   const resultsDir = await makeTempDir(t, "ae-cli-invalid-results-");
   const tempParent = await makeTempDir(t, "ae-cli-invalid-runs-");
 
-  const result = await runCli(
-    ["--case", scenario.casePath, "--candidate", scenario.candidatePath, "--results-dir", resultsDir],
-    { cwd: scenario.directory, TMPDIR: tempParent },
-  );
+  const result = await runCli(["run", scenario.casePath, "--results-dir", resultsDir], {
+    cwd: scenario.directory,
+    TMPDIR: tempParent,
+  });
   assert.equal(result.code, 2);
   assert.match(result.stderr, /configuration error: unknown checker implementation/);
   assert.deepEqual(await readdir(tempParent), []);
@@ -447,10 +432,11 @@ test("integration: FIFO evidence fails promptly and the CLI exits", { timeout: 3
   const resultsDir = await makeTempDir(t, "ae-cli-fifo-results-");
   const tempParent = await makeTempDir(t, "ae-cli-fifo-runs-");
 
-  const result = await runCli(
-    ["--case", scenario.casePath, "--candidate", scenario.candidatePath, "--results-dir", resultsDir],
-    { cwd: scenario.directory, TMPDIR: tempParent, timeoutMs: 10_000 },
-  );
+  const result = await runCli(["run", scenario.casePath, "--results-dir", resultsDir], {
+    cwd: scenario.directory,
+    TMPDIR: tempParent,
+    timeoutMs: 10_000,
+  });
   assert.equal(result.timedOut, false, "CLI remained blocked on a FIFO");
   assert.equal(result.code, 2, result.stderr);
   const record = await readOnlyResult(resultsDir);
@@ -478,10 +464,11 @@ test("integration: FIFO judge evidence fails promptly and the CLI exits", { time
   const resultsDir = await makeTempDir(t, "ae-cli-fifo-judge-results-");
   const tempParent = await makeTempDir(t, "ae-cli-fifo-judge-runs-");
 
-  const result = await runCli(
-    ["--case", scenario.casePath, "--candidate", scenario.candidatePath, "--results-dir", resultsDir],
-    { cwd: scenario.directory, TMPDIR: tempParent, timeoutMs: 10_000 },
-  );
+  const result = await runCli(["run", scenario.casePath, "--results-dir", resultsDir], {
+    cwd: scenario.directory,
+    TMPDIR: tempParent,
+    timeoutMs: 10_000,
+  });
   assert.equal(result.timedOut, false, "CLI remained blocked on a FIFO");
   assert.equal(result.code, 2, result.stderr);
   const record = await readOnlyResult(resultsDir);
@@ -501,10 +488,11 @@ test("integration: pathological regex is bounded and the CLI exits", { timeout: 
   const resultsDir = await makeTempDir(t, "ae-cli-regex-results-");
   const tempParent = await makeTempDir(t, "ae-cli-regex-runs-");
 
-  const result = await runCli(
-    ["--case", scenario.casePath, "--candidate", scenario.candidatePath, "--results-dir", resultsDir],
-    { cwd: scenario.directory, TMPDIR: tempParent, timeoutMs: 10_000 },
-  );
+  const result = await runCli(["run", scenario.casePath, "--results-dir", resultsDir], {
+    cwd: scenario.directory,
+    TMPDIR: tempParent,
+    timeoutMs: 10_000,
+  });
   assert.equal(result.timedOut, false, "CLI remained blocked in regex evaluation");
   assert.equal(result.code, 2, result.stderr);
   const record = await readOnlyResult(resultsDir);
@@ -524,11 +512,11 @@ test("integration: CLI cancellation interrupts and cleans up", async (t) => {
   const resultsDir = await makeTempDir(t, "ae-cli-cancel-results-");
   const tempParent = await makeTempDir(t, "ae-cli-cancel-runs-");
 
-  const child = spawn(
-    process.execPath,
-    ["src/cli.ts", "--case", scenario.casePath, "--candidate", scenario.candidatePath, "--results-dir", resultsDir],
-    { cwd: process.cwd(), env: { ...process.env, TMPDIR: tempParent }, stdio: ["ignore", "pipe", "pipe"] },
-  );
+  const child = spawn(process.execPath, ["src/cli.ts", "run", scenario.casePath, "--results-dir", resultsDir], {
+    cwd: process.cwd(),
+    env: { ...process.env, TMPDIR: tempParent },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
   let stderr = "";
   child.stderr.on("data", (chunk: Buffer) => {
     stderr += chunk.toString("utf8");

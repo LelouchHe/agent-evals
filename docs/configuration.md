@@ -1,6 +1,6 @@
 # Case Configuration
 
-Status: agreed M1 authoring revision; not implemented. The current CLI still requires separate `--case` and `--candidate` files; see [the implemented records](cases.md#m1-supported-records). The pending revision and its acceptance are tracked separately in [the M1 plan](m1-plan.md#single-file-authoring-revision).
+Status: implemented M1 authoring revision. The CLI uses one configuration file; see [supported records](cases.md#implemented-records).
 
 This scope supersedes the earlier `extends` and recursive-override proposal. Support one file and disjoint top-level composition only. Do not implement inheritance, nested merging, deletion operators, or automatic migration between implementation types.
 
@@ -118,7 +118,17 @@ Provide a `view` operation that displays the resolved case with the top-level so
 
 Use the same composition function and resolved values for inspection and execution. Inspection can report parse, structural, and top-level collision errors without runtime preparation. It does not establish that runtime prerequisites such as provider credentials or the harness executable are available; execution performs the full implementation/runtime validation before launching anything.
 
-Do not reuse the existing M1 `validate` methods unchanged as if they were pure inspection functions: they currently check executables, platform support, and the presence of credential variables. The exact CLI syntax and source-annotation serialization are not fixed by this design.
+Do not reuse the runner and checker `validate` methods unchanged as if they were pure inspection functions: they check executables, platform support, and the presence of credential variables. `view` therefore performs parsing, structural, and top-level collision validation only. It does not call implementation validation.
+
+The implemented commands are:
+
+```sh
+node src/cli.ts view <config.yml> [--case <name>]
+node src/cli.ts run <config.yml> [--case <name>] [--results-dir <path>] \
+  [--runner-dir <path>] [--checker-dir <path>]
+```
+
+`view` prints the resolved configuration followed by one `field: origin` line per top-level field, where the origin is `common` or `case "<name>"` and includes the source file and 1-based declaration line. `run` prints the run status and writes the result record.
 
 ## Run Records and Implementation Boundary
 
@@ -128,6 +138,6 @@ Resource-directory or fixture hashing, content/version identifiers, and resource
 
 Do not retain secret values. For environment-provided credentials, retain only their declared variable names. This small configuration record is not a commitment to a generic tracer or offline regrading of all checks.
 
-The existing M1 code does not yet support this single-file format, a `view` operation, source annotations, or resolved-configuration retention. Its delivered two-file CLI and examples remain unchanged until migration.
+The single-file format, `view`, top-level source annotations, and resolved-configuration retention are implemented. A result record stores the source path, optional case name, and the non-sensitive resolved configuration under `resolvedConfig`; it does not include environment values or provide resource snapshots.
 
 See [cases and configuration](cases.md) for shared authoring and implementation-selection rules, [architecture](architecture.md) for responsibilities, and [M1](m1-plan.md) for the delivered behavior.

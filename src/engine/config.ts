@@ -1,6 +1,4 @@
-import { readFile } from "node:fs/promises";
-import { dirname, resolve } from "node:path";
-import { parse } from "yaml";
+import { resolve } from "node:path";
 
 /** A configuration problem detected before any runtime resource is created. */
 export class ConfigError extends Error {
@@ -17,83 +15,64 @@ export interface ImplementationRecord extends ImplementationParams {
   readonly $type: string;
 }
 
+/** One complete, executable case after composition. */
 export interface CaseConfig {
   readonly input: string;
   readonly fixture?: string;
   readonly timeoutMs?: number;
   readonly checks: readonly ImplementationRecord[];
-}
-
-export interface CandidateConfig {
-  readonly name?: string;
   readonly runner: ImplementationRecord;
 }
 
-export interface Loaded<T> {
+/** Where one final top-level case field was declared. Nested values share this origin. */
+export type FieldOrigin =
+  | { readonly file: string; readonly line: number; readonly kind: "common" }
+  | { readonly file: string; readonly line: number; readonly kind: "case"; readonly caseName: string };
+
+/** One source file resolved to a single case, or to common fields plus a selected case. */
+export interface ResolvedCase {
   readonly path: string;
   readonly dir: string;
-  readonly config: T;
+  /** The selected named case, or absent for an ordinary single-case document. */
+  readonly name?: string;
+  readonly config: CaseConfig;
+  /** One annotation per final top-level field in `config`. */
+  readonly origins: Readonly<Record<string, FieldOrigin>>;
 }
 
-const CASE_KEYS = new Set(["input", "fixture", "timeoutMs", "checks"]);
-const CANDIDATE_KEYS = new Set(["name", "runner"]);
+/** Top-level fields allowed in a complete resolved case. */
+export const CASE_FIELD_KEYS: ReadonlySet<string> = new Set(["input", "fixture", "timeoutMs", "checks", "runner"]);
 
-export async function loadCase(path: string): Promise<Loaded<CaseConfig>> {
-  const file = resolve(path);
-  const document = await readYaml(file, "case");
-  const record = expectRecord(document, "case");
-  rejectUnknownKeys(record, CASE_KEYS, "case");
+/** The document-level authoring control for named cases. */
+export const CASES_KEY = "cases";
 
-  const input = expectNonEmptyString(record.input, "case.input");
-  const fixture = record.fixture === undefined ? undefined : expectRelativePath(record.fixture, "case.fixture");
-  const timeoutMs = record.timeoutMs === undefined ? undefined : expectTimeout(record.timeoutMs, "case.timeoutMs");
-  if (!Array.isArray(record.checks) || record.checks.length === 0) {
-    throw new ConfigError("case.checks must be a non-empty list");
-  }
-  const checks = record.checks.map((value, index) => expectImplementationRecord(value, `case.checks[${index}]`));
-
-  return {
-    path: file,
-    dir: dirname(file),
-    config: {
-      input,
-      ...(fixture === undefined ? {} : { fixture }),
-      ...(timeoutMs === undefined ? {} : { timeoutMs }),
-      checks,
-    },
-  };
-}
-
-export async function loadCandidate(path: string): Promise<Loaded<CandidateConfig>> {
-  const file = resolve(path);
-  const document = await readYaml(file, "candidate");
-  const record = expectRecord(document, "candidate");
-  rejectUnknownKeys(record, CANDIDATE_KEYS, "candidate");
-
-  const name = record.name === undefined ? undefined : expectNonEmptyString(record.name, "candidate.name");
-  const runner = expectImplementationRecord(record.runner, "candidate.runner");
-
-  return { path: file, dir: dirname(file), config: { ...(name === undefined ? {} : { name }), runner } };
-}
-
-/** Resolve an authoring asset relative to the configuration file that declares it. */
+/** Resolve an authoring asset relative to the file that declares it. */
 export function resolveAuthoringAsset(declaringDir: string, relativePath: string, label: string): string {
   assertRelativePath(relativePath, label);
   return resolve(declaringDir, relativePath);
 }
 
-async function readYaml(file: string, kind: string): Promise<unknown> {
-  let text: string;
-  try {
-    text = await readFile(file, "utf8");
-  } catch (error) {
-    throw new ConfigError(`could not read ${kind} configuration ${file}: ${errorMessage(error)}`);
+/** Validate a complete resolved case record and return its typed configuration. */
+export function expectCaseConfig(value: unknown, label: string): CaseConfig {
+  const record = expectRecord(value, label);
+  rejectUnknownKeys(record, CASE_FIELD_KEYS, label);
+
+  const input = expectNonEmptyString(record.input, `${label}.input`);
+  const fixture = record.fixture === undefined ? undefined : expectRelativePath(record.fixture, `${label}.fixture`);
+  const timeoutMs = record.timeoutMs === undefined ? undefined : expectTimeout(record.timeoutMs, `${label}.timeoutMs`);
+  if (!Array.isArray(record.checks) || record.checks.length === 0) {
+    throw new ConfigError(`${label}.checks must be a non-empty list`);
   }
-  try {
-    return parse(text);
-  } catch (error) {
-    throw new ConfigError(`invalid YAML in ${kind} configuration ${file}: ${errorMessage(error)}`);
-  }
+  const checks = record.checks.map((check, index) => expectImplementationRecord(check, `${label}.checks[${index}]`));
+  const runner = expectImplementationRecord(record.runner, `${label}.runner`);
+
+  return {
+    input,
+    ...(fixture === undefined ? {} : { fixture }),
+    ...(timeoutMs === undefined ? {} : { timeoutMs }),
+    checks,
+    runner,
+  };
 }
 
 function expectRecord(value: unknown, label: string): Record<string, unknown> {
@@ -106,7 +85,7 @@ function expectRecord(value: unknown, label: string): Record<string, unknown> {
 function expectImplementationRecord(value: unknown, label: string): ImplementationRecord {
   const record = expectRecord(value, label);
   const type = record.$type;
-  if (typeof type !== "string" || type.length === 0) {
+  if (typeof type !== "string" || type.trim().length === 0) {
     throw new ConfigError(`${label}.$type must be a non-empty string`);
   }
   return record as ImplementationRecord;
