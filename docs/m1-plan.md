@@ -71,13 +71,14 @@ npm run check
 
 This runs ESLint, Prettier checks, TypeScript checking, and tests. Husky checks lint/format before commits and the complete gate before pushes; see [Development](../README.md#development) for the hook boundaries.
 
-The same gates passed from a clean clone after `npm ci` on Node 24.22.2 and macOS 15.5. Final implementation `fc2b131` passed both gates again during parent verification: 83 tests passed, with no failures or skips.
+On Node 24.22.2 and macOS 15.5, implementation `fc2b131` passed type checking and all 83 tests, including from a clean clone. Tooling commit `9d5e31b` subsequently passed the complete development gate with 91 tests and no failures or skips, both locally and after `npm ci` in an external clean clone. The clean install automatically configured repository-local Husky hooks, and dependency resolution was verified to stay within that installation.
 
 ### Review Closure
 
 - Independent read-only review covered `98d0b83..f44d29b`. Its six concrete findings were repaired in `c28bcd3`: replaced-root containment, ordinary background-process cleanup, FIFO evidence, final provider-error classification, regex execution bounds, and `unchanged: false` rejection.
 - Focused independent closure confirmed those original reproducers were addressed and identified a repair-introduced host-signaling capability through the writable process-group registry. `fc2b131` removed that host consumer and moved cleanup into the same Seatbelt instance as Pi.
 - Parent verification inspected the final authority boundary and reran `npm run typecheck` and `npm test`. A separate real Pi RPC/Seatbelt probe confirmed that a forged registry entry neither killed nor stopped an unrelated synthetic process: its heartbeat continued after teardown, while the owned shell was terminated. No model, network, or credentials were used.
+- Independent review of tooling range `d84cc23..9d5e31b` found no material introduced defects and independently passed all eight real Git-hook tests. The temporary, reviewed `minimatch` advisory treatment and its reassessment triggers are recorded in [Development](../README.md#development).
 - This closes the reviewed concrete mechanisms, not universal containment of arbitrary child processes. The limitations below and real-model smoke acceptance remain separate.
 
 ### Test Coverage
@@ -92,6 +93,7 @@ The suite includes:
 - Deterministic fake Pi RPC processes for success, invalid protocol data, failed start, final provider error, error-then-success retry, timeout, cancellation, owned-child termination, and SIGTERM escalation.
 - Integration tests for success, failed checks, checker failures, cleanup, fixture preservation, baseline isolation for `unchanged`, a replaced workspace root, FIFO evidence, pathological regex bounds, configuration rejection before resource creation, different invocation working directories, and CLI signal cancellation.
 - File-checker and judge-checker unit tests for their complete parameter and result behavior.
+- Real Git/Husky hook tests with isolated local bare remotes: valid commit/push, lint and formatting rejection without rewriting files, type and runtime-test failure rejection, and safeguards against validating a dirty worktree or a different outgoing commit.
 
 ## Remaining Work
 

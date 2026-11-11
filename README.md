@@ -74,7 +74,9 @@ Prettier uses 120-column wrapping and its default two-space, double-quote, semic
 - **pre-commit:** checks lint and formatting for the whole project; it never rewrites or stages files automatically.
 - **pre-push:** runs the complete gate. New trees may be pushed only from the checked-out `HEAD` with a clean worktree, so the checked files match the outgoing commit. Ref deletions do not upload a new tree and skip the gate.
 
-The current ESLint toolchain has a transitive `minimatch` glob-expansion denial-of-service advisory reported by `npm audit`. It affects development dependencies and this project's trusted lint configuration patterns, not evaluation runtime dependencies. No forced dependency downgrade or major-version override is applied; reassess when upstream supplies a compatible fix.
+The pinned development toolchain contains `minimatch@10.2.6`, affected by [GHSA-g3hv-75wg-m249](https://github.com/advisories/GHSA-g3hv-75wg-m249). The advisory requires an attacker-controlled glob pattern and `optimizationLevel >= 2`. The reviewed ESLint/config-array/TypeScript-ESTree call sites use the default level 1; independent instrumentation of the real lint run found no level-2 calls. The runtime-only audit (`npm audit --omit=dev`) reported no advisories.
+
+This advisory is temporarily accepted for the reviewed, pinned toolchain; the dependency is not considered fixed. Reassess when compatible upstream tool releases adopt patched `minimatch` (11.0.1 or later), when matching options/defaults change, or when a new path combines untrusted patterns with level-2 optimization. Do not force a dependency downgrade or blanket major-version override just to clear the audit.
 
 ## Limitations
 
