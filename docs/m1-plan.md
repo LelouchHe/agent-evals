@@ -61,7 +61,7 @@ Acceptance:
 - [x] Retain the resolved non-sensitive configuration, source path, and optional case name per run. Resource/fixture hashing and resource snapshots are not required and complete reproduction is not claimed.
 - [x] Migrate the CLI and checked-in example to the single-file contract and update the commands actually supported; do not keep Candidate as a required authoring entity. Label the existing real-model smoke as validation of the original two-file format, not a live-model test of the migrated loader/example. Report the new format's model-free verification separately.
 - [x] Add focused parser/resolver/selection/view/result tests and pass the complete model-free gate.
-- [ ] Complete the bounded independent implementation review of this revision and record its closure.
+- [x] Complete the bounded independent implementation review of this revision and record its closure.
 
 This revision does not authorize another live-model smoke or renew the earlier invocation budget; any such rerun requires explicit approval.
 
@@ -73,7 +73,7 @@ Status: implemented as a private local npm package from the same CLI source; not
 - [x] The build includes runtime assets that are executed separately from the main module: the regex worker, sandbox-resident supervisor, safe process-group helper, and shell wrapper.
 - [x] The tarball allowlist contains only built runtime files, README, LICENSE, and package metadata; source, tests, docs, results, dev tooling, and generated logs are excluded.
 - [x] A clean external checkout built and packed the tarball, and a disposable `npm install --prefix` succeeded without repository metadata, TypeScript, Husky, or global install; `yaml` resolved inside that install.
-- [ ] Cumulative independent review of the authoring and packaged-CLI revisions remains pending.
+- [x] Complete cumulative independent review of the authoring and packaged-CLI revisions, with focused parent verification of the test-cleanup repair.
 
 ## Delivered
 
@@ -117,14 +117,19 @@ CLI test-cleanup repair `eefdff0` passed the complete gate with 109 tests and no
 - Focused independent closure confirmed those original reproducers were addressed and identified a repair-introduced host-signaling capability through the writable process-group registry. `fc2b131` removed that host consumer and moved cleanup into the same Seatbelt instance as Pi.
 - Parent verification inspected the final authority boundary and reran `npm run typecheck` and `npm test`. A separate real Pi RPC/Seatbelt probe confirmed that a forged registry entry neither killed nor stopped an unrelated synthetic process: its heartbeat continued after teardown, while the owned shell was terminated. No model, network, or credentials were used.
 - Independent review of tooling range `d84cc23..9d5e31b` found no material introduced defects and independently passed all eight real Git-hook tests. The temporary, reviewed `minimatch` advisory treatment and its reassessment triggers are recorded in [Development](../README.md#development).
-- This closes the reviewed concrete mechanisms, not universal containment of arbitrary child processes. The successful real-model smoke below does not remove the documented capability limits.
+- The independent Claude implementation review covered `71c9fdc..a87347f` and found no push-blocking issue. The parent separately reviewed the test-only repair `a87347f..a656ff8`, reran both focused cleanup regressions, and repeated the actual-helper outer-timeout probe: a 600ms test deadline exited in approximately 705ms with its synthetic child reaped.
+- Parent artifact verification at `a656ff8` used a fresh external checkout, local tarball, and production-only disposable installation. All 25 tarball entries were runtime/package files; `yaml` resolved inside the install; installed and npm help/view output matched; direct installed view needed only Node on PATH; and an installed fake-runtime run passed all eight file/worker/judge checks with cleanup and no retained synthetic secret.
+- Review dispositions: the range-introduced non-atomic development build is accepted as an M1 operational limit, with serialized checkout commands documented in [Development](../README.md#development). A no-model concurrent-build/view probe reproduced missing-module failures; using a separate installed prefix avoids that checkout's changing `dist/`. No atomic build/generation mechanism was added.
+- Non-blocking follow-ups remain: parser warnings for unknown YAML tags are not surfaced as errors, and control characters in case names are not escaped in human-readable output. The review also confirmed the temporary supervisor's dependence on Node module-syntax detection is pre-existing, not introduced by this range. These observations do not extend the authoring scope or imply fixes were made.
+- The post-edit result re-read in the retention test is retained as a consistency guard, not counted as independent behavioral proof; the direct `resolvedConfig` value assertions and their omission mutation provide the meaningful retention evidence. No existing test was deleted.
+- This closes the reviewed concrete mechanisms, not universal containment of arbitrary child processes. The successful historical real-model smoke below does not remove the documented capability limits.
 
 ### Single-File Revision Verification
 
 - The model-free suite exercised the real installed `yaml` parser, source positions, duplicate-key errors, and forbidden anchor/alias/`<<` structures at root and nested locations.
-- Real macOS Seatbelt probes and installed-Pi RPC bash/skill probes passed without prompts, model calls, network, or credentials. Deterministic fake RPC executables covered `run` integration, `view`/`run` payload equality, credential-free `view`, harness-canary non-invocation, and result retention after YAML edits.
+- Real macOS Seatbelt probes and installed-Pi RPC bash/skill probes passed without prompts, model calls, network, or credentials. Deterministic fake RPC executables covered `run` integration, `view`/`run` payload equality, credential-free `view`, harness-canary non-invocation, and retained resolved-configuration values.
 - The packaged `agent-evals` bin and `npm run eval` produced identical help and view output. The clean local tarball installed without dev dependencies or Git metadata; its installed run verified the generated supervisor, safe-process-group, shell wrapper, regex worker, file checks, and independent fake judge.
-- The bounded independent review of these revisions is still pending in the acceptance lists above; this handoff's tests are evidence for review, not a substitute.
+- Independent review and parent-focused closure are recorded above. The implementation and packaged artifact remain model-free validated; the original two-file live smoke is not evidence of live-model validation for this migration.
 
 ### Real-Model Smoke
 
@@ -166,6 +171,7 @@ The suite includes:
 
 - macOS only; no Linux or container backend.
 - One initial user message and one resolved case per invocation.
+- Checkout development builds replace shared `dist/` non-atomically. Do not overlap checkout-based evaluations with build/test/pack/check/push; use a separate installed package prefix for concurrent runs.
 - The installable CLI is a Node.js package rather than a self-contained executable; it requires Node.js 24+, its declared `yaml` dependency, the packaged `dist/` layout, and macOS Seatbelt for execution.
 - Checks run after the agent stops but before workspace cleanup; full snapshots are not retained and results cannot be regraded after cleanup.
 - Judge evidence is limited to one file. There is no generic evidence-reference language.

@@ -87,6 +87,8 @@ The tarball contains the built runtime under `dist/`, plus README, LICENSE, and 
 | `npm run check`        | Run lint, formatting, type checking, and the full build-backed test suite in order.                |
 | `npm run eval`         | Rebuild and run the same `dist/cli.js` entry point exposed as the installed `agent-evals` command. |
 
+Development builds replace the checkout's shared `dist/` non-atomically. Serialize checkout-based evaluations with build, test, pack, check, and push commands: rebuilding during an active checkout-based evaluation can remove a runtime asset it has not loaded yet. For concurrent evaluations, use an installed tarball in a separate prefix and do not rebuild or replace that installation while it is in use. This development-build limitation is accepted for M1, not a concurrency guarantee.
+
 Prettier uses 120-column wrapping and its default two-space, double-quote, semicolon style. Generated results, generated `dist/` output, tarballs, Husky internals, and local agent adapters are excluded from formatting and version control. The executable malformed-protocol fixture keeps a narrowly scoped ESLint exception for its existing `@ts-nocheck`; other TypeScript files retain the recommended rule.
 
 - **pre-commit:** checks lint and formatting for the whole project; it never rewrites or stages files automatically.
