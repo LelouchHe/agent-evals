@@ -1,6 +1,8 @@
 # Cases and Configuration
 
-A case is a human-readable experiment specification. This document describes authoring principles and agreed configuration conventions, not a complete case schema.
+A case is a human-readable, executable test definition. This document describes shared authoring principles and the implemented M1 records, not a complete general schema.
+
+The agreed next authoring format is documented in [Configuration Composition](configuration.md): ordinary single-case documents, optional common configuration through `extends`, named `cases` overrides, and provenance-aware `view`. That format is not implemented yet; the current CLI still uses the two M1 files below.
 
 Write a case the way you would write a test: control the inputs, observe the outputs and side effects, and focus on one behavior. See [Cases as Tests](architecture.md#cases-as-tests) for the analogy, its limits, and the direction for mocked tools and services.
 
@@ -12,10 +14,13 @@ Use YAML to keep the following decisions together:
 - The initial environment: files, environment variables, setup steps, required tools or services, and any failure conditions to exercise.
 - Checks: selected implementations, parameters, success and failure criteria, and rubrics.
 - Case-specific execution requirements, such as a timeout.
+- The runner and its implementation-owned configuration in the resolved case.
 
-The input is a real message and prepared environment, not a requirement to fill prompt-template variables. Do not silently rewrite candidate prompts or interpolate arbitrary YAML strings.
+The input is a real message and prepared environment, not a requirement to fill prompt-template variables. Do not silently rewrite evaluated prompts or interpolate arbitrary YAML strings.
 
-Declare candidates separately so the same case can compare different skills, workflows, configurations, or harnesses without duplicating the task definition. Prefer explicit fixtures, commands, or scripts for setup rather than asking another LLM to improvise it.
+A case may be specific to the skill or capability under test. Reuse shared fields or cases only when the relevant expectations are genuinely shared; do not require every case to apply to every evaluated system. Named cases need not form a comparison group. Prefer explicit fixtures, commands, or scripts for setup rather than asking another LLM to improvise it.
+
+The next format does not require separate Candidate or Subject entities. A single saved document can be directly runnable, or named cases can override common fields. Persist test inputs rather than depending on temporary shell parameters, and retain each run's resolved non-sensitive configuration and evaluated-content identity.
 
 ## Keep Related Assets Together
 
@@ -36,14 +41,14 @@ cases/
 - Keep fixtures, dedicated setup, and case-specific checks beside the case. Extract shared assets only after real reuse appears, and reference them explicitly.
 - Share definitions and initial data, not mutable runtime state. Each run gets an independent copy or read-only access to shared inputs.
 - Store retained results and diagnostics separately. Do not rewrite case definitions or contaminate fixtures.
-- Expose only intended messages, environment data, and candidate resources to the evaluated agent. Keep case definitions, checkers, rubrics, and reference answers outside its view by default.
+- Expose only intended messages, environment data, and evaluated resources to the agent. Keep case definitions, checkers, rubrics, and reference answers outside its view by default.
 - Do not create empty directories in advance or require scripts for every case.
 
 ## Select Implementations with `$type`
 
 Runner and checker configuration records use `$type` to select a discovered implementation. This is a project convention, not a built-in YAML feature.
 
-A run or candidate configuration can select a runner:
+The resolved case configuration selects a runner:
 
 ```yaml
 runner:
@@ -70,11 +75,11 @@ checks:
 - Only `$type` has agreed engine-defined semantics in these records. `$ref`, `$env`, and arbitrary string interpolation are not implicit YAML capabilities.
 - Shared configuration should reuse the same implementation configuration shape rather than introduce judge-specific core sections.
 
-These fragments establish selection and parameter ownership. They do not define every case field or claim the illustrated implementations already exist.
+These fragments establish selection and parameter ownership. They do not define every case field or implement the planned composition layer.
 
 ## M1 Supported Records
 
-The first implementation supports a deliberately small shape. It does not define a general case schema.
+The delivered implementation supports a deliberately small, two-file shape. These records and the existing `--case` / `--candidate` CLI remain valid until migration; the agreed composition format is not available in code yet.
 
 A case supplies one input message, an optional fixture directory, an optional execution timeout, and checks:
 
@@ -95,7 +100,7 @@ checks:
       - hello.txt exists and its content is "Hello, world!", allowing one final newline.
 ```
 
-A candidate selects the runner and its parameters:
+The current M1 candidate file selects the runner and its parameters. This is the existing implementation contract, not a requirement to retain a Candidate entity in the next format:
 
 ```yaml
 name: pi-with-skill
@@ -107,7 +112,7 @@ runner:
   envPassthrough: [API_KEY] # optional allowlist; values are not recorded
 ```
 
-All fields except `$type` belong to the selected implementation. Unknown fields, unknown implementations, invalid regular expressions, and missing authoring assets are configuration errors reported before any runtime resource is created.
+Within a runner or checker record, all fields except `$type` belong to the selected implementation. Unknown fields, unknown implementations, invalid regular expressions, and missing authoring assets are configuration errors reported before any runtime resource is created.
 
 ### `pi` Runner Parameters
 
@@ -174,6 +179,6 @@ Models and connection settings remain runner or checker parameters. Checkers con
 
 Cases may be organized and selected as train, dev, or test data. Here, train may mean examples used to improve prompts, workflows, or configurations rather than model weights.
 
-Train and dev data may be inspected repeatedly during development. Keep test data for held-out validation and avoid exposing its answers to the optimization process. Watch for leakage across related tasks and near-duplicate variants. Manage judge calibration examples separately from candidate test sets.
+Train and dev data may be inspected repeatedly during development. Keep test data for held-out validation and avoid exposing its answers to the optimization process. Watch for leakage across related tasks and near-duplicate variants. Manage judge calibration examples separately from the evaluated test sets.
 
 See [architecture](architecture.md) for runtime responsibilities and [M1](m1-plan.md) for the concrete first delivery.

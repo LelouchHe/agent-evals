@@ -25,6 +25,8 @@ Create an isolated run directory
 
 [M1](docs/m1-plan.md) is implemented: one local filesystem evaluation with a Pi RPC runner, direct macOS Seatbelt enforcement, and `file` and `judge` checkers. The checked-in example selects OpenCode Go's DeepSeek Flash for both runner and judge and requires an explicit `OPENCODE_API_KEY` environment variable. The bounded independent review, focused repair verification, and approved real-model smoke are complete. The smoke verifies integration, not that the skill improves behavior. Routine tests never call a model.
 
+The next [configuration composition format](docs/configuration.md)—single-file cases, `extends`, named `cases` overrides, and source-annotated `view`—is agreed design but not implemented. The commands below still require the current M1 case and candidate files.
+
 Requirements: macOS with `sandbox-exec`, Node.js 24 or newer, and the `pi` CLI on `PATH` for runner and judge invocations.
 
 The repository stays private during initial development. Reconsider publication once the initial skill-evaluation tooling is usable; visibility changes require explicit approval.
@@ -104,7 +106,8 @@ Module unit tests are co-located with their modules; `tests/` holds cross-module
 ## Documentation
 
 - [Architecture](docs/architecture.md): overall direction, responsibilities, execution boundaries, and evidence collection.
-- [Cases and configuration](docs/cases.md): YAML authoring, assets, implementation selection, checks, and dataset organization.
+- [Cases and configuration](docs/cases.md): authoring principles, assets, implementation selection, and currently supported M1 records.
+- [Configuration composition](docs/configuration.md): agreed, not-yet-implemented single/multiple-case authoring, inheritance, overrides, and configuration inspection.
 - [M1 plan](docs/m1-plan.md): the first milestone's goal, implementation steps, acceptance, and trade-offs.
 
 Milestone plans own their delivery details. Larger milestones may split into plans such as `m1a-plan.md` and `m1b-plan.md`, with the parent retaining the overall goal and acceptance criteria.
