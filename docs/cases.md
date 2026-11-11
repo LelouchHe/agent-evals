@@ -2,6 +2,8 @@
 
 A case is a human-readable experiment specification. This document describes authoring principles and agreed configuration conventions, not a complete case schema.
 
+Write a case the way you would write a test: control the inputs, observe the outputs and side effects, and focus on one behavior. See [Cases as Tests](architecture.md#cases-as-tests) for the analogy, its limits, and the direction for mocked tools and services.
+
 ## What a Case Describes
 
 Use YAML to keep the following decisions together:
