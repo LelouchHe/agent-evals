@@ -15,7 +15,7 @@ Use YAML for human-authored cases. Keep the following decisions together:
 
 - **Prompt**: the actual user request, goals, and constraints supplied to the agent.
 - **Environment**: initial files, setup steps, required tools or services, and any failure conditions to exercise.
-- **Checks**: selected checker implementations, their parameters, success and failure criteria, and named rubric dimensions.
+- **Checks**: selected checker implementations, their parameters, success and failure criteria, and rubrics.
 - **Execution requirements**: capabilities and case-specific constraints, such as a timeout.
 
 Declare candidates separately so the same case can compare different skills, workflows, configurations, or harnesses without duplicating the task definition.
@@ -78,14 +78,46 @@ Evidence includes observed events, outputs, artifacts, and measurements, not jus
 
 Stable contracts let implementations grow without routine engine changes; genuinely new requirements may still justify explicit contract evolution.
 
+## Implementation Selection with `$type`
+
+Runner and checker configuration records use `$type` to select a discovered implementation. This is a project convention, not a built-in YAML feature.
+
+For example, run or candidate configuration can select a runner:
+
+```yaml
+runner:
+  $type: pi
+  model: provider/model-under-test
+  thinking: high
+```
+
+A case can select a checker using the same convention:
+
+```yaml
+checks:
+  - $type: llm-judge
+    model: provider/judge-model
+    rubric:
+      - Each step describes a concrete action.
+      - The guide covers preparation and verification.
+```
+
+- The engine consumes `$type` and passes all remaining fields to the selected implementation as its parameter object, without requiring a separate `params` wrapper.
+- Fields such as `model`, `thinking`, and `rubric` belong to the implementation. The engine does not interpret them or add implementation-specific branches for them.
+- Plain `type` remains available as an implementation parameter; it is not the engine's selector.
+- Missing or unknown implementations and invalid parameters are configuration errors, not reasons for implicit fallback.
+- Only `$type` currently has engine-defined semantics in these records. Do not introduce `$ref`, `$env`, or other engine directives in advance; YAML does not provide those features automatically.
+
+These examples establish implementation selection and parameter ownership, not a complete case schema or a promise that the illustrated parameters are implemented.
+
 ## Declarative Checks and Named Dimensions
 
 - Do not introduce separate routing and behavior case types, files, or execution pipelines. Whether a skill was loaded and how the agent acted are evaluation concerns expressed through checks and evidence.
 - Prefer reusable declarative checks for common needs. Custom code is an extension path, not mandatory boilerplate for every case.
-- A check identifies its checker, and its body supplies that checker's parameters. Keep exact YAML field names and wire formats out of this principles document until exercised by real cases.
+- A check selects its checker with `$type`; the remaining body supplies that checker's parameters. Other case fields and invocation wire formats should be established through real cases rather than speculative schema design.
 - A checker can return several named results. Correctness, completeness, constraint adherence, and similar dimensions are case data, not separate checker classes or fixed global categories.
-- The built-in LLM judge should accept multiple rubric dimensions and preserve their individual results. Multiple dimensions do not require multiple checker implementations or necessarily multiple model calls.
-- Keep shared judge model and connection settings in run configuration. Cases primarily supply their criteria and any justified overrides.
+- The built-in LLM judge should accept multiple rubric criteria and preserve their individual results. Criteria do not require fixed category labels; a list of grading statements is sufficient. Multiple criteria do not require multiple checker implementations or necessarily multiple model calls.
+- Models and connection settings are runner or checker parameters, not special engine-level fields. Shared configuration should reuse the same implementation configuration shape rather than introduce judge-specific core sections.
 
 Skills, workflows, configurations, and harnesses do not each need a hard-coded execution pipeline. Different evaluation concerns mainly belong in checks; differences in interaction and evidence capture belong in runners. Required tool or service capabilities must exist before a case can be evaluated; their absence must not turn a restraint into a vacuous pass.
 
