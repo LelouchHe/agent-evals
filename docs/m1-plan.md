@@ -65,11 +65,22 @@ Acceptance:
 
 This revision does not authorize another live-model smoke or renew the earlier invocation budget; any such rerun requires explicit approval.
 
+## Installable CLI
+
+Status: implemented as a private local npm package from the same CLI source; not published, globally installed, or npm-linked.
+
+- [x] `src/cli.ts` is the sole parser and command implementation. `npm run build` emits `dist/cli.js`; `npm run eval` and the installed `agent-evals` bin both execute that built entry point.
+- [x] The build includes runtime assets that are executed separately from the main module: the regex worker, sandbox-resident supervisor, safe process-group helper, and shell wrapper.
+- [x] The tarball allowlist contains only built runtime files, README, LICENSE, and package metadata; source, tests, docs, results, dev tooling, and generated logs are excluded.
+- [x] A local tarball install works without repository checkout, TypeScript, Husky, or Git metadata, and resolves `yaml` inside the disposable install.
+- [ ] Cumulative independent review of the authoring and packaged-CLI revisions remains pending.
+
 ## Delivered
 
-- A TypeScript CLI resolves and runs or inspects one case: `node src/cli.ts run <config.yml> [--case <name>]` and `node src/cli.ts view <config.yml> [--case <name>]`.
+- A TypeScript CLI resolves and runs or inspects one case. The installed command is `agent-evals run <config.yml> [--case <name>]` or `agent-evals view <config.yml> [--case <name>]`; the development form `npm run eval -- <command>` builds and executes the same `dist/cli.js`.
 - `src/engine/authoring.ts` parses one YAML document with the installed `yaml` library, rejects unsupported reuse syntax and duplicate keys from the parsed structure, composes common and selected fields only when their top-level keys are disjoint, and records each final top-level field's source file, declaration line, and common/selected-case origin. Execution and `view` use this one resolver; `view` does not call run-only implementation validation.
 - A run result retains the source path, optional case name, and the non-sensitive resolved configuration under `resolvedConfig`. Case names are metadata only and never escape the result-directory layout. Resource contents and environment values are not retained.
+- `scripts/build.mjs` emits JavaScript under ignored `dist/` with normal TypeScript, copies the shell wrapper, and verifies the built CLI shebang. The package `bin` points at `dist/cli.js`; generated output is not committed.
 - `src/engine` loads and validates YAML, resolves configuration-relative authoring assets, discovers trusted implementations from explicit directories, orchestrates the run, and writes a small result record.
 - `src/runners/pi` drives Pi through native RPC with one prompt and autonomous tool turns, bounded command and agent deadlines, process-group termination, and isolated HOME, Pi configuration, and scratch state.
 - `src/platform/macos` renders a deny-default Seatbelt profile and launches the sandboxed process group. Reads are limited to declared system/toolchain paths and run state; writes to run state; outbound network is allowed for model access.
@@ -96,6 +107,8 @@ On Node 24.22.2 and macOS 15.5, implementation `fc2b131` passed type checking an
 
 Single-file implementation commit `dbb7b34` passed the complete gate with 104 tests and no failures or skips at normal suite concurrency. The same commit was cloned to an external `/tmp` checkout outside the repository's module-resolution ancestry; `npm ci` and `npm run check` both exited 0 with the same 104 passing tests. The resolved `yaml` module path was inside that checkout's own `node_modules`, so the run did not fall back to the source worktree. No model, remote provider, or credential value was used.
 
+The packaged-CLI revision subsequently passed the complete gate with 107 tests and no failures or skips at normal concurrency. A clean external checkout built and packed the package, and a disposable `npm install --prefix` of the local tarball succeeded without repository metadata, TypeScript, or Husky. The installed `agent-evals` command ran `--help`, `view`, and a deterministic fake-runtime `run`; `yaml` resolved inside that installation, and packaged supervisor/helper/worker/wrapper assets were exercised by the run. No model, remote provider, or credential value was used.
+
 ### Review Closure
 
 - Independent read-only review covered `98d0b83..f44d29b`. Its six concrete findings were repaired in `c28bcd3`: replaced-root containment, ordinary background-process cleanup, FIFO evidence, final provider-error classification, regex execution bounds, and `unchanged: false` rejection.
@@ -108,7 +121,8 @@ Single-file implementation commit `dbb7b34` passed the complete gate with 104 te
 
 - The model-free suite exercised the real installed `yaml` parser, source positions, duplicate-key errors, and forbidden anchor/alias/`<<` structures at root and nested locations.
 - Real macOS Seatbelt probes and installed-Pi RPC bash/skill probes passed without prompts, model calls, network, or credentials. Deterministic fake RPC executables covered `run` integration, `view`/`run` payload equality, credential-free `view`, harness-canary non-invocation, and result retention after YAML edits.
-- The bounded independent review of this revision is still pending in the acceptance list above; this handoff's tests are evidence for that review, not a substitute.
+- The packaged `agent-evals` bin and `npm run eval` produced identical help and view output. The clean local tarball installed without dev dependencies or Git metadata; its installed run verified the generated supervisor, safe-process-group, shell wrapper, regex worker, file checks, and independent fake judge.
+- The bounded independent review of these revisions is still pending in the acceptance lists above; this handoff's tests are evidence for review, not a substitute.
 
 ### Real-Model Smoke
 
@@ -141,6 +155,7 @@ The suite includes:
 - Integration tests for success, failed checks, checker failures, cleanup, fixture preservation, baseline isolation for `unchanged`, a replaced workspace root, FIFO evidence, pathological regex bounds, configuration rejection before resource creation, different invocation working directories, and CLI signal cancellation.
 - Authoring parser/resolver tests against real YAML source positions: ordinary and named documents, explicit selection, empty or invalid case maps and names, common/selected collisions including identical values and nested-only differences, sibling independence, forbidden anchors/aliases/`<<` at nested positions, quoted and literal reuse-like text, duplicate keys, malformed shapes, incomplete fragments, and metadata-only names.
 - CLI integration for `view` and fake-runtime `run` from another working directory. `view` succeeds with `pi` unavailable and no provider credential, does not launch a harness canary, does not print an environment secret, and shows expected declaration lines. `view` and `run` are compared through the same resolved payload. A retained result is checked after the YAML is edited, and a path-like case name does not control the result location.
+- Packaged-artifact tests assert the `bin` and `eval` script use the same built entry, source and built help/view output match, and required generated assets include the regex worker, supervisor, safe-group helper, and shell wrapper. A deterministic fake-runtime run through the built CLI exercises those packaged assets, file checks, the regex worker, and an independent fake judge.
 - File-checker and judge-checker unit tests for their complete parameter and result behavior.
 - Real Git/Husky hook tests with isolated local bare remotes: valid commit/push, lint and formatting rejection without rewriting files, type and runtime-test failure rejection, and safeguards against validating a dirty worktree or a different outgoing commit.
 
@@ -148,6 +163,7 @@ The suite includes:
 
 - macOS only; no Linux or container backend.
 - One initial user message and one resolved case per invocation.
+- The installable CLI is a Node.js package rather than a self-contained executable; it requires Node.js 24+, its declared `yaml` dependency, the packaged `dist/` layout, and macOS Seatbelt for execution.
 - Checks run after the agent stops but before workspace cleanup; full snapshots are not retained and results cannot be regraded after cleanup.
 - Judge evidence is limited to one file. There is no generic evidence-reference language.
 - Model networking was smoke-tested only with the example's OpenCode Go endpoint; other providers/endpoints remain unverified.

@@ -57,7 +57,12 @@ async function fixture(t: TestContext, content = "export const value = 1;\n") {
     scripts: Record<string, string>;
   };
   const scripts: Record<string, string> = { ...actualPackage.scripts, test: "node --test smoke.test.mjs" };
-  delete scripts.eval;
+  // The hook fixture has no build pipeline; it exercises the real lint, format,
+  // type, and test commands on synthetic sources. The main project gate covers
+  // the real build and packaged-artifact tests.
+  for (const name of ["eval", "build", "pretest", "prepack", "preeval"]) {
+    delete scripts[name];
+  }
   await writeFile(
     join(repo, "package.json"),
     JSON.stringify({ private: true, type: "module", scripts }, null, 2) + "\n",
@@ -88,8 +93,10 @@ async function fixture(t: TestContext, content = "export const value = 1;\n") {
   );
   await mkdir(join(repo, "src"));
   await mkdir(join(repo, "tests"));
+  await mkdir(join(repo, "scripts"));
   await writeFile(join(repo, "src", "example.ts"), content);
   await writeFile(join(repo, "tests", "sample.ts"), "export const checked = true;\n");
+  await writeFile(join(repo, "scripts", "build.mjs"), "export const built = true;\n");
 
   for (const name of [
     "eslint.config.mjs",

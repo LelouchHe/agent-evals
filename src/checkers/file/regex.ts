@@ -1,4 +1,5 @@
 import { Worker } from "node:worker_threads";
+import { siblingRuntimeModule } from "../../engine/runtime-assets.ts";
 
 /** Hard ceiling for one regex evaluation batch, enforced by worker termination. */
 const REGEX_EVALUATION_TIMEOUT_MS = 5_000;
@@ -33,7 +34,7 @@ export function evaluateRegexes(
     let settled = false;
     let worker: Worker;
     try {
-      worker = new Worker(new URL("./regex-worker.ts", import.meta.url), {
+      worker = new Worker(siblingRuntimeModule(import.meta.url, "regex-worker"), {
         workerData: { content, patterns },
       });
     } catch (error) {

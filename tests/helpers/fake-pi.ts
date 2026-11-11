@@ -178,6 +178,19 @@ function handlePrompt(command) {
       }
       settle(JSON.stringify({ criteria: [{ criterion: "copied", pass: true, reason: "recorded" }] }));
       break;
+    case "record-tools": {
+      const configDir = process.env.PI_CODING_AGENT_DIR ?? "";
+      const toolsDir = join(dirname(configDir), "tools");
+      const names = readdirSync(toolsDir).sort();
+      const shell = readFileSync(join(toolsDir, "shell-wrapper.sh"), "utf8");
+      writeFileSync(
+        join(process.cwd(), "tools.json"),
+        JSON.stringify({ names, shellHasStateDir: shell.includes("AGENT_EVALS_SHELL_STATE_DIR") }),
+      );
+      writeFileSync(join(process.cwd(), "hello.txt"), "Hello, world!\n");
+      settle("Recorded staged tools.");
+      break;
+    }
     case "crash":
       setTimeout(() => process.exit(1), 20);
       break;

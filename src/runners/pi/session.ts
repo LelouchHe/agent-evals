@@ -1,7 +1,9 @@
 import { access, mkdir, readFile, realpath, stat, writeFile } from "node:fs/promises";
 import { constants } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { ConfigError, errorMessage } from "../../engine/config.ts";
+import { siblingRuntimeModule } from "../../engine/runtime-assets.ts";
 import { spawnSandboxed } from "../../platform/macos/launch.ts";
 import { writeSeatbeltPolicy, type SandboxPolicy } from "../../platform/macos/policy.ts";
 import { PiProcess, PiRpcError } from "./rpc.ts";
@@ -152,12 +154,12 @@ export async function createPiProcess(config: PiSessionConfig): Promise<PiProces
 
   const toolsDir = shellToolsDirectory(config);
   await mkdir(toolsDir, { recursive: true, mode: 0o700 });
-  const supervisorPath = join(toolsDir, "supervisor.ts");
-  const safeGroupPath = join(toolsDir, "safe-process-group.ts");
-  await writeFile(supervisorPath, await readFile(new URL("./supervisor.ts", import.meta.url), "utf8"), { mode: 0o700 });
-  await writeFile(safeGroupPath, await readFile(new URL("./safe-process-group.ts", import.meta.url), "utf8"), {
-    mode: 0o700,
-  });
+  const supervisorSource = siblingRuntimeModule(import.meta.url, "supervisor");
+  const safeGroupSource = siblingRuntimeModule(import.meta.url, "safe-process-group");
+  const supervisorPath = join(toolsDir, basename(fileURLToPath(supervisorSource)));
+  const safeGroupPath = join(toolsDir, basename(fileURLToPath(safeGroupSource)));
+  await writeFile(supervisorPath, await readFile(supervisorSource, "utf8"), { mode: 0o700 });
+  await writeFile(safeGroupPath, await readFile(safeGroupSource, "utf8"), { mode: 0o700 });
 
   let shellPath: string | undefined;
   if (config.tools !== null) {

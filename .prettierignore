@@ -8,3 +8,7 @@ node_modules/
 .pi/
 .github/instructions/aw/
 CLAUDE.local.md
+
+# Generated build output and local package artifacts.
+dist/
+*.tgz

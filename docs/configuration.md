@@ -123,12 +123,12 @@ Do not reuse the runner and checker `validate` methods unchanged as if they were
 The implemented commands are:
 
 ```sh
-node src/cli.ts view <config.yml> [--case <name>]
-node src/cli.ts run <config.yml> [--case <name>] [--results-dir <path>] \
+agent-evals view <config.yml> [--case <name>]
+agent-evals run <config.yml> [--case <name>] [--results-dir <path>] \
   [--runner-dir <path>] [--checker-dir <path>]
 ```
 
-`view` prints the resolved configuration followed by one `field: origin` line per top-level field, where the origin is `common` or `case "<name>"` and includes the source file and 1-based declaration line. `run` prints the run status and writes the result record.
+The installed `agent-evals` command and the development `npm run eval -- <command>` form execute the same built `dist/cli.js`. `view` prints the resolved configuration followed by one `field: origin` line per top-level field, where the origin is `common` or `case "<name>"` and includes the source file and 1-based declaration line. `run` prints the run status and writes the result record.
 
 ## Run Records and Implementation Boundary
 

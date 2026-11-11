@@ -8,16 +8,26 @@
   "engines": {
     "node": ">=24"
   },
+  "bin": {
+    "agent-evals": "dist/cli.js"
+  },
+  "files": [
+    "dist"
+  ],
   "scripts": {
-    "lint": "eslint src tests eslint.config.mjs",
+    "build": "node scripts/build.mjs",
+    "lint": "eslint src tests scripts eslint.config.mjs",
     "lint:fix": "npm run lint -- --fix",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "typecheck": "tsc --noEmit",
     "test": "node --test --test-timeout=30000",
+    "pretest": "npm run build",
     "check": "npm run lint && npm run format:check && npm run typecheck && npm test",
-    "prepare": "husky",
-    "eval": "node src/cli.ts"
+    "prepare": "node -e \"const fs=require('node:fs');const cp=require('node:child_process');if(!fs.existsSync('.git')||!fs.existsSync('node_modules/husky'))process.exit(0);const r=cp.spawnSync(process.execPath,['node_modules/husky/bin.js'],{stdio:'inherit'});process.exit(r.status??1)\"",
+    "prepack": "npm run build",
+    "preeval": "npm run build",
+    "eval": "node dist/cli.js"
   },
   "dependencies": {
     "yaml": "2.9.1"
