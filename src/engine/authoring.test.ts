@@ -395,15 +395,39 @@ test("duplicate keys and malformed documents are configuration errors", async (t
     const { path } = await writeDocument(t, lines, `${name}.yml`);
     await expectConfigError(() => loadCase(path), pattern);
   }
+
+  for (const wrapper of ["case", "subject", "candidate", "name"]) {
+    const { path } = await writeDocument(
+      t,
+      [
+        "input: task",
+        "runner:",
+        "  $type: pi",
+        "  model: p/m",
+        "checks:",
+        "  - $type: file",
+        "    path: hello.txt",
+        "    exists: true",
+        `${wrapper}: ignored`,
+      ],
+      `${wrapper}-wrapper.yml`,
+    );
+    await expectConfigError(() => loadCase(path), new RegExp(`unknown field: ${wrapper}`));
+  }
 });
 
 test("final schema errors name the selected case and validate every required field", async (t) => {
   const cases: Array<[string, readonly string[], RegExp]> = [
     ["missing input", ["runner:", "  $type: pi", "checks:", "  - $type: file"], /input must be a non-empty string/],
     [
-      "missing type",
+      "missing runner type",
       ["input: task", "runner:", "  model: p/m", "checks:", "  - $type: file"],
       /runner.\$type must be a non-empty string/,
+    ],
+    [
+      "missing checker type",
+      ["input: task", "runner:", "  $type: pi", "checks:", "  - path: hello.txt"],
+      /checks\[0\]\.\$type must be a non-empty string/,
     ],
     [
       "absolute fixture",

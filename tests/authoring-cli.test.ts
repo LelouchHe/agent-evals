@@ -110,7 +110,7 @@ test("view succeeds without Pi or credentials and annotates common versus select
   assert.doesNotMatch(result.stdout, /CANARY-LAUNCHED/);
 });
 
-test("view and run use the same resolver, and view never launches the harness", async (t) => {
+test("view and run resolve the same configuration payload", async (t) => {
   const fake = await createFakePi(t, "success");
   const directory = await makeTempDir(t, "ae-shared-");
   const configPath = join(directory, "case.yml");
