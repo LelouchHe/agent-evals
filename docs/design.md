@@ -17,7 +17,7 @@ A personal toy project that grows from real evaluation needs. This document reco
 - Provide two initial checkers: `judge` for LLM-based grading and `file` for deterministic filesystem checks.
 - The first file assertions are `exists`, `matches`, and `unchanged`. `matches` uses regular-expression search, not full-file matching by default; invalid regexes are configuration errors. Do not retain an `includes` alias or create a separate checker type for every file operation.
 - Judge access initially uses an independent Pi invocation rather than a separate model-provider SDK.
-- Follow the [filesystem MVP implementation plan](implementation-plan.md) for milestones and acceptance criteria.
+- Follow the [MVP implementation plan](mvp-impl.md). First run checks before cleaning up the temporary working directory; offline rechecking and full evidence archives are deferred.
 
 ## A Case Is a Human-Readable Experiment Specification
 
@@ -51,7 +51,7 @@ cases/
 - Keep fixtures, dedicated setup, and case-specific checks beside the case. Extract shared assets only after real reuse appears.
 - Reference shared assets explicitly rather than injecting them through hidden global conventions.
 - Share definitions and initial data, not mutable runtime state. Each run gets an independent copy or read-only access to shared inputs.
-- Store run artifacts separately. Do not rewrite case definitions or contaminate fixtures.
+- Store any retained results and diagnostics separately. Do not rewrite case definitions or contaminate fixtures.
 - Expose only the prompt and intended environment to the evaluated agent. Do not expose the case definition, checkers, rubrics, or reference answers by default.
 - Do not create empty directories in advance or require scripts for every case.
 
@@ -73,15 +73,16 @@ Case + Candidate + Environment
 | Runner | Drive the evaluated harness, expose its observable events and state, and implement the harness-specific actions needed for cancellation and teardown. |
 | Checker | Interpret its parameters, inspect evidence, and return named checks or scores with reasons and evidence references. |
 
-Evidence includes observed events, outputs, artifacts, and measurements, not just the evaluated agent's own account of what happened. Regrading should not require rerunning the agent by default. Keep checker execution failures distinct from failed checks of the evaluated result.
+Evidence can include observed events, outputs, artifacts, and measurements, not just the evaluated agent's own account of what happened. The MVP runs checks before removing its temporary working directory and saves a small result record. Offline regrading is a later capability, not a requirement for this first implementation. Keep checker execution failures distinct from failed checks of the evaluated result.
 
 ## Evidence Capture and the Tracer Direction
 
 ### Current Scope
 
-- Focus the first iteration on filesystem evidence. Preserve the relevant initial and final state, changes, and file contents needed by checks.
-- Checker context comes from the evaluated run's persisted evidence, not the engine's working directory, process environment, or a live runtime handle. It must remain usable after the evaluated environment is gone.
-- Capture required state while it is observable, preserve evidence outside the evaluated agent's writable area, and complete collection before destroying the environment.
+- Focus the first iteration on checking filesystem changes in the copied fixture. Stop the evaluated agent and its owned child processes before running checks; remove the temporary working directory afterward.
+- Checker context refers to the evaluated working directory and supplied run data, not the engine's working directory or process environment. It need not survive cleanup in the MVP.
+- Keep only the temporary initial baseline required by checks such as `unchanged`. Do not require full before/after archives, persisted environment snapshots, or an offline rechecking command.
+- Save small result records and useful diagnostics, not copied HOME directories, agent configuration, or credentials.
 - Do not build a general tracer plugin system in the first iteration.
 
 ### Unified Direction
@@ -98,7 +99,7 @@ Evidence includes observed events, outputs, artifacts, and measurements, not jus
 - The default execution target is Pi. Neither the engine nor the case format should require WebAgent or embed a particular harness's startup details.
 - Discover implementations from designated, trusted directories. Adding an implementation that satisfies the established contract should not require changing the engine's dispatch logic.
 - Built-in and added implementations follow the same contracts. Start with a Pi runner and the `judge` and `file` checkers; do not implement every possible extension upfront.
-- A runner manages interaction and session lifecycle, while a checker evaluates captured evidence. They need separate contracts, not a universal plugin interface forced onto both.
+- A runner manages interaction and session lifecycle, while a checker evaluates the run's state and supplied evidence. They need separate contracts, not a universal plugin interface forced onto both.
 - Keep checker parameters outside the engine's business logic. Each checker interprets and validates its own parameters; the engine validates the common contract and handles invocation and results.
 - Do not discover executable extensions from agent-writable workspaces or generated artifacts. Case-local checker code remains a trusted authoring asset, not part of the evaluated agent's working copy.
 - Environment preparation can use fixtures and scripts. Keep sandboxing in its platform module rather than adding environment, sandbox, and reporting plugin families in advance.
