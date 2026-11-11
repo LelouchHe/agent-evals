@@ -1,6 +1,6 @@
 # Agent Evals
 
-A personal toy project exploring agent evaluation and sandboxing.
+A toolkit for evaluating AI agent systems.
 
 ## Vision
 
