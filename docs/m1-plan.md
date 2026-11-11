@@ -72,7 +72,7 @@ Status: implemented as a private local npm package from the same CLI source; not
 - [x] `src/cli.ts` is the sole parser and command implementation. `npm run build` emits `dist/cli.js`; `npm run eval` and the installed `agent-evals` bin both execute that built entry point.
 - [x] The build includes runtime assets that are executed separately from the main module: the regex worker, sandbox-resident supervisor, safe process-group helper, and shell wrapper.
 - [x] The tarball allowlist contains only built runtime files, README, LICENSE, and package metadata; source, tests, docs, results, dev tooling, and generated logs are excluded.
-- [x] A local tarball install works without repository checkout, TypeScript, Husky, or Git metadata, and resolves `yaml` inside the disposable install.
+- [x] A clean external checkout built and packed the tarball, and a disposable `npm install --prefix` succeeded without repository metadata, TypeScript, Husky, or global install; `yaml` resolved inside that install.
 - [ ] Cumulative independent review of the authoring and packaged-CLI revisions remains pending.
 
 ## Delivered
@@ -107,7 +107,7 @@ On Node 24.22.2 and macOS 15.5, implementation `fc2b131` passed type checking an
 
 Single-file implementation commit `dbb7b34` passed the complete gate with 104 tests and no failures or skips at normal suite concurrency. The same commit was cloned to an external `/tmp` checkout outside the repository's module-resolution ancestry; `npm ci` and `npm run check` both exited 0 with the same 104 passing tests. The resolved `yaml` module path was inside that checkout's own `node_modules`, so the run did not fall back to the source worktree. No model, remote provider, or credential value was used.
 
-The packaged-CLI revision subsequently passed the complete gate with 107 tests and no failures or skips at normal concurrency. A clean external checkout built and packed the package, and a disposable `npm install --prefix` of the local tarball succeeded without repository metadata, TypeScript, or Husky. The installed `agent-evals` command ran `--help`, `view`, and a deterministic fake-runtime `run`; `yaml` resolved inside that installation, and packaged supervisor/helper/worker/wrapper assets were exercised by the run. No model, remote provider, or credential value was used.
+Packaged-CLI commit `9accfad` passed the complete gate with 107 tests and no failures or skips at normal concurrency. A clean external clone of that commit passed `npm ci` (including repository-local Husky setup) and `npm run check`, then built and packed the package. A disposable `npm install --prefix` of the local tarball succeeded without repository metadata, TypeScript, Husky, dev dependencies, or global install. The installed `agent-evals` command ran `--help`, `view` with no provider credential or `pi` on `PATH`, and a deterministic fake-runtime `run`; `yaml` resolved inside that installation, and packaged supervisor/helper/worker/wrapper assets were exercised by the run. Installed and `npm run eval` help/view output matched exactly. No model, remote provider, or credential value was used.
 
 ### Review Closure
 
