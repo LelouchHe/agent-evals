@@ -7,7 +7,17 @@ import { test } from "node:test";
 import { makeTempDir } from "../../../tests/helpers/fake-pi-control.ts";
 import { renderSeatbeltPolicy, sandboxExecutablePath, writeSeatbeltPolicy } from "./policy.ts";
 
-const systemRoots = ["/System", "/usr", "/bin", "/sbin", "/private/etc", "/Library", "/dev", "/private/var/select", "/private/var/db/timezone"];
+const systemRoots = [
+  "/System",
+  "/usr",
+  "/bin",
+  "/sbin",
+  "/private/etc",
+  "/Library",
+  "/dev",
+  "/private/var/select",
+  "/private/var/db/timezone",
+];
 
 test("Seatbelt policy renders deny-default, scoped reads, writes, and network", () => {
   const policy = renderSeatbeltPolicy({
@@ -30,48 +40,52 @@ test("Seatbelt policy omits network when not requested", () => {
   assert.doesNotMatch(policy, /network-outbound/);
 });
 
-test("real Seatbelt allows workspace reads and writes and denies escapes", { skip: process.platform !== "darwin" }, async (t) => {
-  const root = await makeTempDir(t, "ae-sandbox-");
-  const workspace = join(root, "workspace");
-  const outside = join(root, "outside");
-  await mkdir(workspace);
-  await mkdir(outside);
-  await writeFile(join(workspace, "allowed.txt"), "allowed\n");
-  await writeFile(join(outside, "secret.txt"), "secret\n");
-  await symlink(join(outside, "secret.txt"), join(workspace, "escape.txt"));
+test(
+  "real Seatbelt allows workspace reads and writes and denies escapes",
+  { skip: process.platform !== "darwin" },
+  async (t) => {
+    const root = await makeTempDir(t, "ae-sandbox-");
+    const workspace = join(root, "workspace");
+    const outside = join(root, "outside");
+    await mkdir(workspace);
+    await mkdir(outside);
+    await writeFile(join(workspace, "allowed.txt"), "allowed\n");
+    await writeFile(join(outside, "secret.txt"), "secret\n");
+    await symlink(join(outside, "secret.txt"), join(workspace, "escape.txt"));
 
-  const policyPath = await writeSeatbeltPolicy(workspace, {
-    writableRoots: [workspace],
-    readableRoots: systemRoots,
-    allowNetwork: false,
-  });
-
-  const run = (command: string, args: string[]) =>
-    spawnSync(sandboxExecutablePath(), ["-f", policyPath, "--", command, ...args], {
-      encoding: "utf8",
-      timeout: 15_000,
+    const policyPath = await writeSeatbeltPolicy(workspace, {
+      writableRoots: [workspace],
+      readableRoots: systemRoots,
+      allowNetwork: false,
     });
 
-  const allowedRead = run("/bin/cat", [join(workspace, "allowed.txt")]);
-  assert.equal(allowedRead.status, 0, allowedRead.stderr);
-  assert.equal(allowedRead.stdout, "allowed\n");
+    const run = (command: string, args: string[]) =>
+      spawnSync(sandboxExecutablePath(), ["-f", policyPath, "--", command, ...args], {
+        encoding: "utf8",
+        timeout: 15_000,
+      });
 
-  const deniedRead = run("/bin/cat", [join(outside, "secret.txt")]);
-  assert.notEqual(deniedRead.status, 0);
-  assert.match(deniedRead.stderr, /Operation not permitted/);
+    const allowedRead = run("/bin/cat", [join(workspace, "allowed.txt")]);
+    assert.equal(allowedRead.status, 0, allowedRead.stderr);
+    assert.equal(allowedRead.stdout, "allowed\n");
 
-  const deniedSymlink = run("/bin/cat", [join(workspace, "escape.txt")]);
-  assert.notEqual(deniedSymlink.status, 0);
-  assert.match(deniedSymlink.stderr, /Operation not permitted/);
+    const deniedRead = run("/bin/cat", [join(outside, "secret.txt")]);
+    assert.notEqual(deniedRead.status, 0);
+    assert.match(deniedRead.stderr, /Operation not permitted/);
 
-  const allowedWrite = run("/bin/sh", ["-c", `printf written > ${shellQuote(join(workspace, "new.txt"))}`]);
-  assert.equal(allowedWrite.status, 0, allowedWrite.stderr);
-  assert.equal(await readFile(join(workspace, "new.txt"), "utf8"), "written");
+    const deniedSymlink = run("/bin/cat", [join(workspace, "escape.txt")]);
+    assert.notEqual(deniedSymlink.status, 0);
+    assert.match(deniedSymlink.stderr, /Operation not permitted/);
 
-  const deniedWrite = run("/bin/sh", ["-c", `printf escaped > ${shellQuote(join(outside, "new.txt"))}`]);
-  assert.notEqual(deniedWrite.status, 0);
-  assert.match(deniedWrite.stderr, /Operation not permitted/);
-});
+    const allowedWrite = run("/bin/sh", ["-c", `printf written > ${shellQuote(join(workspace, "new.txt"))}`]);
+    assert.equal(allowedWrite.status, 0, allowedWrite.stderr);
+    assert.equal(await readFile(join(workspace, "new.txt"), "utf8"), "written");
+
+    const deniedWrite = run("/bin/sh", ["-c", `printf escaped > ${shellQuote(join(outside, "new.txt"))}`]);
+    assert.notEqual(deniedWrite.status, 0);
+    assert.match(deniedWrite.stderr, /Operation not permitted/);
+  },
+);
 
 test("real Seatbelt runs Node with scoped filesystem access", { skip: process.platform !== "darwin" }, async (t) => {
   const root = await makeTempDir(t, "ae-sandbox-node-");
@@ -80,9 +94,13 @@ test("real Seatbelt runs Node with scoped filesystem access", { skip: process.pl
   await mkdir(workspace);
   await mkdir(outside);
   await writeFile(join(outside, "secret.txt"), "secret\n");
-  const node = execFileSync(process.execPath, ["-e", "console.log(require('node:fs').realpathSync(process.execPath))"], {
-    encoding: "utf8",
-  }).trim();
+  const node = execFileSync(
+    process.execPath,
+    ["-e", "console.log(require('node:fs').realpathSync(process.execPath))"],
+    {
+      encoding: "utf8",
+    },
+  ).trim();
   const nodeDirectory = dirname(node);
 
   const policyPath = await writeSeatbeltPolicy(workspace, {

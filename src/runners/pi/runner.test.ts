@@ -18,7 +18,11 @@ async function setup(t: Parameters<typeof makeTempDir>[0]) {
   return { root, workspaceDir, homeDir, configDir, scratchDir };
 }
 
-function context(dirs: Awaited<ReturnType<typeof setup>>, timeoutMs: number, signal = AbortSignal.timeout(timeoutMs + 5_000)): RunnerContext {
+function context(
+  dirs: Awaited<ReturnType<typeof setup>>,
+  timeoutMs: number,
+  signal = AbortSignal.timeout(timeoutMs + 5_000),
+): RunnerContext {
   return {
     workspaceDir: dirs.workspaceDir,
     homeDir: dirs.homeDir,
@@ -58,10 +62,7 @@ test("pi runner passes explicit model, tools, and isolated environment", async (
   const runner = piRunner.create();
   t.after(() => runner.stop());
 
-  await runner.run(
-    { model: "test/model", thinking: "high", executable: fake.executable },
-    context(dirs, 10_000),
-  );
+  await runner.run({ model: "test/model", thinking: "high", executable: fake.executable }, context(dirs, 10_000));
 
   const recorded = JSON.parse(await readFile(record, "utf8")) as {
     args: string[];
@@ -115,12 +116,12 @@ test("pi runner stages declared skills inside isolated config", async (t) => {
   t.after(() => runner.stop());
 
   await mkdir(join(dirs.root, "skill"));
-  await writeFile(join(dirs.root, "skill", "SKILL.md"), "---\nname: tiny\ndescription: Tiny test skill.\n---\n\nWrite the file.\n");
-
-  await runner.run(
-    { model: "test/model", executable: fake.executable, skills: ["skill"] },
-    context(dirs, 10_000),
+  await writeFile(
+    join(dirs.root, "skill", "SKILL.md"),
+    "---\nname: tiny\ndescription: Tiny test skill.\n---\n\nWrite the file.\n",
   );
+
+  await runner.run({ model: "test/model", executable: fake.executable, skills: ["skill"] }, context(dirs, 10_000));
   const staged = await readFile(join(dirs.configDir, "skills", "skill", "SKILL.md"), "utf8");
   assert.match(staged, /name: tiny/);
 });
@@ -189,10 +190,7 @@ test("pi runner ignores a recoverable earlier provider error when the final run 
   const runner = piRunner.create();
   t.after(() => runner.stop());
 
-  const outcome = await runner.run(
-    { model: "test/model", executable: fake.executable },
-    context(dirs, 5_000),
-  );
+  const outcome = await runner.run({ model: "test/model", executable: fake.executable }, context(dirs, 5_000));
   assert.equal(outcome.finalText, "Recovered after a retry.");
 });
 

@@ -55,7 +55,12 @@ export async function loadCase(path: string): Promise<Loaded<CaseConfig>> {
   return {
     path: file,
     dir: dirname(file),
-    config: { input, ...(fixture === undefined ? {} : { fixture }), ...(timeoutMs === undefined ? {} : { timeoutMs }), checks },
+    config: {
+      input,
+      ...(fixture === undefined ? {} : { fixture }),
+      ...(timeoutMs === undefined ? {} : { timeoutMs }),
+      checks,
+    },
   };
 }
 

@@ -80,8 +80,8 @@ A case supplies one input message, an optional fixture directory, an optional ex
 
 ```yaml
 input: Create hello.txt with exactly the content "Hello, world!".
-fixture: fixture        # optional directory, resolved relative to this file
-timeoutMs: 120000       # optional runner budget in milliseconds
+fixture: fixture # optional directory, resolved relative to this file
+timeoutMs: 120000 # optional runner budget in milliseconds
 checks:
   - $type: file
     path: hello.txt
@@ -103,21 +103,21 @@ runner:
   $type: pi
   model: provider/model
   thinking: medium
-  skills: [skill]              # optional, resolved relative to this file
-  envPassthrough: [API_KEY]    # optional allowlist; values are not recorded
+  skills: [skill] # optional, resolved relative to this file
+  envPassthrough: [API_KEY] # optional allowlist; values are not recorded
 ```
 
 All fields except `$type` belong to the selected implementation. Unknown fields, unknown implementations, invalid regular expressions, and missing authoring assets are configuration errors reported before any runtime resource is created.
 
 ### `pi` Runner Parameters
 
-| Parameter | Meaning |
-|---|---|
-| `model` | Pi model selector, normally `provider/model`. Required. |
-| `thinking` | `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, or `max`. Defaults to `medium`. |
-| `skills` | Relative skill files or directories loaded explicitly. Discovered skills, extensions, MCP servers, sessions, context files, prompt templates, and themes stay disabled. |
-| `executable` | Pi executable name or path. Defaults to `pi`. |
-| `envPassthrough` | Environment variable names copied from the invoking process. Use this for narrowly scoped credentials; other variables are not inherited. |
+| Parameter        | Meaning                                                                                                                                                                 |
+| ---------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `model`          | Pi model selector, normally `provider/model`. Required.                                                                                                                 |
+| `thinking`       | `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, or `max`. Defaults to `medium`.                                                                                     |
+| `skills`         | Relative skill files or directories loaded explicitly. Discovered skills, extensions, MCP servers, sessions, context files, prompt templates, and themes stay disabled. |
+| `executable`     | Pi executable name or path. Defaults to `pi`.                                                                                                                           |
+| `envPassthrough` | Environment variable names copied from the invoking process. Use this for narrowly scoped credentials; other variables are not inherited.                               |
 
 The runner starts Pi in an empty or fixture-backed workspace, sends the case input as one user message, and lets Pi complete autonomous tool turns. Pi bash invocations run through a generated custom shell that keeps ordinary background jobs in a tracked process group and terminates them before the command returns. The engine also stops Pi and every tracked shell group before checks run, including after timeout, cancellation, and an early Pi exit. A child that deliberately starts a new session or process group is outside this cleanup contract.
 
@@ -125,12 +125,12 @@ A final assistant message with `stopReason: error` is an execution failure, not 
 
 ### `file` Checker Parameters
 
-| Parameter | Meaning |
-|---|---|
-| `path` | Required run-relative path. Absolute paths and `..` are rejected. |
-| `exists` | Boolean. When present, produces one result. Only a regular file counts as existing; a non-regular path is a check error. |
-| `matches` | A regular expression or list of them. Search semantics apply; a match need not cover the whole file. Each pattern produces one result. Evaluation runs in a worker so a catastrophic expression is terminated by the check deadline or an internal 5-second ceiling. |
-| `unchanged` | May only be `true` when present; `false` is a configuration error, and no inverse `changed` feature exists. Compares the file with the initial baseline outside the agent's writable area. |
+| Parameter   | Meaning                                                                                                                                                                                                                                                              |
+| ----------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `path`      | Required run-relative path. Absolute paths and `..` are rejected.                                                                                                                                                                                                    |
+| `exists`    | Boolean. When present, produces one result. Only a regular file counts as existing; a non-regular path is a check error.                                                                                                                                             |
+| `matches`   | A regular expression or list of them. Search semantics apply; a match need not cover the whole file. Each pattern produces one result. Evaluation runs in a worker so a catastrophic expression is terminated by the check deadline or an internal 5-second ceiling. |
+| `unchanged` | May only be `true` when present; `false` is a configuration error, and no inverse `changed` feature exists. Compares the file with the initial baseline outside the agent's writable area.                                                                           |
 
 At least one of `exists`, `matches`, or `unchanged` is required. Checks are capped at 1 MiB per file. A missing file is a failed check; an unsafe path, escaping symlink, non-regular file, unreadable file, or oversized file is a check error. Paths that traverse a symlink outside the workspace, including through an ancestor, are rejected rather than inspected.
 
@@ -140,12 +140,12 @@ The example's `matches` pattern tolerates one optional final newline. The checke
 
 ### `judge` Checker Parameters
 
-| Parameter | Meaning |
-|---|---|
-| `model`, `thinking` | Independent judge model selection. |
-| `rubric` | Non-empty list of statements. Each statement produces its own result. |
-| `file` | One run-relative evidence file. Missing evidence is stated explicitly in the prompt. |
-| `executable`, `envPassthrough` | Same meaning as for the runner. |
+| Parameter                      | Meaning                                                                              |
+| ------------------------------ | ------------------------------------------------------------------------------------ |
+| `model`, `thinking`            | Independent judge model selection.                                                   |
+| `rubric`                       | Non-empty list of statements. Each statement produces its own result.                |
+| `file`                         | One run-relative evidence file. Missing evidence is stated explicitly in the prompt. |
+| `executable`, `envPassthrough` | Same meaning as for the runner.                                                      |
 
 The judge is a separate isolated Pi invocation with tools disabled. It receives the case input and selected file content, not the evaluated workspace or its own process environment besides the explicit allowlist. Evidence must be a regular file. The verdict must be a JSON object with one boolean `pass` and a reason per rubric statement. A valid failing verdict is a failed check; a malformed or missing verdict is a checker error.
 

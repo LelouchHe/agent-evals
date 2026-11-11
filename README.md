@@ -32,9 +32,8 @@ The repository stays private during initial development. Reconsider publication 
 ## Quick Start
 
 ```sh
-npm install
-npm run typecheck
-npm test
+npm ci
+npm run check
 ```
 
 Run one case and candidate:
@@ -55,6 +54,27 @@ runner:
 ```
 
 `envPassthrough` forwards only the named variables; it does not inherit the operator environment. Results are written to `.eval-results/<run-id>/result.json` by default (`--results-dir` overrides this). Exit codes are `0` for a passing run, `1` for failing checks, and `2` for configuration, execution, timeout, cancellation, or checker errors.
+
+## Development
+
+`npm ci` installs the locked development dependencies and configures Husky for this repository through `prepare`. It changes only the repository-local `core.hooksPath`, not global Git configuration.
+
+| Command                | Purpose                                                                              |
+| ---------------------- | ------------------------------------------------------------------------------------ |
+| `npm run lint`         | ESLint recommended JavaScript and TypeScript checks.                                 |
+| `npm run lint:fix`     | Apply available lint fixes explicitly.                                               |
+| `npm run format:check` | Check Prettier formatting without changing files.                                    |
+| `npm run format`       | Apply Prettier formatting explicitly.                                                |
+| `npm run typecheck`    | Check TypeScript types.                                                              |
+| `npm test`             | Run deterministic tests, including real local Git-hook probes. No models are called. |
+| `npm run check`        | Run lint, formatting, type checking, and tests in order.                             |
+
+Prettier uses 120-column wrapping and its default two-space, double-quote, semicolon style. Generated results, Husky internals, and local agent adapters are excluded from formatting. The executable malformed-protocol fixture keeps a narrowly scoped ESLint exception for its existing `@ts-nocheck`; other TypeScript files retain the recommended rule.
+
+- **pre-commit:** checks lint and formatting for the whole project; it never rewrites or stages files automatically.
+- **pre-push:** runs the complete gate. New trees may be pushed only from the checked-out `HEAD` with a clean worktree, so the checked files match the outgoing commit. Ref deletions do not upload a new tree and skip the gate.
+
+The current ESLint toolchain has a transitive `minimatch` glob-expansion denial-of-service advisory reported by `npm audit`. It affects development dependencies and this project's trusted lint configuration patterns, not evaluation runtime dependencies. No forced dependency downgrade or major-version override is applied; reassess when upstream supplies a compatible fix.
 
 ## Limitations
 

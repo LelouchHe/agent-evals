@@ -19,7 +19,14 @@ import {
   type Runner,
   type RunnerOutcome,
 } from "./registry.ts";
-import { createResultDirectory, newRunId, writeResult, type EvaluationRecord, type RunStatus, type RunnerStatus } from "./results.ts";
+import {
+  createResultDirectory,
+  newRunId,
+  writeResult,
+  type EvaluationRecord,
+  type RunStatus,
+  type RunnerStatus,
+} from "./results.ts";
 import { openRunRoot, type RunRoot } from "./workspace.ts";
 
 const DEFAULT_TIMEOUT_MS = 300_000;
@@ -77,9 +84,9 @@ export async function runEvaluation(request: RunRequest): Promise<EvaluationReco
     finalText: null,
   };
   let checks: CheckResult[] = [];
-  let diagnostics: string[] = [];
+  const diagnostics: string[] = [];
   let error: string | undefined;
-  let status: RunStatus = "error";
+  let status: RunStatus;
   let timedOut = false;
   let stopFailed = false;
   let timer: NodeJS.Timeout | undefined;
@@ -162,9 +169,18 @@ export async function runEvaluation(request: RunRequest): Promise<EvaluationReco
     };
     if (outcome !== undefined) {
       diagnostics.push(...outcome.diagnostics);
-      checks = await runChecks(registered.checks, request, root, workspaceRoot, baselineRoot, timeoutMs, abort.signal, () => {
-        cancelled = true;
-      });
+      checks = await runChecks(
+        registered.checks,
+        request,
+        root,
+        workspaceRoot,
+        baselineRoot,
+        timeoutMs,
+        abort.signal,
+        () => {
+          cancelled = true;
+        },
+      );
     }
 
     if (cancelled) {
@@ -211,7 +227,10 @@ export async function runEvaluation(request: RunRequest): Promise<EvaluationReco
     startedAt,
     finishedAt: new Date().toISOString(),
     case: { path: request.case.path },
-    candidate: { path: request.candidate.path, ...(request.candidate.config.name === undefined ? {} : { name: request.candidate.config.name }) },
+    candidate: {
+      path: request.candidate.path,
+      ...(request.candidate.config.name === undefined ? {} : { name: request.candidate.config.name }),
+    },
     status,
     runner: runnerRecord,
     checks,
@@ -327,7 +346,12 @@ async function runChecks(
       if (signal.aborted) {
         markCancelled();
       }
-      results.push({ checker: check.type, subject: `${check.type} check`, status: "error", reason: truncate(reason, 800) });
+      results.push({
+        checker: check.type,
+        subject: `${check.type} check`,
+        status: "error",
+        reason: truncate(reason, 800),
+      });
       await settleWithin(promise, CHECK_ABORT_GRACE_MS);
     } finally {
       clearTimeout(checkTimer);

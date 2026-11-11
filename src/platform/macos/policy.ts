@@ -19,7 +19,11 @@ export function renderSeatbeltPolicy(policy: SandboxPolicy): string {
   const writable = normalize(policy.writableRoots);
   const readable = normalize([...policy.readableRoots, ...policy.writableRoots]);
   const files = normalize(policy.readableFiles ?? []);
-  const readClauses = ['(literal "/")', ...readable.map((path) => `(subpath ${quote(path)})`), ...files.map((path) => `(literal ${quote(path)})`)];
+  const readClauses = [
+    '(literal "/")',
+    ...readable.map((path) => `(subpath ${quote(path)})`),
+    ...files.map((path) => `(literal ${quote(path)})`),
+  ];
 
   const metadata = new Set<string>();
   for (const path of [...readable, ...files]) {
@@ -41,7 +45,12 @@ export function renderSeatbeltPolicy(policy: SandboxPolicy): string {
     `(allow file-read* ${readClauses.join(" ")})`,
   ];
   if (metadata.size > 0) {
-    lines.push(`(allow file-read-metadata ${[...metadata].sort().map((path) => `(literal ${quote(path)})`).join(" ")})`);
+    lines.push(
+      `(allow file-read-metadata ${[...metadata]
+        .sort()
+        .map((path) => `(literal ${quote(path)})`)
+        .join(" ")})`,
+    );
   }
   const writeClauses = [...writable.map((path) => `(subpath ${quote(path)})`), '(literal "/dev/null")'];
   lines.push(`(allow file-write* ${writeClauses.join(" ")})`);

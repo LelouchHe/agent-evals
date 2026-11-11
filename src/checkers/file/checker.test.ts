@@ -40,7 +40,10 @@ test("file checker passes existence and regex-search conditions", async (t) => {
   );
 
   assert.equal(results.length, 3);
-  assert.deepEqual(results.map((result) => result.status), ["pass", "pass", "pass"]);
+  assert.deepEqual(
+    results.map((result) => result.status),
+    ["pass", "pass", "pass"],
+  );
   assert.equal(results[0]?.subject, "hello.txt exists");
   assert.match(results[1]?.subject ?? "", /matches \/world\//);
 });
@@ -54,7 +57,10 @@ test("regex search is not an implicit full-file match", async (t) => {
     { path: "hello.txt", matches: ["Hello, world!", "^Hello, world!$"] },
     await context(dirs.root, dirs.workspace, dirs.baseline),
   );
-  assert.deepEqual(results.map((result) => result.status), ["pass", "fail"]);
+  assert.deepEqual(
+    results.map((result) => result.status),
+    ["pass", "fail"],
+  );
 });
 
 test("file checker reports absent files as failed checks", async (t) => {
@@ -65,7 +71,10 @@ test("file checker reports absent files as failed checks", async (t) => {
     { path: "missing.txt", exists: true, matches: "anything" },
     await context(dirs.root, dirs.workspace, dirs.baseline),
   );
-  assert.deepEqual(results.map((result) => result.status), ["fail", "fail"]);
+  assert.deepEqual(
+    results.map((result) => result.status),
+    ["fail", "fail"],
+  );
   assert.match(results[1]?.reason ?? "", /does not exist/);
 });
 
@@ -140,7 +149,10 @@ test("file checker reports symlink escapes as check errors", async (t) => {
   const contextValue = await context(dirs.root, dirs.workspace, dirs.baseline);
 
   const escaped = await checker.check({ path: "escape.txt", exists: true, matches: "secret" }, contextValue);
-  assert.deepEqual(escaped.map((result) => result.status), ["error", "error"]);
+  assert.deepEqual(
+    escaped.map((result) => result.status),
+    ["error", "error"],
+  );
   assert.match(escaped[0]?.reason ?? "", /outside the run workspace/);
 
   const broken = await checker.check({ path: "broken.txt", exists: true }, contextValue);
@@ -158,7 +170,10 @@ test("file checker allows symlinks that stay inside the workspace", async (t) =>
     { path: "link.txt", exists: true, matches: "inside" },
     await context(dirs.root, dirs.workspace, dirs.baseline),
   );
-  assert.deepEqual(results.map((result) => result.status), ["pass", "pass"]);
+  assert.deepEqual(
+    results.map((result) => result.status),
+    ["pass", "pass"],
+  );
 });
 
 test("file checker refuses to read files over the bounded size", async (t) => {

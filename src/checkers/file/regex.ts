@@ -31,14 +31,17 @@ export function evaluateRegexes(
 
   return new Promise<RegexEvaluation>((resolve) => {
     let settled = false;
-    let timer: NodeJS.Timeout | undefined;
     let worker: Worker;
     try {
       worker = new Worker(new URL("./regex-worker.ts", import.meta.url), {
         workerData: { content, patterns },
       });
     } catch (error) {
-      resolve({ matched, errors, failure: `could not start regex worker: ${error instanceof Error ? error.message : String(error)}` });
+      resolve({
+        matched,
+        errors,
+        failure: `could not start regex worker: ${error instanceof Error ? error.message : String(error)}`,
+      });
       return;
     }
 
@@ -47,9 +50,7 @@ export function evaluateRegexes(
         return;
       }
       settled = true;
-      if (timer !== undefined) {
-        clearTimeout(timer);
-      }
+      clearTimeout(timer);
       signal.removeEventListener("abort", onAbort);
       void worker.terminate().catch(() => {});
       resolve({ matched, errors, ...(failure === undefined ? {} : { failure }) });
@@ -84,6 +85,9 @@ export function evaluateRegexes(
       }
     });
     signal.addEventListener("abort", onAbort, { once: true });
-    timer = setTimeout(() => finish(`regex evaluation exceeded ${REGEX_EVALUATION_TIMEOUT_MS}ms`), REGEX_EVALUATION_TIMEOUT_MS);
+    const timer = setTimeout(
+      () => finish(`regex evaluation exceeded ${REGEX_EVALUATION_TIMEOUT_MS}ms`),
+      REGEX_EVALUATION_TIMEOUT_MS,
+    );
   });
 }

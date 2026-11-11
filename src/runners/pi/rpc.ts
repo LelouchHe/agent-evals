@@ -103,7 +103,11 @@ export class PiProcess {
   }
 
   /** Send a command and resolve its matching successful response. */
-  async command(type: string, payload: Record<string, unknown> = {}, timeoutMs = this.#commandTimeoutMs): Promise<unknown> {
+  async command(
+    type: string,
+    payload: Record<string, unknown> = {},
+    timeoutMs = this.#commandTimeoutMs,
+  ): Promise<unknown> {
     if (this.#startupError !== undefined) {
       throw this.#withDiagnostics(this.#startupError.message);
     }

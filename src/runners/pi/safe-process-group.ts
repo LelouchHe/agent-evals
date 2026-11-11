@@ -9,10 +9,5 @@ export function isSafeProcessGroup(value: unknown): value is number {
     return false;
   }
   const pgid = typeof value === "number" ? value : Number(value);
-  return (
-    Number.isSafeInteger(pgid) &&
-    pgid > 1 &&
-    pgid <= 2_147_483_647 &&
-    pgid !== process.pid
-  );
+  return Number.isSafeInteger(pgid) && pgid > 1 && pgid <= 2_147_483_647 && pgid !== process.pid;
 }

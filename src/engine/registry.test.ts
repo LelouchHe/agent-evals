@@ -17,7 +17,11 @@ const fakeChecker = (type: string) => ({
   type,
   validate() {},
   create() {
-    return { async check() { return []; } };
+    return {
+      async check() {
+        return [];
+      },
+    };
   },
 });
 
@@ -25,7 +29,12 @@ const fakeRunner = (type: string) => ({
   type,
   validate() {},
   create() {
-    return { async run() { return { finalText: null, diagnostics: [] }; }, async stop() {} };
+    return {
+      async run() {
+        return { finalText: null, diagnostics: [] };
+      },
+      async stop() {},
+    };
   },
 });
 
@@ -43,10 +52,7 @@ test("registry rejects duplicate types and reports unknown implementations", () 
 test("registry rejects malformed implementation definitions", () => {
   const registry = createRegistry();
   assert.throws(() => addChecker(registry, {} as never, "test"), ConfigError);
-  assert.throws(
-    () => addRunner(registry, { type: "bad", validate() {} } as never, "test"),
-    ConfigError,
-  );
+  assert.throws(() => addRunner(registry, { type: "bad", validate() {} } as never, "test"), ConfigError);
 });
 
 test("trusted directories load runner and checker modules", async (t) => {

@@ -1,0 +1,10 @@
+node_modules/
+.eval-results/
+.husky/_/
+
+# Local, generated agent adapters are not project formatting targets.
+.aw/
+.claude/
+.pi/
+.github/instructions/aw/
+CLAUDE.local.md

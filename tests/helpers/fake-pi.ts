@@ -113,7 +113,14 @@ function handlePrompt(command) {
       settle("not a JSON verdict");
       break;
     case "judge-count":
-      settle(JSON.stringify({ criteria: [{ criterion: "a", pass: true, reason: "one" }, { criterion: "b", pass: true, reason: "two" }] }));
+      settle(
+        JSON.stringify({
+          criteria: [
+            { criterion: "a", pass: true, reason: "one" },
+            { criterion: "b", pass: true, reason: "two" },
+          ],
+        }),
+      );
       break;
     case "judge-type":
       settle(JSON.stringify({ criteria: [{ criterion: "a", pass: "yes", reason: "text" }] }));
@@ -126,7 +133,11 @@ function handlePrompt(command) {
       );
       break;
     case "judge-echo":
-      settle(JSON.stringify({ criteria: [{ criterion: "copied", pass: true, reason: String(command.message).slice(0, 600) }] }));
+      settle(
+        JSON.stringify({
+          criteria: [{ criterion: "copied", pass: true, reason: String(command.message).slice(0, 600) }],
+        }),
+      );
       break;
     case "judge-fenced":
       settle("```json\n" + JSON.stringify({ criteria: [{ criterion: "a", pass: true, reason: "ok" }] }) + "\n```");

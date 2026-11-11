@@ -37,14 +37,14 @@ Checks may assess the relationship between input and output messages, environmen
 
 Treat an evaluation case as a test in the sense of a unit-testing framework: control the inputs, observe the outputs and side effects, and focus each case on one behavior.
 
-| Testing concept | Here |
-|---|---|
-| System under test | Candidate |
-| Parameterized test | One case run against several candidates |
-| Fixture, setup, teardown | Fixture, setup, cleanup |
-| Assertion | Check |
-| Side-effect assertion | Environment observations, such as files that must stay unchanged |
-| Hermetic environment | Sandbox with per-run state |
+| Testing concept          | Here                                                             |
+| ------------------------ | ---------------------------------------------------------------- |
+| System under test        | Candidate                                                        |
+| Parameterized test       | One case run against several candidates                          |
+| Fixture, setup, teardown | Fixture, setup, cleanup                                          |
+| Assertion                | Check                                                            |
+| Side-effect assertion    | Environment observations, such as files that must stay unchanged |
+| Hermetic environment     | Sandbox with per-run state                                       |
 
 - Keep cases small, independent, and focused, so that a failure points to its cause. Prefer many narrow cases over one large task with a single score.
 - Assert outcomes and resulting state rather than the sequence of steps. An agent has many valid paths; check that something was or was not done only when that is the behavior under test.
@@ -72,11 +72,11 @@ This direction does not yet define how substitutes are declared, started, or ref
 
 ## Components
 
-| Component | Responsibility |
-|---|---|
-| Engine | Validate common inputs, prepare environments, coordinate runners and checkers, handle results, and enforce lifecycle and cleanup requirements. |
-| Runner | Drive the evaluated harness, expose its observable events and state, and perform harness-specific cancellation and teardown. |
-| Checker | Interpret its parameters, inspect run state or supplied evidence, and return checks or scores with reasons and evidence references. |
+| Component | Responsibility                                                                                                                                 |
+| --------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| Engine    | Validate common inputs, prepare environments, coordinate runners and checkers, handle results, and enforce lifecycle and cleanup requirements. |
+| Runner    | Drive the evaluated harness, expose its observable events and state, and perform harness-specific cancellation and teardown.                   |
+| Checker   | Interpret its parameters, inspect run state or supplied evidence, and return checks or scores with reasons and evidence references.            |
 
 Keep failed checks of agent behavior distinct from configuration, execution, observation, and checker failures.
 

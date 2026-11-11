@@ -140,7 +140,9 @@ function printRecord(record: EvaluationRecord, resultsDir: string): void {
   const lines = [`run ${record.runId}: ${record.status}`];
   lines.push(`  runner ${record.runner.type}: ${record.runner.status} (${record.runner.durationMs}ms)`);
   for (const check of record.checks) {
-    lines.push(`  ${check.status.toUpperCase().padEnd(5)} ${check.checker} ${check.subject}${check.reason.length > 0 ? ` — ${check.reason}` : ""}`);
+    lines.push(
+      `  ${check.status.toUpperCase().padEnd(5)} ${check.checker} ${check.subject}${check.reason.length > 0 ? ` — ${check.reason}` : ""}`,
+    );
   }
   if (record.error !== undefined) {
     lines.push(`  error: ${record.error}`);

@@ -4,7 +4,14 @@ import { ConfigError, errorMessage, type ImplementationParams } from "../../engi
 import type { CheckResult, Checker, CheckerContext, CheckerDefinition } from "../../engine/registry.ts";
 import { isMissing, readRunFile } from "../../engine/workspace.ts";
 import { assertSeatbeltAvailable } from "../../platform/macos/policy.ts";
-import { invokePi, resolvePiExecutable, THINKING_LEVELS, validateEnvPassthrough, type PiSessionError, type ThinkingLevel } from "../../runners/pi/session.ts";
+import {
+  invokePi,
+  resolvePiExecutable,
+  THINKING_LEVELS,
+  validateEnvPassthrough,
+  type PiSessionError,
+  type ThinkingLevel,
+} from "../../runners/pi/session.ts";
 import { buildJudgePrompt } from "./prompt.ts";
 
 const JUDGE_KEYS = new Set(["model", "thinking", "rubric", "file", "executable", "envPassthrough"]);
@@ -100,7 +107,9 @@ class JudgeChecker implements Checker {
 async function parseParams(params: ImplementationParams): Promise<JudgeParams> {
   const unknown = Object.keys(params).filter((key) => !JUDGE_KEYS.has(key));
   if (unknown.length > 0) {
-    throw new ConfigError(`judge checker has unknown parameter${unknown.length === 1 ? "" : "s"}: ${unknown.join(", ")}`);
+    throw new ConfigError(
+      `judge checker has unknown parameter${unknown.length === 1 ? "" : "s"}: ${unknown.join(", ")}`,
+    );
   }
 
   const model = params.model;
@@ -114,7 +123,11 @@ async function parseParams(params: ImplementationParams): Promise<JudgeParams> {
   }
 
   const rubric = params.rubric;
-  if (!Array.isArray(rubric) || rubric.length === 0 || rubric.some((item) => typeof item !== "string" || item.trim().length === 0)) {
+  if (
+    !Array.isArray(rubric) ||
+    rubric.length === 0 ||
+    rubric.some((item) => typeof item !== "string" || item.trim().length === 0)
+  ) {
     throw new ConfigError("judge checker parameter rubric must be a non-empty list of statements");
   }
 
@@ -165,7 +178,10 @@ function parseVerdict(text: string | null, rubric: readonly string[], diagnostic
   const criteria = (parsed as { criteria: unknown[] }).criteria;
   if (criteria.length !== rubric.length) {
     throw new JudgeError(
-      withDiagnostics(`invalid judge verdict: expected ${rubric.length} criteria, received ${criteria.length}`, diagnostics),
+      withDiagnostics(
+        `invalid judge verdict: expected ${rubric.length} criteria, received ${criteria.length}`,
+        diagnostics,
+      ),
     );
   }
 
@@ -175,7 +191,9 @@ function parseVerdict(text: string | null, rubric: readonly string[], diagnostic
     }
     const record = entry as Record<string, unknown>;
     if (typeof record.pass !== "boolean") {
-      throw new JudgeError(withDiagnostics(`invalid judge verdict: criteria[${index}].pass is not a boolean`, diagnostics));
+      throw new JudgeError(
+        withDiagnostics(`invalid judge verdict: criteria[${index}].pass is not a boolean`, diagnostics),
+      );
     }
     if (typeof record.reason !== "string" || record.reason.trim().length === 0) {
       throw new JudgeError(withDiagnostics(`invalid judge verdict: criteria[${index}].reason is missing`, diagnostics));

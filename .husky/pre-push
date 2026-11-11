@@ -1,0 +1,21 @@
+# Verify the tree being uploaded, not a different dirty worktree or ref.
+needs_checks=0
+head=$(git rev-parse HEAD)
+while read -r local_ref local_sha remote_ref remote_sha; do
+  case "$local_sha" in
+    *[!0]*) ;;
+    *) continue ;;
+  esac
+  if [ "$local_sha" != "$head" ]; then
+    echo "pre-push: only the checked-out HEAD can be verified; check out the outgoing commit first." >&2
+    exit 1
+  fi
+  needs_checks=1
+done
+
+[ "$needs_checks" -eq 1 ] || exit 0
+if [ -n "$(git status --porcelain --untracked-files=normal)" ]; then
+  echo "pre-push: a clean worktree is required so checks match the outgoing commit." >&2
+  exit 1
+fi
+npm run check

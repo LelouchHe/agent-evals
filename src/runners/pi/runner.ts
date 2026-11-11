@@ -3,7 +3,13 @@ import { basename, join } from "node:path";
 import { ConfigError, errorMessage, resolveAuthoringAsset, type ImplementationParams } from "../../engine/config.ts";
 import { assertSeatbeltAvailable } from "../../platform/macos/policy.ts";
 import type { Runner, RunnerContext, RunnerDefinition, RunnerOutcome } from "../../engine/registry.ts";
-import { invokePi, resolvePiExecutable, THINKING_LEVELS, validateEnvPassthrough, type ThinkingLevel } from "./session.ts";
+import {
+  invokePi,
+  resolvePiExecutable,
+  THINKING_LEVELS,
+  validateEnvPassthrough,
+  type ThinkingLevel,
+} from "./session.ts";
 
 const RUNNER_KEYS = new Set(["model", "thinking", "skills", "executable", "envPassthrough"]);
 

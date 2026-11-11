@@ -71,9 +71,12 @@ test("readRunFile bounds file size and rejects directories", async (t) => {
 
   await assert.rejects(() => readRunFile(root, "large.txt"), /check limit/);
   await assert.rejects(() => readRunFile(root, "directory"), /not a regular file/);
-  await assert.rejects(() => readRunFile(root, "missing.txt"), (error: unknown) => {
-    return typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT";
-  });
+  await assert.rejects(
+    () => readRunFile(root, "missing.txt"),
+    (error: unknown) => {
+      return typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT";
+    },
+  );
 });
 
 test("workspace helper does not inspect an unrelated host file through a symlink", async (t) => {

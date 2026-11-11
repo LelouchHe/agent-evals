@@ -20,7 +20,7 @@ The overall model is described in [architecture](architecture.md); case authorin
 ## Implementation Choices
 
 - TypeScript on Node.js 24+, with Node's built-in test runner.
-- Approved project-local dependencies: `yaml`, `typescript`, and `@types/node`. Commit a lockfile; no global installation.
+- Runtime dependency: `yaml`. Development dependencies: TypeScript, Node types, ESLint with its JavaScript/TypeScript configuration and Node globals, Prettier, and Husky. Keep installations project-local and commit the lockfile.
 - A Pi runner using native RPC, with one initial user message and autonomous agent execution.
 - Direct macOS Seatbelt enforcement through `sandbox-exec`, with platform-specific launch code kept separate.
 - Two checkers: `file` and `judge`, selected through `$type` discovery with implementation-owned parameters.
@@ -63,12 +63,13 @@ Run records are written to `.eval-results/<run-id>/result.json` by default, with
 
 ## Verification
 
-Run from the repository root:
+Run the complete development gate from the repository root:
 
 ```sh
-npm run typecheck
-npm test
+npm run check
 ```
+
+This runs ESLint, Prettier checks, TypeScript checking, and tests. Husky checks lint/format before commits and the complete gate before pushes; see [Development](../README.md#development) for the hook boundaries.
 
 The same gates passed from a clean clone after `npm ci` on Node 24.22.2 and macOS 15.5. Final implementation `fc2b131` passed both gates again during parent verification: 83 tests passed, with no failures or skips.
 

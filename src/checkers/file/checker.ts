@@ -95,7 +95,9 @@ class FileChecker implements Checker {
           if (baseline === undefined) {
             return fail(`${parsed.path} was created during the run`);
           }
-          return current.equals(baseline) ? pass("content matches the initial baseline") : fail("content changed during the run");
+          return current.equals(baseline)
+            ? pass("content matches the initial baseline")
+            : fail("content changed during the run");
         }),
       );
     }
@@ -107,7 +109,9 @@ class FileChecker implements Checker {
 function parseParams(params: ImplementationParams): FileCheckParams {
   const unknown = Object.keys(params).filter((key) => !FILE_CHECK_KEYS.has(key));
   if (unknown.length > 0) {
-    throw new ConfigError(`file checker has unknown parameter${unknown.length === 1 ? "" : "s"}: ${unknown.join(", ")}`);
+    throw new ConfigError(
+      `file checker has unknown parameter${unknown.length === 1 ? "" : "s"}: ${unknown.join(", ")}`,
+    );
   }
 
   const path = params.path;
@@ -157,7 +161,13 @@ function parseParams(params: ImplementationParams): FileCheckParams {
     throw new ConfigError("file checker needs at least one of exists, matches, or unchanged");
   }
 
-  return { path, ...(exists === undefined ? {} : { exists }), ...(unchanged === undefined ? {} : { unchanged }), patterns, matches };
+  return {
+    path,
+    ...(exists === undefined ? {} : { exists }),
+    ...(unchanged === undefined ? {} : { unchanged }),
+    patterns,
+    matches,
+  };
 }
 
 async function readOptional(root: RunRoot, path: string): Promise<Buffer | undefined> {
@@ -171,10 +181,7 @@ async function readOptional(root: RunRoot, path: string): Promise<Buffer | undef
   }
 }
 
-async function condition(
-  subject: string,
-  body: () => Promise<CheckResult>,
-): Promise<CheckResult> {
+async function condition(subject: string, body: () => Promise<CheckResult>): Promise<CheckResult> {
   try {
     const result = await body();
     return { ...result, subject };

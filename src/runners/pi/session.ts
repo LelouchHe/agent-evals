@@ -101,7 +101,10 @@ export async function invokePi(
     const response = (await process.command("prompt", { message })) as { disposition?: unknown } | undefined;
     const disposition = response?.disposition;
     if (disposition !== "started") {
-      throw new PiSessionError(`Pi did not start a run for the prompt (disposition: ${String(disposition)})`, diagnosticsOf(process));
+      throw new PiSessionError(
+        `Pi did not start a run for the prompt (disposition: ${String(disposition)})`,
+        diagnosticsOf(process),
+      );
     }
     const event = await settled;
     if (event.aborted === true) {
@@ -152,7 +155,9 @@ export async function createPiProcess(config: PiSessionConfig): Promise<PiProces
   const supervisorPath = join(toolsDir, "supervisor.ts");
   const safeGroupPath = join(toolsDir, "safe-process-group.ts");
   await writeFile(supervisorPath, await readFile(new URL("./supervisor.ts", import.meta.url), "utf8"), { mode: 0o700 });
-  await writeFile(safeGroupPath, await readFile(new URL("./safe-process-group.ts", import.meta.url), "utf8"), { mode: 0o700 });
+  await writeFile(safeGroupPath, await readFile(new URL("./safe-process-group.ts", import.meta.url), "utf8"), {
+    mode: 0o700,
+  });
 
   let shellPath: string | undefined;
   if (config.tools !== null) {
@@ -330,13 +335,14 @@ async function assertFinalAssistantHealthy(process: PiProcess): Promise<void> {
     throw new PiSessionError("Pi settled without a final assistant message", diagnosticsOf(process));
   }
   if (last.stopReason === "error") {
-    const detail = typeof last.errorMessage === "string" && last.errorMessage.length > 0
-      ? truncate(last.errorMessage, 500)
-      : "the provider or model run failed";
-    throw new PiSessionError(
-      `model request failed: ${detail}`,
-      [...diagnosticsOf(process), `assistant error: ${detail}`],
-    );
+    const detail =
+      typeof last.errorMessage === "string" && last.errorMessage.length > 0
+        ? truncate(last.errorMessage, 500)
+        : "the provider or model run failed";
+    throw new PiSessionError(`model request failed: ${detail}`, [
+      ...diagnosticsOf(process),
+      `assistant error: ${detail}`,
+    ]);
   }
 }
 

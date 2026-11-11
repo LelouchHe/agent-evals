@@ -47,7 +47,7 @@ async function writeScenario(t: Parameters<typeof makeTempDir>[0], options: Scen
   await writeFile(
     casePath,
     stringify({
-      input: "Create hello.txt with exactly the content \"Hello, world!\".",
+      input: 'Create hello.txt with exactly the content "Hello, world!".',
       ...(options.timeoutMs === undefined ? {} : { timeoutMs: options.timeoutMs }),
       ...(options.fixtureFiles === undefined ? {} : { fixture: "fixture" }),
       checks,
@@ -55,7 +55,10 @@ async function writeScenario(t: Parameters<typeof makeTempDir>[0], options: Scen
   );
   if (options.skill === true) {
     await mkdir(join(directory, "skill"));
-    await writeFile(join(directory, "skill", "SKILL.md"), "---\nname: tiny-write\ndescription: Write a file.\n---\n\nWrite it.\n");
+    await writeFile(
+      join(directory, "skill", "SKILL.md"),
+      "---\nname: tiny-write\ndescription: Write a file.\n---\n\nWrite it.\n",
+    );
   }
   await writeFile(
     candidatePath,
@@ -121,7 +124,10 @@ test("integration: success runs file and judge checks and cleans the run directo
 
   assert.equal(record.status, "pass", record.error);
   assert.equal(record.runner.status, "completed");
-  assert.deepEqual(record.checks.map((check) => check.status), ["pass", "pass", "pass"]);
+  assert.deepEqual(
+    record.checks.map((check) => check.status),
+    ["pass", "pass", "pass"],
+  );
   assert.equal(record.cleanup.status, "removed");
   assert.deepEqual(await readdir(tempParent), []);
   assert.equal(await readFile(join(fixtureScenario, "seed.txt"), "utf8"), "keep me\n");
@@ -143,7 +149,10 @@ test("integration: unchanged uses the engine baseline, which is outside agent ac
   });
 
   assert.equal(record.status, "pass", record.error);
-  assert.deepEqual(record.checks.map((check) => check.status), ["pass", "pass"]);
+  assert.deepEqual(
+    record.checks.map((check) => check.status),
+    ["pass", "pass"],
+  );
   assert.deepEqual(await readdir(tempParent), []);
 });
 
@@ -171,7 +180,10 @@ test("integration: a replaced workspace root is rejected instead of reading outs
 
   assert.equal(record.status, "error", `checks: ${JSON.stringify(record.checks)}`);
   assert.equal(record.checks.length, 4);
-  assert.ok(record.checks.every((check) => check.status === "error"), JSON.stringify(record.checks));
+  assert.ok(
+    record.checks.every((check) => check.status === "error"),
+    JSON.stringify(record.checks),
+  );
   assert.match(record.checks.map((check) => check.reason).join(" "), /root|replac|outside/i);
   assert.equal(await readFile(join(outside, "hello.txt"), "utf8"), "outside-sentinel\n");
   assert.deepEqual(await readdir(tempParent), []);
@@ -538,7 +550,9 @@ test("integration: CLI cancellation interrupts and cleans up", async (t) => {
 async function readOnlyResult(resultsDir: string): Promise<EvaluationRecord> {
   const runDirectories = await readdir(resultsDir);
   assert.equal(runDirectories.length, 1);
-  return JSON.parse(await readFile(join(resultsDir, runDirectories[0] ?? "", "result.json"), "utf8")) as EvaluationRecord;
+  return JSON.parse(
+    await readFile(join(resultsDir, runDirectories[0] ?? "", "result.json"), "utf8"),
+  ) as EvaluationRecord;
 }
 
 async function runCli(

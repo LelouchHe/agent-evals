@@ -32,9 +32,12 @@ test("PiProcess reports a command timeout", async (t) => {
   const fake = await createFakePi(t, "no-response");
   const pi = startFake(fake.executable, { commandTimeoutMs: 100 });
   t.after(() => pi.stop());
-  await assert.rejects(() => pi.command("prompt", { message: "hi" }), (error: unknown) => {
-    return error instanceof PiRpcError && /did not respond/.test(error.message);
-  });
+  await assert.rejects(
+    () => pi.command("prompt", { message: "hi" }),
+    (error: unknown) => {
+      return error instanceof PiRpcError && /did not respond/.test(error.message);
+    },
+  );
 });
 
 test("PiProcess escalates to SIGKILL when SIGTERM is ignored", async (t) => {
