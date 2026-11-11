@@ -94,6 +94,8 @@ This runs ESLint, Prettier checks, TypeScript checking, and tests. Husky checks 
 
 On Node 24.22.2 and macOS 15.5, implementation `fc2b131` passed type checking and all 83 tests, including from a clean clone. Tooling commit `9d5e31b` subsequently passed the complete development gate with 91 tests and no failures or skips, both locally and after `npm ci` in an external clean clone. The clean install automatically configured repository-local Husky hooks, and dependency resolution was verified to stay within that installation.
 
+Single-file implementation commit `dbb7b34` passed the complete gate with 104 tests and no failures or skips at normal suite concurrency. The same commit was cloned to an external `/tmp` checkout outside the repository's module-resolution ancestry; `npm ci` and `npm run check` both exited 0 with the same 104 passing tests. The resolved `yaml` module path was inside that checkout's own `node_modules`, so the run did not fall back to the source worktree. No model, remote provider, or credential value was used.
+
 ### Review Closure
 
 - Independent read-only review covered `98d0b83..f44d29b`. Its six concrete findings were repaired in `c28bcd3`: replaced-root containment, ordinary background-process cleanup, FIFO evidence, final provider-error classification, regex execution bounds, and `unchanged: false` rejection.
@@ -101,6 +103,12 @@ On Node 24.22.2 and macOS 15.5, implementation `fc2b131` passed type checking an
 - Parent verification inspected the final authority boundary and reran `npm run typecheck` and `npm test`. A separate real Pi RPC/Seatbelt probe confirmed that a forged registry entry neither killed nor stopped an unrelated synthetic process: its heartbeat continued after teardown, while the owned shell was terminated. No model, network, or credentials were used.
 - Independent review of tooling range `d84cc23..9d5e31b` found no material introduced defects and independently passed all eight real Git-hook tests. The temporary, reviewed `minimatch` advisory treatment and its reassessment triggers are recorded in [Development](../README.md#development).
 - This closes the reviewed concrete mechanisms, not universal containment of arbitrary child processes. The successful real-model smoke below does not remove the documented capability limits.
+
+### Single-File Revision Verification
+
+- The model-free suite exercised the real installed `yaml` parser, source positions, duplicate-key errors, and forbidden anchor/alias/`<<` structures at root and nested locations.
+- Real macOS Seatbelt probes and installed-Pi RPC bash/skill probes passed without prompts, model calls, network, or credentials. Deterministic fake RPC executables covered `run` integration, `view`/`run` payload equality, credential-free `view`, harness-canary non-invocation, and result retention after YAML edits.
+- The bounded independent review of this revision is still pending in the acceptance list above; this handoff's tests are evidence for that review, not a substitute.
 
 ### Real-Model Smoke
 
