@@ -8,10 +8,10 @@ checks:
     # Search (not an implicit full-file match). One trailing newline is allowed.
     matches: '^Hello, world!\n?$'
   - $type: judge
-    # Replace both placeholder models before a real run; the example does not
-    # execute a model by default.
-    model: select-provider/select-judge-model
-    thinking: medium
+    # Independent Pi invocation; omitted thinking uses the checker default.
+    model: opencode-go/deepseek-v4.1-flash
+    envPassthrough:
+      - OPENCODE_API_KEY
     file: hello.txt
     rubric:
       - hello.txt exists and its content is "Hello, world!", allowing one final newline.

@@ -1,11 +1,10 @@
 name: pi-with-write-skill
 runner:
   $type: pi
-  # Replace with a provider/model available to Pi before running. Keeping a
-  # placeholder makes the checked-in example non-executing until an operator
-  # selects a model.
-  model: select-provider/select-model
-  thinking: medium
+  model: opencode-go/deepseek-v4.1-flash
+  # Omitted thinking uses the runner default (medium).
+  envPassthrough:
+    - OPENCODE_API_KEY
   # Resolved relative to this file and loaded explicitly. Discovered skills,
   # extensions, MCP servers, sessions, and global configuration stay disabled.
   skills:

@@ -1,6 +1,6 @@
 # M1: Filesystem Evaluation
 
-Status: implemented. The bounded independent review, repairs, and focused closure verification are complete. Real-model smoke testing remains pending.
+Status: complete for the documented M1 scope. Implementation, bounded independent review, repairs, focused closure verification, and the approved real-model smoke have passed.
 
 ## Goal
 
@@ -42,8 +42,8 @@ The overall model is described in [architecture](architecture.md); case authorin
 
 - [x] Write focused tests for each new behavior and prove they can fail with temporary mutations where practical.
 - [x] Pass type checking, unit tests, real Seatbelt allow/deny tests, and controlled subprocess timeout/cleanup tests at normal suite concurrency.
-- [ ] Confirm runner/judge models, thinking settings, and a small smoke-test budget before any real-model execution. Routine tests do not call models.
-- [ ] After approval, verify one end-to-end case with Pi and both checkers. This proves integration, not that a skill improves behavior.
+- [x] Confirm runner/judge models, thinking settings, and a small smoke-test budget before any real-model execution. Routine tests do not call models.
+- [x] After approval, verify one end-to-end case with Pi and both checkers. This proves integration, not that a skill improves behavior.
 - [x] Complete one bounded independent read-only review Task, fix confirmed findings, and document the commands actually verified.
 
 ## Delivered
@@ -56,7 +56,7 @@ The overall model is described in [architecture](architecture.md); case authorin
 - `src/checkers/judge` runs an independent, tool-free Pi invocation over the task and one regular file and preserves one result per rubric statement.
 - The Pi runner classifies a final assistant `stopReason: error` as an execution failure, including with pre-satisfied files, while ignoring recoverable intermediate retry errors.
 - Pi bash commands use a generated custom shell wrapper. Ordinary background jobs stay in a tracked shell process group; the wrapper kills them before the command returns. A sandbox-resident Node supervisor wraps Pi, reads the agent-writable tracked-group registry, and terminates groups on timeout, cancellation, early Pi exit, and normal teardown. The supervisor runs inside Seatbelt, so forged registry entries can target only same-sandbox processes; the host never signals groups from registry data.
-- `examples/write-file` is self-contained: an empty workspace, one English task message, one tiny project-owned skill, a case, and a candidate with placeholder models.
+- `examples/write-file` is self-contained: an empty workspace, one English task message, one tiny project-owned skill, a case, and a candidate. Both model invocations select `opencode-go/deepseek-v4.1-flash`, omit thinking to use the default `medium`, and explicitly forward only `OPENCODE_API_KEY` as the provider credential.
 - The `pi` runner and `judge` checker accept an optional `envPassthrough` allowlist so an operator can supply narrowly scoped credentials without inheriting the invoking environment.
 
 Run records are written to `.eval-results/<run-id>/result.json` by default, with bounded diagnostics beside them. The runtime directory is removed after success, failed start, timeout, cancellation, and checker failure; only the initial baseline needed by `unchanged` exists during the run.
@@ -79,7 +79,23 @@ On Node 24.22.2 and macOS 15.5, implementation `fc2b131` passed type checking an
 - Focused independent closure confirmed those original reproducers were addressed and identified a repair-introduced host-signaling capability through the writable process-group registry. `fc2b131` removed that host consumer and moved cleanup into the same Seatbelt instance as Pi.
 - Parent verification inspected the final authority boundary and reran `npm run typecheck` and `npm test`. A separate real Pi RPC/Seatbelt probe confirmed that a forged registry entry neither killed nor stopped an unrelated synthetic process: its heartbeat continued after teardown, while the owned shell was terminated. No model, network, or credentials were used.
 - Independent review of tooling range `d84cc23..9d5e31b` found no material introduced defects and independently passed all eight real Git-hook tests. The temporary, reviewed `minimatch` advisory treatment and its reassessment triggers are recorded in [Development](../README.md#development).
-- This closes the reviewed concrete mechanisms, not universal containment of arbitrary child processes. The limitations below and real-model smoke acceptance remain separate.
+- This closes the reviewed concrete mechanisms, not universal containment of arbitrary child processes. The successful real-model smoke below does not remove the documented capability limits.
+
+### Real-Model Smoke
+
+The approved `write-file` example passed in one evaluation invocation on 2026-11-11:
+
+```sh
+npm run eval -- --case examples/write-file/case.yml --candidate examples/write-file/candidate.yml
+```
+
+- Runner and judge: `opencode-go/deepseek-v4.1-flash`, each in its own isolated Pi invocation, default thinking `medium`, 120-second execution budget per invocation. The evaluation was not automatically rerun.
+- Result: `pass` in approximately 30 seconds; the runner completed in approximately 25 seconds. File existence, regex content matching, and the independent judge criterion all passed. Diagnostics were empty.
+- Cleanup: the runtime directory was removed, and a post-run process check found no remaining evaluation supervisors or shell wrappers. No additional Seatbelt permissions were needed.
+- Credentials: only the selected provider key was injected in memory through `OPENCODE_API_KEY`; personal authentication/configuration files were not copied into the run, and the retained result did not contain the key.
+- Result record: `.eval-results/2026-11-11T15-06-44-228Z-898d5cc9/result.json` (ignored by Git). The workspace was not retained. Token usage and monetary cost were not measured; this smoke used invocation/time limits rather than a hard cost cap.
+
+This verifies the execution/checking/cleanup integration, not skill effectiveness or support for arbitrary provider endpoints. Routine test gates remain model-free.
 
 ### Test Coverage
 
@@ -95,18 +111,13 @@ The suite includes:
 - File-checker and judge-checker unit tests for their complete parameter and result behavior.
 - Real Git/Husky hook tests with isolated local bare remotes: valid commit/push, lint and formatting rejection without rewriting files, type and runtime-test failure rejection, and safeguards against validating a dirty worktree or a different outgoing commit.
 
-## Remaining Work
-
-- Select runner and judge models, thinking settings, and a small smoke-test budget. The checked-in example deliberately uses placeholder models.
-- Run one approved end-to-end case with real Pi and both checkers. This proves integration, not skill improvement.
-- Confirm real model network behavior under the Seatbelt profile. The profile allows outbound network, but no live model traffic has been exercised; additional allowances may be required and should be derived from failure evidence.
-
-### Known Limitations
+## Known Limitations
 
 - macOS only; no Linux or container backend.
 - One initial user message and one case/candidate pair per invocation.
 - Checks run after the agent stops but before workspace cleanup; full snapshots are not retained and results cannot be regraded after cleanup.
 - Judge evidence is limited to one file. There is no generic evidence-reference language.
+- Model networking was smoke-tested only with the example's OpenCode Go endpoint; other providers/endpoints remain unverified.
 - The runner timeout bounds agent execution; each check receives the same budget, so total wall time can exceed it.
 - Fixture symlinks are copied as symlinks. Checks reject escaping links, but they are not a supported way to share data.
 - Background-process cleanup covers ordinary jobs in the Pi shell's tracked process groups. A child that deliberately creates a new session or process group (`setsid` or equivalent) is outside this contract.
