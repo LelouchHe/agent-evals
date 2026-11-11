@@ -70,6 +70,90 @@ checks:
 
 These fragments establish selection and parameter ownership. They do not define every case field or claim the illustrated implementations already exist.
 
+## M1 Supported Records
+
+The first implementation supports a deliberately small shape. It does not define a general case schema.
+
+A case supplies one input message, an optional fixture directory, an optional execution timeout, and checks:
+
+```yaml
+input: Create hello.txt with exactly the content "Hello, world!".
+fixture: fixture        # optional directory, resolved relative to this file
+timeoutMs: 120000       # optional runner budget in milliseconds
+checks:
+  - $type: file
+    path: hello.txt
+    exists: true
+    matches: '^Hello, world!\n?$'
+  - $type: judge
+    model: provider/judge-model
+    thinking: medium
+    file: hello.txt
+    rubric:
+      - hello.txt exists and its content is "Hello, world!", allowing one final newline.
+```
+
+A candidate selects the runner and its parameters:
+
+```yaml
+name: pi-with-skill
+runner:
+  $type: pi
+  model: provider/model
+  thinking: medium
+  skills: [skill]              # optional, resolved relative to this file
+  envPassthrough: [API_KEY]    # optional allowlist; values are not recorded
+```
+
+All fields except `$type` belong to the selected implementation. Unknown fields, unknown implementations, invalid regular expressions, and missing authoring assets are configuration errors reported before any runtime resource is created.
+
+### `pi` Runner Parameters
+
+| Parameter | Meaning |
+|---|---|
+| `model` | Pi model selector, normally `provider/model`. Required. |
+| `thinking` | `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, or `max`. Defaults to `medium`. |
+| `skills` | Relative skill files or directories loaded explicitly. Discovered skills, extensions, MCP servers, sessions, context files, prompt templates, and themes stay disabled. |
+| `executable` | Pi executable name or path. Defaults to `pi`. |
+| `envPassthrough` | Environment variable names copied from the invoking process. Use this for narrowly scoped credentials; other variables are not inherited. |
+
+The runner starts Pi in an empty or fixture-backed workspace, sends the case input as one user message, and lets Pi complete autonomous tool turns. The engine stops Pi and its owned process group before checks run.
+
+### `file` Checker Parameters
+
+| Parameter | Meaning |
+|---|---|
+| `path` | Required run-relative path. Absolute paths and `..` are rejected. |
+| `exists` | Boolean. When present, produces one result. |
+| `matches` | A regular expression or list of them. Search semantics apply; a match need not cover the whole file. Each pattern produces one result. |
+| `unchanged` | Boolean. Compares the file with the initial baseline outside the agent's writable area. |
+
+At least one of `exists`, `matches`, or `unchanged` is required. Checks are capped at 1 MiB per file. A missing file is a failed check; an unsafe path, escaping symlink, unreadable file, or oversized file is a check error. Paths that traverse a symlink outside the workspace, including through an ancestor, are rejected rather than inspected.
+
+The example's `matches` pattern tolerates one optional final newline. The checker does not rewrite or normalize file content.
+
+### `judge` Checker Parameters
+
+| Parameter | Meaning |
+|---|---|
+| `model`, `thinking` | Independent judge model selection. |
+| `rubric` | Non-empty list of statements. Each statement produces its own result. |
+| `file` | One run-relative evidence file. Missing evidence is stated explicitly in the prompt. |
+| `executable`, `envPassthrough` | Same meaning as for the runner. |
+
+The judge is a separate isolated Pi invocation with tools disabled. It receives the case input and selected file content, not the evaluated workspace or its own process environment besides the explicit allowlist. The verdict must be a JSON object with one boolean `pass` and a reason per rubric statement. A valid failing verdict is a failed check; a malformed or missing verdict is a checker error.
+
+### Trusted Implementation Directories
+
+The CLI loads the built-in `pi`, `file`, and `judge` implementations, then optional modules from explicitly supplied operator directories:
+
+```sh
+node src/cli.ts --case case.yml --candidate candidate.yml \
+  --runner-dir ./trusted/runners --checker-dir ./trusted/checkers
+```
+
+A runner module exports `runner`; a checker module exports `checker`. Each has a non-empty `type`, `validate(params, authoringDir)`, and `create()`. Implementation modules are loaded only from these trusted paths, never from an evaluated workspace.
+
 ## Express Checks, Not Evaluation Categories
 
 Do not create separate routing and behavior case types, files, or execution pipelines. Whether a skill was loaded, how an agent acted, and whether its result is correct are concerns expressed through checks and available evidence.

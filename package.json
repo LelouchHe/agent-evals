@@ -1,0 +1,23 @@
+{
+  "name": "agent-evals",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Filesystem evaluation toolkit for AI agent systems.",
+  "license": "MIT",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "node --test --test-timeout=30000",
+    "eval": "node src/cli.ts"
+  },
+  "dependencies": {
+    "yaml": "2.9.1"
+  },
+  "devDependencies": {
+    "@types/node": "24.19.2",
+    "typescript": "5.9.3"
+  }
+}

@@ -36,7 +36,7 @@ Keep failed checks of agent behavior distinct from configuration, execution, obs
 ## Extension Boundaries
 
 - Runner and Checker are configurable extension points. Run or candidate configuration selects the runner; cases select checkers.
-- Discover implementations from designated, trusted directories. Adding an implementation that satisfies the established contract should not require changing engine dispatch.
+- Discover implementations from designated, trusted directories. Adding an implementation that satisfies the established contract should not require changing engine dispatch. M1 registers the built-ins at the CLI composition root and loads optional modules only from operator-supplied trusted directories; an evaluated workspace is never a discovery root.
 - Built-in and added implementations follow the same contracts. The engine does not understand their business parameters.
 - Runners manage interaction and session lifecycle; checkers evaluate results and observations. Do not force them into one universal plugin interface.
 - Do not load executable extensions from agent-writable workspaces or generated artifacts. Case-local checker code is a trusted authoring asset, not part of the evaluated working copy.
@@ -64,7 +64,7 @@ The unified tracer direction does not yet define configuration, lifecycle hooks,
 - Isolation, working environments and state, and execution lifecycles are separate responsibilities. An OS sandbox does not automatically provide snapshots, dependencies, or complete task lifecycle management.
 - Prepare independent run state and declare required capabilities. Do not silently fall back to unsandboxed execution when a required restriction cannot be enforced.
 - Keep workspace state, credentials, candidate configuration, results, and diagnostics deliberately scoped. Do not contaminate source fixtures or retain copied credentials as results.
-- Register cleanup when resources are created, and account for failure, timeout, and cancellation as well as successful completion.
+- Register cleanup when resources are created, and account for failure, timeout, and cancellation as well as successful completion. M1 keeps the initial comparison baseline outside the agent's writable area, then removes the whole runtime directory after checks.
 - Platform adaptation must not imply identical capabilities or security guarantees across backends.
 - Keep personal configuration and private run data out of shareable examples.
 
