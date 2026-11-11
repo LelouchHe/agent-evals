@@ -8,4 +8,6 @@ The long-term goal is a general-purpose tool for evaluating AI agent systems—t
 
 Make agent changes measurable through repeatable tasks, controlled environments, and evidence-based comparisons of behavior, outcomes, cost, and latency.
 
+The initial implementation will target macOS Seatbelt (`sandbox-exec`) only.
+
 [Design principles](docs/design.md) · [MIT License](LICENSE)

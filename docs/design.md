@@ -65,9 +65,12 @@ Skills, workflows, configurations, and harnesses do not each need a hard-coded e
 
 ## Sandboxing and Runtime Environments
 
-- Focus on macOS first. Prioritize validating MXC as a cross-platform restricted-execution wrapper rather than maintaining separate platform launch implementations.
-- MXC is not the whole evaluation system. Workspace state, candidates, evidence, and evaluation flow remain this project's responsibility.
-- Isolation boundaries, working environments and state, and execution lifecycles are separate responsibilities. A shared SDK interface does not imply identical backend capabilities.
+- The initial implementation targets macOS only and uses Seatbelt directly through `sandbox-exec`.
+- Do not introduce MXC or implement Linux or Windows backends at this stage.
+- Keep Seatbelt profile generation and platform-specific launch details in a small, separate module. Case definitions, grading, and the rest of the execution flow should not depend directly on Seatbelt syntax.
+- Do not design a generic backend plugin system or cross-platform policy language in advance. Add platform support only when a real need justifies it.
+- Isolation boundaries, working environments and state, and execution lifecycles are separate responsibilities. Seatbelt does not provide workspace snapshots, dependency provisioning, or complete task lifecycle management.
+- Workspace state, candidates, evidence, timeouts, cancellation, and cleanup remain this project's responsibility.
 - Declare required capabilities and verify both permitted and denied behavior. Do not fall back to unsandboxed execution when a required restriction cannot be enforced.
 - Keep personal configuration, credentials, and private run data out of public examples.
 
