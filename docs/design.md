@@ -60,10 +60,27 @@ Case + Candidate + Environment
 | Component | Responsibility |
 |---|---|
 | Engine | Validate inputs, prepare environments, invoke the selected runner and checkers, preserve evidence and results, and enforce lifecycle and cleanup requirements. |
-| Runner | Drive the evaluated harness, handle its interaction and evidence capture, and implement the harness-specific actions needed for cancellation and teardown. |
+| Runner | Drive the evaluated harness, expose its observable events and state, and implement the harness-specific actions needed for cancellation and teardown. |
 | Checker | Interpret its parameters, inspect evidence, and return named checks or scores with reasons and evidence references. |
 
 Evidence includes observed events, outputs, artifacts, and measurements, not just the evaluated agent's own account of what happened. Regrading should not require rerunning the agent by default. Keep checker execution failures distinct from failed checks of the evaluated result.
+
+## Evidence Capture and the Tracer Direction
+
+### Current Scope
+
+- Focus the first iteration on filesystem evidence. Preserve the relevant initial and final state, changes, and file contents needed by checks.
+- Checker context comes from the evaluated run's persisted evidence, not the engine's working directory, process environment, or a live runtime handle. It must remain usable after the evaluated environment is gone.
+- Capture required state while it is observable, preserve evidence outside the evaluated agent's writable area, and complete collection before destroying the environment.
+- Do not build a general tracer plugin system in the first iteration.
+
+### Unified Direction
+
+- Treat tracing as one coherent evidence-collection responsibility. Future needs such as messages, process environment variables, tool calls, permission events, or service state should fit a unified tracer design rather than accumulate unrelated engine special cases.
+- Separate collection from referencing. A reference cannot recover state that was never captured; a tracer has value when it provides an actual collection capability, not merely a new name for existing data.
+- A filesystem-first implementation does not establish a filesystem-only contract for all future evidence. Collection mechanisms may differ by source while sharing consistent persistence and checker-access principles.
+- Missing or unavailable observations must be explicit. Do not silently substitute engine-host state or count missing evidence as a passing check. Capture only the necessary data, especially for secrets-bearing environment variables.
+- Tracer configuration, lifecycle hooks, discovery, evidence layout, and reference syntax are deliberately deferred. Illustrative filenames such as `env.json` or `response.txt` are not a finalized format. No `$msg`, `$env`, or general variable-expression language is approved.
 
 ## Two Configurable Extension Points
 
@@ -119,7 +136,7 @@ These examples establish implementation selection and parameter ownership, not a
 - The built-in LLM judge should accept multiple rubric criteria and preserve their individual results. Criteria do not require fixed category labels; a list of grading statements is sufficient. Multiple criteria do not require multiple checker implementations or necessarily multiple model calls.
 - Models and connection settings are runner or checker parameters, not special engine-level fields. Shared configuration should reuse the same implementation configuration shape rather than introduce judge-specific core sections.
 
-Skills, workflows, configurations, and harnesses do not each need a hard-coded execution pipeline. Different evaluation concerns mainly belong in checks; differences in interaction and evidence capture belong in runners. Required tool or service capabilities must exist before a case can be evaluated; their absence must not turn a restraint into a vacuous pass.
+Skills, workflows, configurations, and harnesses do not each need a hard-coded execution pipeline. Different evaluation concerns mainly belong in checks; harness-specific interaction belongs in runners. Evidence capture follows the unified tracer direction above. Required tool or service capabilities must exist before a case can be evaluated; their absence must not turn a restraint into a vacuous pass.
 
 ## Sandboxing and Runtime Environments
 
