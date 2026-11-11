@@ -3,7 +3,7 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "description": "Filesystem evaluation toolkit for AI agent systems.",
+  "description": "A toolkit for evaluating AI agent systems.",
   "license": "MIT",
   "engines": {
     "node": ">=24"
