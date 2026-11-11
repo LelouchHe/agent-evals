@@ -23,7 +23,7 @@ Create an isolated run directory
 
 ## Current Status
 
-[M1](docs/m1-plan.md) is implemented: one local filesystem evaluation with a Pi RPC runner, direct macOS Seatbelt enforcement, and `file` and `judge` checkers. The checked-in example selects OpenCode Go's DeepSeek Flash for both runner and judge and requires an explicit `OPENCODE_API_KEY` environment variable. The bounded independent review, focused repair verification, and approved real-model smoke are complete. The smoke verifies integration, not that the skill improves behavior. Routine tests never call a model.
+[M1](docs/m1-plan.md) is implemented: one local filesystem evaluation with a Pi RPC runner, direct macOS Seatbelt enforcement, and `file` and `judge` checkers. The checked-in example selects OpenCode Go's DeepSeek Flash for both runner and judge and requires an explicit `OPENCODE_API_KEY` environment variable. The bounded independent review, focused repair verification, and approved real-model smoke are complete. The smoke verifies integration of the original two-file format, not that the skill improves behavior or that a later configuration-format migration has been live-model tested. Routine tests never call a model.
 
 The agreed [M1 authoring revision](docs/configuration.md)—one file, optional named `cases` with disjoint top-level fields, and source-annotated `view`—is not implemented. It has no inheritance or recursive overrides. The commands below still require the current M1 case and candidate files.
 

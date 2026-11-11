@@ -102,17 +102,19 @@ Mappings and arrays are whole values supplied by one side. There is no array app
 
 Use one file. Do not support `extends`, imported case collections, nested `cases` inside a case entry, template interpolation, a variable-expression language, or implicit environment expansion in this revision.
 
-Reject YAML anchors, aliases, and merge-key syntax in the new format rather than reintroducing configuration reuse through the parser. Literal text containing characters such as `&`, `*`, or `<<` is not itself such syntax; rejection must be based on parsed YAML structure, not a text search. The current M1 parser permits ordinary aliases and does not enable merge-key expansion by default, so these new restrictions require explicit implementation rather than an assumption about library defaults.
+Reject YAML anchor declarations and alias nodes. Also reserve and reject the scalar mapping key `<<` in every mapping, including quoted keys: the current parser treats it as an ordinary string key, so do not depend on a special merge-node type to detect it. Ordinary string values containing characters such as `&`, `*`, or `<<` remain data; rejection must inspect the parsed structure rather than search the source text.
+
+These parser behaviors were verified against the installed `yaml` library: ordinary aliases resolve; both plain and quoted `<<` keys remain ordinary keys without inherited-field expansion when merge handling is disabled; quoted string values containing reuse-like text have no anchor/alias nodes. The new format must explicitly reject the reserved structures rather than rely on library defaults.
 
 All authoring assets are relative to that file's directory. Check targets remain relative to the evaluated workspace. One declaring directory per runner/checker record is sufficient; do not add a per-field source-directory API for a multi-file problem that this scope does not have.
 
-Preserve source locations while parsing and selecting fields: the source file/line for final values and, where applicable, the named case that supplied them. All nested values in a top-level field come from its one declaration; there is no winning-value or override history to reconstruct.
+For each final top-level field, preserve its source file, the 1-based line of that field's declaration, and whether it came from the common part or the selected named case. This is the required annotation granularity for `view`. Nested values share their top-level field's origin; per-leaf-value line annotations and override history are not required.
 
 File names have no semantic meaning. A file called `skills.yml` does not activate a skill-specific mode.
 
 ## Read-Only `view`
 
-Provide a `view` operation that displays the resolved case with source annotations. It must not launch a harness, invoke a model, require provider credentials, or fetch credential values from the environment.
+Provide a `view` operation that displays the resolved case with the top-level source annotations defined above. It must not launch a harness, invoke a model, require provider credentials, or fetch credential values from the environment.
 
 Use the same composition function and resolved values for inspection and execution. Inspection can report parse, structural, and top-level collision errors without runtime preparation. It does not establish that runtime prerequisites such as provider credentials or the harness executable are available; execution performs the full implementation/runtime validation before launching anything.
 

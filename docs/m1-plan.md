@@ -55,11 +55,11 @@ Status: agreed; not implemented. [Case Configuration](configuration.md) is the a
 Pending acceptance:
 
 - [ ] Load one ordinary case or common fields plus named `cases` from a single file. Reject repeated top-level fields without recursive merging or overrides.
-- [ ] Reject YAML anchors, aliases, and merge-key syntax in the new format; do not mistake literal text for YAML reuse syntax. Do not add `extends` or imported collections.
+- [ ] Reject YAML anchor declarations, alias nodes, and the scalar key `<<` in every mapping, quoted or not. Accept ordinary string values containing reuse-like text. Do not add `extends` or imported collections.
 - [ ] Require explicit selection for named cases, reject an empty `cases` mapping, and use non-empty string names only as metadata. Identify an ordinary case by its source path without a synthetic name.
-- [ ] Provide source-annotated `view` through the same resolver used for execution, without starting a harness, invoking a model, or requiring credentials. Runtime validation remains separate.
+- [ ] Provide `view` through the execution resolver, annotating each top-level field with its source file, 1-based declaration line, and common/selected-case origin. Per-leaf annotations are not required. Do not start a harness, invoke a model, or require credentials; runtime validation remains separate.
 - [ ] Retain the resolved non-sensitive configuration, source path, and optional case name per run. Resource/fixture hashing and resource snapshots are not required and complete reproduction is not claimed.
-- [ ] Migrate the CLI and checked-in example to the single-file contract and update the commands actually supported; do not keep Candidate as a required authoring entity.
+- [ ] Migrate the CLI and checked-in example to the single-file contract and update the commands actually supported; do not keep Candidate as a required authoring entity. Label the existing real-model smoke as validation of the original two-file format, not a live-model test of the migrated loader/example. Report the new format's model-free verification separately.
 - [ ] Add focused parser/resolver/selection/view/result tests and pass `npm run check`. Keep routine gates model-free and perform the bounded implementation review required by the project workflow.
 
 This revision does not authorize another live-model smoke or renew the earlier invocation budget; any such rerun requires explicit approval.
@@ -101,7 +101,7 @@ On Node 24.22.2 and macOS 15.5, implementation `fc2b131` passed type checking an
 
 ### Real-Model Smoke
 
-The approved `write-file` example passed in one evaluation invocation on 2026-11-11:
+The approved `write-file` example passed in one evaluation invocation on 2026-11-11 using the original two-file format. This historical smoke is not evidence of live-model validation for a later single-file loader/example migration:
 
 ```sh
 npm run eval -- --case examples/write-file/case.yml --candidate examples/write-file/candidate.yml
