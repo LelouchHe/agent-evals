@@ -55,7 +55,7 @@ The overall model is described in [architecture](architecture.md); case authorin
 - `src/checkers/file` implements `exists`, regex-search `matches`, and `unchanged`, including ancestor and final-component symlink escape rejection. Runs record the workspace directory's device and inode and reject a replaced root. Only regular files are evidence; FIFO and other non-regular paths are errors without a blocking open. Regex matching runs in a worker that is terminated on the check deadline or an internal 5-second ceiling. `unchanged` may only be `true` or omitted.
 - `src/checkers/judge` runs an independent, tool-free Pi invocation over the task and one regular file and preserves one result per rubric statement.
 - The Pi runner classifies a final assistant `stopReason: error` as an execution failure, including with pre-satisfied files, while ignoring recoverable intermediate retry errors.
-- Pi bash commands use a generated custom shell wrapper. Ordinary background jobs stay in a tracked shell process group; the wrapper kills them before the command returns, and the engine kills every tracked group on timeout, cancellation, early Pi exit, and normal teardown.
+- Pi bash commands use a generated custom shell wrapper. Ordinary background jobs stay in a tracked shell process group; the wrapper kills them before the command returns. A sandbox-resident Node supervisor wraps Pi, reads the agent-writable tracked-group registry, and terminates groups on timeout, cancellation, early Pi exit, and normal teardown. The supervisor runs inside Seatbelt, so forged registry entries can target only same-sandbox processes; the host never signals groups from registry data.
 - `examples/write-file` is self-contained: an empty workspace, one English task message, one tiny project-owned skill, a case, and a candidate with placeholder models.
 - The `pi` runner and `judge` checker accept an optional `envPassthrough` allowlist so an operator can supply narrowly scoped credentials without inheriting the invoking environment.
 
@@ -76,7 +76,8 @@ The suite includes:
 
 - Real macOS Seatbelt probes that allow workspace reads/writes and deny reads, writes, and symlink escapes outside the workspace.
 - A real Pi RPC startup and skill-loading probe under the Seatbelt profile, using `get_commands` with no model call.
-- Real installed-Pi RPC bash probes under Seatbelt: ordinary background jobs are terminated before the command returns; an active wrapper shell group is terminated on session stop; output and exit status survive the wrapper. No prompt, model, network, or credentials are used.
+- Real installed-Pi RPC bash probes under Seatbelt: ordinary background jobs are terminated before the command returns; an active wrapper shell group is terminated on session stop; output and exit status survive the wrapper; an early Pi death still cleans tracked groups. No prompt, model, network, or credentials are used.
+- A real installed-Pi RPC bash registry-forgery probe: the agent writes an unrelated synthetic detached group's id into the state directory; the external victim survives teardown, while owned groups are still cleaned. Special/broadcast numeric names are rejected by validation, not by sending real signals.
 - Real Seatbelt root-replacement and FIFO probes through file and judge checks.
 - Deterministic fake Pi RPC processes for success, invalid protocol data, failed start, final provider error, error-then-success retry, timeout, cancellation, owned-child termination, and SIGTERM escalation.
 - Integration tests for success, failed checks, checker failures, cleanup, fixture preservation, baseline isolation for `unchanged`, a replaced workspace root, FIFO evidence, pathological regex bounds, configuration rejection before resource creation, different invocation working directories, and CLI signal cancellation.
@@ -98,6 +99,7 @@ The suite includes:
 - The runner timeout bounds agent execution; each check receives the same budget, so total wall time can exceed it.
 - Fixture symlinks are copied as symlinks. Checks reject escaping links, but they are not a supported way to share data.
 - Background-process cleanup covers ordinary jobs in the Pi shell's tracked process groups. A child that deliberately creates a new session or process group (`setsid` or equivalent) is outside this contract.
+- The shell-group registry is not an authorization boundary. It is agent-writable input to the in-sandbox supervisor, whose signals are restricted by Seatbelt to the same sandbox; special/broadcast targets are rejected before signaling.
 - Regex evaluation is bounded by worker termination, not by proving a pattern's complexity. The accepted semantics remain JavaScript regex search.
 
 ## Trade-offs

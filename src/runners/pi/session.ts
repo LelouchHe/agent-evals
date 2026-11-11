@@ -5,7 +5,6 @@ import { ConfigError, errorMessage } from "../../engine/config.ts";
 import { spawnSandboxed } from "../../platform/macos/launch.ts";
 import { writeSeatbeltPolicy, type SandboxPolicy } from "../../platform/macos/policy.ts";
 import { PiProcess, PiRpcError } from "./rpc.ts";
-import { stopTrackedShellProcesses } from "./shell-processes.ts";
 
 export const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
 export type ThinkingLevel = (typeof THINKING_LEVELS)[number];
@@ -121,26 +120,16 @@ export async function invokePi(
     }
     throw new PiSessionError(errorMessage(error), diagnosticsOf(process));
   } finally {
-    await stopPiSession(process, config);
+    await stopPiSession(process);
   }
 }
 
-/** Stop the Pi process first, then any shell process groups it leaves behind. */
-export async function stopPiSession(process: PiProcess, config: PiSessionConfig): Promise<void> {
-  let failure: unknown;
-  try {
-    await process.stop();
-  } catch (error) {
-    failure = error;
-  }
-  try {
-    await stopTrackedShellProcesses(shellStateDirectory(config));
-  } catch (error) {
-    failure ??= error;
-  }
-  if (failure !== undefined) {
-    throw failure;
-  }
+/**
+ * Stop Pi. The in-sandbox supervisor terminates tracked shell groups and exits
+ * before this resolves; the host never signals groups from registry data.
+ */
+export async function stopPiSession(process: PiProcess): Promise<void> {
+  await process.stop();
 }
 
 export function shellToolsDirectory(config: PiSessionConfig): string {
@@ -158,13 +147,17 @@ export async function createPiProcess(config: PiSessionConfig): Promise<PiProces
   await mkdir(config.dirs.scratchDir, { recursive: true, mode: 0o700 });
   await mkdir(config.dirs.configDir, { recursive: true, mode: 0o700 });
 
+  const toolsDir = shellToolsDirectory(config);
+  await mkdir(toolsDir, { recursive: true, mode: 0o700 });
+  const supervisorPath = join(toolsDir, "supervisor.ts");
+  const safeGroupPath = join(toolsDir, "safe-process-group.ts");
+  await writeFile(supervisorPath, await readFile(new URL("./supervisor.ts", import.meta.url), "utf8"), { mode: 0o700 });
+  await writeFile(safeGroupPath, await readFile(new URL("./safe-process-group.ts", import.meta.url), "utf8"), { mode: 0o700 });
+
   let shellPath: string | undefined;
   if (config.tools !== null) {
-    const toolsDir = shellToolsDirectory(config);
-    await mkdir(toolsDir, { recursive: true, mode: 0o700 });
     shellPath = join(toolsDir, "shell-wrapper.sh");
-    const source = await readFile(new URL("./shell-wrapper.sh", import.meta.url), "utf8");
-    await writeFile(shellPath, source, { mode: 0o700 });
+    await writeFile(shellPath, await readFile(new URL("./shell-wrapper.sh", import.meta.url), "utf8"), { mode: 0o700 });
     await mkdir(shellStateDirectory(config), { recursive: true, mode: 0o700 });
   }
   await writeIsolatedSettings(config.dirs.configDir, shellPath);
@@ -173,12 +166,13 @@ export async function createPiProcess(config: PiSessionConfig): Promise<PiProces
   const policyPath = await writeSeatbeltPolicy(config.dirs.scratchDir, policy);
   const args = buildPiArgs(config);
   const env = buildEnvironment(config);
+  const nodeExecutable = await realpath(process.execPath);
   return new PiProcess({
     spawn: () =>
       spawnSandboxed({
         policyPath,
-        command: executable,
-        args,
+        command: nodeExecutable,
+        args: [supervisorPath, executable, ...args],
         cwd: config.dirs.workspaceDir,
         env,
       }),
@@ -215,9 +209,7 @@ export async function buildPolicy(executable: string, config: PiSessionConfig): 
   if (nodeModulesRoot !== undefined) {
     readableRoots.add(nodeModulesRoot);
   }
-  if (config.tools !== null) {
-    readableRoots.add(shellToolsDirectory(config));
-  }
+  readableRoots.add(shellToolsDirectory(config));
 
   return {
     writableRoots: [config.dirs.workspaceDir, config.dirs.homeDir, config.dirs.configDir, config.dirs.scratchDir],

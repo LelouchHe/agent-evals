@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import { mkdir, readFile, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -167,7 +168,7 @@ test("real Pi RPC bash: stopping the session terminates an active wrapper shell 
   }
   assert.ok(shellPid > 0, "wrapper did not start the shell command");
 
-  await stopPiSession(pi, config);
+  await stopPiSession(pi);
   await pending.catch(() => {});
 
   const stopDeadline = performance.now() + 5_000;
@@ -243,11 +244,18 @@ test("real Pi RPC bash: early Pi death still leaves tracked shell groups for cle
   }
   assert.ok(shellPid > 0, "wrapper did not start the shell command");
 
-  const piPid = pi.pid;
-  assert.ok(piPid !== undefined);
-  process.kill(piPid, "SIGKILL");
+  const supervisorPid = pi.pid;
+  assert.ok(supervisorPid !== undefined);
+  const childPids = execFileSync("/bin/ps", ["-ax", "-o", "pid=,ppid="], { encoding: "utf8" })
+    .split("\n")
+    .map((line) => line.trim().split(/\s+/).map(Number))
+    .filter((pair) => pair[1] === supervisorPid)
+    .map((pair) => pair[0] as number)
+    .filter((value) => Number.isSafeInteger(value) && value > 0);
+  assert.equal(childPids.length, 1, `expected one Pi child, got ${childPids.join(",")}`);
+  process.kill(childPids[0] as number, "SIGKILL");
   await new Promise((resolve) => setTimeout(resolve, 200));
-  await stopPiSession(pi, config);
+  await stopPiSession(pi);
   await pending.catch(() => {});
 
   const stopDeadline = performance.now() + 5_000;

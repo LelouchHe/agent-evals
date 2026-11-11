@@ -4,7 +4,6 @@ import { ConfigError, errorMessage, resolveAuthoringAsset, type ImplementationPa
 import { assertSeatbeltAvailable } from "../../platform/macos/policy.ts";
 import type { Runner, RunnerContext, RunnerDefinition, RunnerOutcome } from "../../engine/registry.ts";
 import { invokePi, resolvePiExecutable, THINKING_LEVELS, validateEnvPassthrough, type ThinkingLevel } from "./session.ts";
-import { stopTrackedShellProcesses } from "./shell-processes.ts";
 
 const RUNNER_KEYS = new Set(["model", "thinking", "skills", "executable", "envPassthrough"]);
 
@@ -31,12 +30,10 @@ export const piRunner: RunnerDefinition = {
 
 class PiRunner implements Runner {
   #stop: (() => Promise<void>) | undefined;
-  #shellStateDir: string | undefined;
 
   async run(params: ImplementationParams, context: RunnerContext): Promise<RunnerOutcome> {
     const parsed = await parseParams(params, context.authoringDir);
     const skills = await stageSkills(parsed.skills, context.authoringDir, join(context.configDir, "skills"));
-    this.#shellStateDir = join(context.scratchDir, "shell-groups");
     const result = await invokePi(
       {
         executable: parsed.executable,
@@ -67,22 +64,7 @@ class PiRunner implements Runner {
   }
 
   async stop(): Promise<void> {
-    let failure: unknown;
-    try {
-      await this.#stop?.();
-    } catch (error) {
-      failure = error;
-    }
-    if (this.#shellStateDir !== undefined) {
-      try {
-        await stopTrackedShellProcesses(this.#shellStateDir);
-      } catch (error) {
-        failure ??= error;
-      }
-    }
-    if (failure !== undefined) {
-      throw failure;
-    }
+    await this.#stop?.();
   }
 }
 
