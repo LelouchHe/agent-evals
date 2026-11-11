@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
 import { chmod, readFile, readdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { test } from "node:test";
 import { parse } from "yaml";
 import type { EvaluationRecord } from "../src/engine/results.ts";
+import { runCliProcess } from "./helpers/cli-process.ts";
 import { createFakePi, makeTempDir, type FakePi } from "./helpers/fake-pi-control.ts";
 
 interface CliResult {
@@ -14,6 +14,7 @@ interface CliResult {
 }
 
 async function runCli(
+  t: Parameters<typeof makeTempDir>[0],
   args: readonly string[],
   options: {
     readonly cwd: string;
@@ -26,21 +27,7 @@ async function runCli(
   for (const name of options.unsetEnv ?? []) {
     delete env[name];
   }
-  const child = spawn(process.execPath, [join(import.meta.dirname, "..", "src", "cli.ts"), ...args], {
-    cwd: options.cwd,
-    env,
-    stdio: ["ignore", "pipe", "pipe"],
-  });
-  let stdout = "";
-  let stderr = "";
-  child.stdout.on("data", (chunk: Buffer) => {
-    stdout += chunk.toString("utf8");
-  });
-  child.stderr.on("data", (chunk: Buffer) => {
-    stderr += chunk.toString("utf8");
-  });
-  const code = await new Promise<number | null>((resolve) => child.on("exit", (value) => resolve(value)));
-  return { code, stdout, stderr };
+  return runCliProcess(t, join(import.meta.dirname, "..", "src", "cli.ts"), args, { cwd: options.cwd, env });
 }
 
 /** A harness stand-in that announces itself if anything launches it. */
@@ -94,7 +81,7 @@ test("view succeeds without Pi or credentials and annotates common versus select
   await writeFile(configPath, lines.join("\n") + "\n");
   const cwd = await makeTempDir(t, "ae-view-cwd-");
   const emptyPath = await makeTempDir(t, "ae-empty-path-");
-  const result = await runCli(["view", configPath, "--case", "with-skill"], {
+  const result = await runCli(t, ["view", configPath, "--case", "with-skill"], {
     cwd,
     TMPDIR: cwd,
     env: { PATH: emptyPath, AE_VIEW_SECRET: "view-secret-value" },
@@ -133,11 +120,11 @@ test("view and run resolve the same configuration payload", async (t) => {
   const tempParent = await makeTempDir(t, "ae-shared-runs-");
   const resultsDir = await makeTempDir(t, "ae-shared-results-");
 
-  const viewed = await runCli(["view", configPath], { cwd, TMPDIR: tempParent });
+  const viewed = await runCli(t, ["view", configPath], { cwd, TMPDIR: tempParent });
   assert.equal(viewed.code, 0, viewed.stderr);
   const viewedConfig = extractResolvedYaml(viewed.stdout);
 
-  const ran = await runCli(["run", configPath, "--results-dir", resultsDir], { cwd, TMPDIR: tempParent });
+  const ran = await runCli(t, ["run", configPath, "--results-dir", resultsDir], { cwd, TMPDIR: tempParent });
   assert.equal(ran.code, 0, ran.stderr);
 
   const runDirectories = await readdir(resultsDir);
@@ -176,7 +163,7 @@ test("a run records the resolved configuration, source, and metadata-only case n
   const previous = process.env.AE_RUN_SECRET;
   process.env.AE_RUN_SECRET = "value-that-must-not-be-retained";
   try {
-    const result = await runCli(["run", configPath, "--case", "../retained-name", "--results-dir", resultsDir], {
+    const result = await runCli(t, ["run", configPath, "--case", "../retained-name", "--results-dir", resultsDir], {
       cwd,
       TMPDIR: tempParent,
     });
@@ -237,7 +224,7 @@ test("view reports configuration errors with exit code 2", async (t) => {
   );
   const cwd = await makeTempDir(t, "ae-view-error-cwd-");
 
-  const result = await runCli(["view", configPath, "--case", "missing"], { cwd, TMPDIR: cwd });
+  const result = await runCli(t, ["view", configPath, "--case", "missing"], { cwd, TMPDIR: cwd });
   assert.equal(result.code, 2);
   assert.match(result.stderr, /configuration error: .*has no case named "missing"/);
 });

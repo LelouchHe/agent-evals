@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
 import { readFile, readdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { test } from "node:test";
 import { stringify } from "yaml";
+import { runCliProcess } from "./helpers/cli-process.ts";
 import { createFakePi, makeTempDir } from "./helpers/fake-pi-control.ts";
 
 const root = join(import.meta.dirname, "..");
@@ -17,25 +17,15 @@ interface CliResult {
 }
 
 async function runEntry(
+  t: Parameters<typeof makeTempDir>[0],
   entry: string,
   args: readonly string[],
   options: { readonly cwd: string; readonly TMPDIR: string },
 ): Promise<CliResult> {
-  const child = spawn(process.execPath, [entry, ...args], {
+  return runCliProcess(t, entry, args, {
     cwd: options.cwd,
     env: { ...process.env, TMPDIR: options.TMPDIR },
-    stdio: ["ignore", "pipe", "pipe"],
   });
-  let stdout = "";
-  let stderr = "";
-  child.stdout.on("data", (chunk: Buffer) => {
-    stdout += chunk.toString("utf8");
-  });
-  child.stderr.on("data", (chunk: Buffer) => {
-    stderr += chunk.toString("utf8");
-  });
-  const code = await new Promise<number | null>((resolve) => child.on("exit", (value) => resolve(value)));
-  return { code, stdout, stderr };
 }
 
 test("package metadata and built runtime assets point at the sole CLI implementation", async () => {
@@ -78,8 +68,8 @@ test("source and built CLIs produce identical help and view output", async (t) =
   const tempParent = await makeTempDir(t, "ae-package-runs-");
 
   for (const args of [["--help"], ["view", configPath, "--case", "named"]]) {
-    const source = await runEntry(sourceEntry, args, { cwd, TMPDIR: tempParent });
-    const built = await runEntry(distEntry, args, { cwd, TMPDIR: tempParent });
+    const source = await runEntry(t, sourceEntry, args, { cwd, TMPDIR: tempParent });
+    const built = await runEntry(t, distEntry, args, { cwd, TMPDIR: tempParent });
     assert.equal(built.code, source.code, built.stderr);
     assert.equal(built.stdout, source.stdout);
     assert.equal(built.stderr, source.stderr);
@@ -132,7 +122,7 @@ test("built CLI runs packaged supervisor, wrapper, regex worker, and judge asset
   const resultsDir = await makeTempDir(t, "ae-package-results-");
   const tempParent = await makeTempDir(t, "ae-package-run-tmp-");
 
-  const result = await runEntry(distEntry, ["run", configPath, "--case", "packaged", "--results-dir", resultsDir], {
+  const result = await runEntry(t, distEntry, ["run", configPath, "--case", "packaged", "--results-dir", resultsDir], {
     cwd,
     TMPDIR: tempParent,
   });
