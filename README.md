@@ -10,4 +10,4 @@ Make agent changes measurable through repeatable tasks, controlled environments,
 
 The initial implementation will target macOS Seatbelt (`sandbox-exec`) only.
 
-[Design principles](docs/design.md) · [MIT License](LICENSE)
+[Design principles](docs/design.md) · [Implementation plan](docs/implementation-plan.md) · [MIT License](LICENSE)

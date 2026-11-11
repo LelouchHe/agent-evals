@@ -10,6 +10,15 @@ A personal toy project that grows from real evaluation needs. This document reco
 - Extract abstractions from actual repetition rather than anticipated requirements.
 - Keep the repository private during initial development. Reconsider publication once the initial skill-evaluation tooling is usable; do not change visibility automatically.
 
+## Initial Implementation Decisions
+
+- Use TypeScript on Node.js 24 or later, Node's built-in test runner, and minimal project-local YAML parsing and type-checking dependencies.
+- The first runner drives Pi through native RPC. Do not add a WebAgent dependency or implement a generic ACP runner in the first milestone.
+- Provide two initial checkers: `judge` for LLM-based grading and `file` for deterministic filesystem checks.
+- The first file assertions are `exists`, `matches`, and `unchanged`. `matches` uses regular-expression search, not full-file matching by default; invalid regexes are configuration errors. Do not retain an `includes` alias or create a separate checker type for every file operation.
+- Judge access initially uses an independent Pi invocation rather than a separate model-provider SDK.
+- Follow the [filesystem MVP implementation plan](implementation-plan.md) for milestones and acceptance criteria.
+
 ## A Case Is a Human-Readable Experiment Specification
 
 Use YAML for human-authored cases. Keep the following decisions together:
@@ -88,7 +97,7 @@ Evidence includes observed events, outputs, artifacts, and measurements, not jus
 - Runner and Checker are the initial extension points. Run or candidate configuration selects the runner; cases select checkers and supply their parameters.
 - The default execution target is Pi. Neither the engine nor the case format should require WebAgent or embed a particular harness's startup details.
 - Discover implementations from designated, trusted directories. Adding an implementation that satisfies the established contract should not require changing the engine's dispatch logic.
-- Built-in and added implementations follow the same contracts. Start with a runner that can drive Pi and a small set of useful checkers, including an LLM judge; do not implement every possible extension upfront.
+- Built-in and added implementations follow the same contracts. Start with a Pi runner and the `judge` and `file` checkers; do not implement every possible extension upfront.
 - A runner manages interaction and session lifecycle, while a checker evaluates captured evidence. They need separate contracts, not a universal plugin interface forced onto both.
 - Keep checker parameters outside the engine's business logic. Each checker interprets and validates its own parameters; the engine validates the common contract and handles invocation and results.
 - Do not discover executable extensions from agent-writable workspaces or generated artifacts. Case-local checker code remains a trusted authoring asset, not part of the evaluated agent's working copy.
@@ -113,7 +122,7 @@ A case can select a checker using the same convention:
 
 ```yaml
 checks:
-  - $type: llm-judge
+  - $type: judge
     model: provider/judge-model
     rubric:
       - Each step describes a concrete action.
