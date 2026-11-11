@@ -13,9 +13,9 @@ A personal toy project that grows from real evaluation needs. This document reco
 
 Use YAML for human-authored cases. Keep the following decisions together:
 
-- **Task**: user input, goals, and constraints.
+- **Prompt**: the actual user request, goals, and constraints supplied to the agent.
 - **Environment**: initial files, setup steps, required tools or services, and any failure conditions to exercise.
-- **Grading**: selected graders, checks, success and failure criteria, and rubrics.
+- **Checks**: selected checker implementations, their parameters, success and failure criteria, and named rubric dimensions.
 - **Execution requirements**: capabilities and case-specific constraints, such as a timeout.
 
 Declare candidates separately so the same case can compare different skills, workflows, configurations, or harnesses without duplicating the task definition.
@@ -42,26 +42,52 @@ cases/
 - Reference shared assets explicitly rather than injecting them through hidden global conventions.
 - Share definitions and initial data, not mutable runtime state. Each run gets an independent copy or read-only access to shared inputs.
 - Store run artifacts separately. Do not rewrite case definitions or contaminate fixtures.
+- Expose only the prompt and intended environment to the evaluated agent. Do not expose the case definition, checkers, rubrics, or reference answers by default.
 - Do not create empty directories in advance or require scripts for every case.
 
-## Separate Execution from Grading
+## Engine, Runners, and Checkers
 
 The main flow is:
 
 ```text
 Case + Candidate + Environment
-    -> Execution
+    -> Runner
     -> Evidence
-    -> One or more Graders
+    -> One or more Checkers
     -> Results and comparisons
 ```
 
-- The **execution layer** handles environment setup, agent interaction, sandboxing, timeouts, cancellation, evidence capture, and cleanup.
-- **Evidence** includes observed events, outputs, artifacts, and measurements, not just the evaluated agent's own account of what happened.
-- **Graders** consume evidence to assess outcomes or behavior. Regrading should not require rerunning the agent by default.
-- Cases declare grading requirements. Reusable graders live in code; dedicated checks may reference scripts beside the case. Do not embed every program in YAML.
+| Component | Responsibility |
+|---|---|
+| Engine | Validate inputs, prepare environments, invoke the selected runner and checkers, preserve evidence and results, and enforce lifecycle and cleanup requirements. |
+| Runner | Drive the evaluated harness, handle its interaction and evidence capture, and implement the harness-specific actions needed for cancellation and teardown. |
+| Checker | Interpret its parameters, inspect evidence, and return named checks or scores with reasons and evidence references. |
 
-Skills, workflows, configurations, and harnesses do not each need a hard-coded execution pipeline. Different evaluation concerns mainly belong in graders; differences in interaction and evidence capture belong in the execution layer.
+Evidence includes observed events, outputs, artifacts, and measurements, not just the evaluated agent's own account of what happened. Regrading should not require rerunning the agent by default. Keep checker execution failures distinct from failed checks of the evaluated result.
+
+## Two Configurable Extension Points
+
+- Runner and Checker are the initial extension points. Run or candidate configuration selects the runner; cases select checkers and supply their parameters.
+- The default execution target is Pi. Neither the engine nor the case format should require WebAgent or embed a particular harness's startup details.
+- Discover implementations from designated, trusted directories. Adding an implementation that satisfies the established contract should not require changing the engine's dispatch logic.
+- Built-in and added implementations follow the same contracts. Start with a runner that can drive Pi and a small set of useful checkers, including an LLM judge; do not implement every possible extension upfront.
+- A runner manages interaction and session lifecycle, while a checker evaluates captured evidence. They need separate contracts, not a universal plugin interface forced onto both.
+- Keep checker parameters outside the engine's business logic. Each checker interprets and validates its own parameters; the engine validates the common contract and handles invocation and results.
+- Do not discover executable extensions from agent-writable workspaces or generated artifacts. Case-local checker code remains a trusted authoring asset, not part of the evaluated agent's working copy.
+- Environment preparation can use fixtures and scripts. Keep sandboxing in its platform module rather than adding environment, sandbox, and reporting plugin families in advance.
+
+Stable contracts let implementations grow without routine engine changes; genuinely new requirements may still justify explicit contract evolution.
+
+## Declarative Checks and Named Dimensions
+
+- Do not introduce separate routing and behavior case types, files, or execution pipelines. Whether a skill was loaded and how the agent acted are evaluation concerns expressed through checks and evidence.
+- Prefer reusable declarative checks for common needs. Custom code is an extension path, not mandatory boilerplate for every case.
+- A check identifies its checker, and its body supplies that checker's parameters. Keep exact YAML field names and wire formats out of this principles document until exercised by real cases.
+- A checker can return several named results. Correctness, completeness, constraint adherence, and similar dimensions are case data, not separate checker classes or fixed global categories.
+- The built-in LLM judge should accept multiple rubric dimensions and preserve their individual results. Multiple dimensions do not require multiple checker implementations or necessarily multiple model calls.
+- Keep shared judge model and connection settings in run configuration. Cases primarily supply their criteria and any justified overrides.
+
+Skills, workflows, configurations, and harnesses do not each need a hard-coded execution pipeline. Different evaluation concerns mainly belong in checks; differences in interaction and evidence capture belong in runners. Required tool or service capabilities must exist before a case can be evaluated; their absence must not turn a restraint into a vacuous pass.
 
 ## Sandboxing and Runtime Environments
 
@@ -78,4 +104,4 @@ Skills, workflows, configurations, and harnesses do not each need a hard-coded e
 
 Cases may be organized and selected as train, dev, or test data without first building a training platform. Here, train may mean examples used to improve prompts, workflows, or configurations rather than model weights.
 
-Train and dev data may be inspected repeatedly during development. Keep test data for held-out validation and avoid exposing its answers to the optimization process. Watch for leakage across related tasks and near-duplicate variants. Manage grader calibration examples separately from candidate test sets.
+Train and dev data may be inspected repeatedly during development. Keep test data for held-out validation and avoid exposing its answers to the optimization process. Watch for leakage across related tasks and near-duplicate variants. Manage judge calibration examples separately from candidate test sets.
