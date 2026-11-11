@@ -39,11 +39,11 @@ Checks may assess the relationship between input and output messages, environmen
 
 ## Configuration Resolution
 
-Keep authoring composition separate from runtime execution. A resolver combines shared fields, a single-parent `extends` chain, and a selected named case override into one complete case. The engine executes that case without interpreting inheritance, case labels, or skill-specific comparison categories.
+Keep authoring composition separate from runtime execution. The agreed M1 revision resolves one file into a single case or combines common fields with a selected named case using disjoint top-level keys. A repeated top-level field is an error, even if its nested fields differ. Do not introduce inheritance or recursive overrides. The engine executes the complete case without interpreting case labels or skill-specific comparison categories.
 
-The read-only `view` operation and execution share this resolver, including value provenance and declaring-file path origins. Inspection shows the final configuration without launching a harness or obtaining credentials. Each run retains the actual non-sensitive resolved configuration and evaluated-content identity, rather than relying on source files remaining unchanged.
+The read-only `view` operation and execution share this resolver and its source locations. All authoring paths use the single file's directory. Inspection shows the final configuration without launching a harness or obtaining credentials; execution performs runtime validation separately. Each run retains the actual non-sensitive resolved configuration and evaluated-content identity, rather than relying on source files remaining unchanged.
 
-The merge rules, supported authoring forms, and implementation boundary belong in [Configuration Composition](configuration.md). This is not a new Runner/Checker plugin lifecycle or the generic tracer contract.
+The composition rule, supported authoring forms, and implementation boundary belong in [Case Configuration](configuration.md). This is not a new Runner/Checker plugin lifecycle or the generic tracer contract.
 
 ## Cases as Tests
 

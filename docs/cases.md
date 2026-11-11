@@ -2,7 +2,7 @@
 
 A case is a human-readable, executable test definition. This document describes shared authoring principles and the implemented M1 records, not a complete general schema.
 
-The agreed next authoring format is documented in [Configuration Composition](configuration.md): ordinary single-case documents, optional common configuration through `extends`, named `cases` overrides, and provenance-aware `view`. That format is not implemented yet; the current CLI still uses the two M1 files below.
+The agreed M1 authoring revision is documented in [Case Configuration](configuration.md): one file, ordinary single cases or common fields plus named `cases`, disjoint top-level composition, and source-annotated `view`. There is no inheritance or overriding. This revision is not implemented yet; the current CLI still uses the two M1 files below.
 
 Write a case the way you would write a test: control the inputs, observe the outputs and side effects, and focus on one behavior. See [Cases as Tests](architecture.md#cases-as-tests) for the analogy, its limits, and the direction for mocked tools and services.
 
@@ -20,7 +20,7 @@ The input is a real message and prepared environment, not a requirement to fill 
 
 A case may be specific to the skill or capability under test. Reuse shared fields or cases only when the relevant expectations are genuinely shared; do not require every case to apply to every evaluated system. Named cases need not form a comparison group. Prefer explicit fixtures, commands, or scripts for setup rather than asking another LLM to improvise it.
 
-The next format does not require separate Candidate or Subject entities. A single saved document can be directly runnable, or named cases can override common fields. Persist test inputs rather than depending on temporary shell parameters, and retain each run's resolved non-sensitive configuration and evaluated-content identity.
+The next format does not require separate Candidate or Subject entities. A single saved document can be directly runnable, or named cases can supply top-level fields absent from the common part. Duplicate top-level fields are errors; nested values are not merged. Persist test inputs rather than depending on temporary shell parameters, and retain each run's resolved non-sensitive configuration and evaluated-content identity.
 
 ## Keep Related Assets Together
 
