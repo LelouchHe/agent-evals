@@ -8,6 +8,7 @@ A personal toy project that grows from real evaluation needs. This document reco
 - Learn from earlier evaluation work without targeting compatibility with its schemas, aggregator, or viewer. Do not introduce upstream skill packages as part of initialization.
 - Make skill evaluation work first. Use real workflow, configuration, and harness evaluation scenarios to discover what needs to grow next.
 - Extract abstractions from actual repetition rather than anticipated requirements.
+- Keep the repository private during initial development. Reconsider publication once the initial skill-evaluation tooling is usable; do not change visibility automatically.
 
 ## A Case Is a Human-Readable Experiment Specification
 
