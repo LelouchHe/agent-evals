@@ -85,7 +85,7 @@ Status: implemented as an interface and preparation refactor. Raw YAML records r
 - [x] Result records retain the declared resolved YAML configuration, not parsed values or compiled artifacts.
 - [x] Compile-time contract fixtures, parse-once runtime tests, built-in parser tests, and mutation sensitivity proofs cover raw-record rejection, mismatched parse/instance shapes, and compiled-parameter flow.
 - [x] Direct and trusted-discovery definitions invoke `parse`/`create` with the exported definition as receiver, and instance `run`/`check`/`stop` methods retain their instance receiver.
-- [ ] Cumulative independent review of this interface refactor remains pending.
+- [x] Complete bounded independent parent review of the typed preparation boundary and focused closure of the external-definition receiver repair.
 
 ## Delivered
 
@@ -139,6 +139,8 @@ External-definition receiver repair `d701b86` passed the complete gate with 114 
 - Review dispositions: the range-introduced non-atomic development build is accepted as an M1 operational limit, with serialized checkout commands documented in [Development](../README.md#development). A no-model concurrent-build/view probe reproduced missing-module failures; using a separate installed prefix avoids that checkout's changing `dist/`. No atomic build/generation mechanism was added.
 - Non-blocking follow-ups remain: parser warnings for unknown YAML tags are not surfaced as errors, and control characters in case names are not escaped in human-readable output. The review also confirmed the temporary supervisor's dependence on Node module-syntax detection is pre-existing, not introduced by this range. These observations do not extend the authoring scope or imply fixes were made.
 - The post-edit result re-read in the retention test is retained as a consistency guard, not counted as independent behavioral proof; the direct `resolvedConfig` value assertions and their omission mutation provide the meaningful retention evidence. No existing test was deleted.
+- Parent review of typed-parameter range `2399d73..47bbce4` confirmed the generic function-property contracts, opaque prepared closures, parse-once execution, unchanged `view` boundary, and declared result semantics. It found one introduced defect: trusted-discovery adapters detached `parse` and `create` from their exported definition. Four independent probes isolated both stages for runners and checkers; direct registration succeeded while discovery lost the receiver.
+- Focused closure of `47bbce4..12d8031` confirmed that `d701b86` preserves definition and instance receivers. Parent verification from a fresh external checkout of `12d8031` passed `npm ci` and `npm run check` with 114 tests, no failures or skips, then packed and installed the actual tarball with production dependencies only. A separate installed external runner/checker probe confirmed exact receiver identity, one parse/create/execution each, distinct normalized payloads, unchanged declared `resolvedConfig`, and runtime cleanup. The installed built-in fake-runtime path also passed all eight file/worker/judge checks; npm/bin help and view remained identical. No model or credential was used.
 - This closes the reviewed concrete mechanisms, not universal containment of arbitrary child processes. The successful historical real-model smoke below does not remove the documented capability limits.
 
 ### Single-File Revision Verification
