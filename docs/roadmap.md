@@ -59,6 +59,7 @@ The following product-design questions are **pending**, not implementation requi
 - **ACP permissions and capabilities.** Define the permission-answering policy and supported session/capability coverage without assuming every harness exposes identical operations.
 - **Collaborator substitutes.** Settle case ownership versus harness assembly, declaration/injection/lifecycle interfaces, and how to assess fidelity and drift for substituted skills/tools/services.
 - **Observation/tracer contracts.** Define collection timing, snapshots versus streams, selected retention, evidence references and any regrading boundary. Do not infer a generic expression language or full-environment snapshot requirement.
+- **Extension discovery and identity.** Trusted-directory discovery currently loads modules with explicitly declared types; built-ins are registered explicitly. Revisit the discovery unit (one implementation versus a module providing multiple capabilities), type naming, entrypoint conventions and built-in/extension consistency when more runner/checker/tracer implementations provide concrete cases. Defer changes; directory-derived types and fixed entrypoints are not approved.
 
 ## Delivery
 
