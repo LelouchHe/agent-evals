@@ -1,33 +1,27 @@
-# Case Configuration
+# Configuration Reference
 
-Status: implemented M1 authoring revision. The CLI uses one configuration file; see [supported records](cases.md#implemented-records).
+The CLI resolves one YAML file into one executable case. Test-design guidance belongs in [Writing Cases](cases.md); module and extension contracts belong in [Architecture](architecture.md).
 
-This scope supersedes the earlier `extends` and recursive-override proposal. Support one file and disjoint top-level composition only. Do not implement inheritance, nested merging, deletion operators, or automatic migration between implementation types.
+## Commands
 
-## Case and Run
+```sh
+agent-evals view case.yml [--case name]
+agent-evals run case.yml [--case name] [--results-dir path] \
+  [--runner-dir path] [--checker-dir path]
+```
 
-- A **case** is a complete executable test definition: its task, initial environment, runner configuration, checks, and execution requirements.
-- An **authoring document** contains either one ordinary case or common top-level fields plus a mapping of named cases.
-- **Common fields** are invariants shared by the cases in that document, not overridable defaults.
-- A **resolved case** combines those common fields with one selected case entry. Only the complete result is executed.
-- A **run** is one actual execution of one resolved case, with independent runtime state and a retained result.
+The development form is `npm run eval -- <command>`; both entry points execute the same built CLI. The trusted-directory options are repeatable and apply only to `run`.
 
-Do not require Candidate, Subject, or Variant entities or files. Named cases are ordinary tests, not a special A/B pipeline. Names such as `with-skill`, `without-skill`, and `baseline` are author-defined identifiers for selection and result labeling; they have no built-in behavior. A collection need not be a comparison group.
+## One Case or Named Cases
 
-A case may be specific to a skill or capability. Reuse tests across implementations when expectations are genuinely shared; do not require every case to support every skill or harness. Repeatedly execute saved tests against the current content of their referenced resources instead of requiring a new configuration or manually entered version number for every run.
-
-## Ordinary Single-Case Documents
-
-Write simple tests directly, without a `case`, `subject`, or `candidate` wrapper:
+An ordinary document directly declares the complete case:
 
 ```yaml
 input: Create hello.txt with exactly the content "Hello, world!".
 timeoutMs: 120000
-
 runner:
   $type: pi
   model: opencode-go/deepseek-v4.1-flash
-
 checks:
   - $type: file
     path: hello.txt
@@ -35,108 +29,91 @@ checks:
     matches: '^Hello, world!\n?$'
 ```
 
-Without `cases`, the document resolves to one ordinary case. Without `fixture`, it starts from an empty workspace. Provider credentials come from the run invocation `.env`, not YAML; see [Credentials](../README.md#credentials). `view` does not read or resolve them.
+For several cases, common top-level fields sit beside `cases`; each entry supplies the fields absent from the common part. For example, replace the `runner` above with:
 
-## Common Fields and Named Cases
-
-Use `cases` when several tests share top-level fields:
-
-````yaml
-input: Create hello.txt with exactly the content "Hello, world!".
-timeoutMs: 120000
-
-checks:
-  - $type: file
-    path: hello.txt
-    exists: true
-    matches: '^Hello, world!\n?$'
-
+```yaml
 cases:
   with-skill:
     runner:
       $type: pi
       model: opencode-go/deepseek-v4.1-flash
       skills: [skill]
-
   without-skill:
     runner:
       $type: pi
       model: opencode-go/deepseek-v4.1-flash
       skills: []
-    ```
+```
 
-Each named entry provides a complete `runner` because that top-level field varies. Repeating the otherwise identical runner parameters is intentional for this revision; finer-grained runner reuse is not part of this design.
+Select a name explicitly, even with one entry. `cases` must be a non-empty mapping of non-empty string names to mappings. Missing/unknown selection is an error; an ordinary document rejects an unnecessary name. The common part is never executed as an extra unnamed case.
 
-The resolver does not understand these labels or skill parameters. The Pi runner interprets `skills`; its existing automatic-discovery restrictions make an empty list meaningful. Other runners can use different parameters.
+**Composition is a disjoint top-level union.** A field repeated between common fields and the selected entry is an error, even with equal values or different nested fields. Common `runner` and case-local `runner` cannot coexist. Siblings are independent; put the complete varying field in each case. There is no recursive merge, override, array append or deletion operator. Names have no built-in skill/comparison behavior and are never result-directory paths.
 
-The common part is not executed as an extra unnamed case. Execute a selected case through the ordinary single-case execution path. A helper may iterate over cases without introducing a separate lifecycle or requiring that their results be compared.
+## Common Fields and Parsing
 
-## Case Selection and Identity
+| Field       | Contract                                                                                                                                            |
+| ----------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `input`     | Required non-empty initial user message.                                                                                                            |
+| `runner`    | Required implementation record.                                                                                                                     |
+| `checks`    | Required non-empty list of implementation records.                                                                                                  |
+| `fixture`   | Optional directory relative to this YAML. Omission starts an empty workspace.                                                                       |
+| `timeoutMs` | Optional positive integer milliseconds; defaults to 300000. Bounds runner execution and is also each check's budget, not the whole run's wall time. |
+| `cases`     | Optional document-level selection control; not passed to execution.                                                                                 |
 
-- When `cases` is present, require a non-empty mapping whose names are non-empty strings and whose entries are mappings.
-- Require an explicit selection from that mapping, even if it contains only one entry. A missing or unknown selection is an error; do not implicitly execute all cases.
-- A document without `cases` is one ordinary case and does not require a synthetic name.
-- Identify a run's case by its source configuration path and optional selected case name. Names are metadata, not filesystem paths; do not use them to construct result directories.
+Unknown common fields, invalid shapes and duplicate YAML keys are errors. There is one document/file: no `extends`, imported collections, nested `cases`, template interpolation, or implicit environment expansion. Null is a value, not omission or deletion.
 
-## Disjoint Top-Level Composition
+Anchor declarations, alias nodes and the scalar mapping key `<<` are rejected at every depth, including quoted `<<` keys. Parser warnings, including unknown tags such as `!include`, are errors. Ordinary string values containing `&`, `*`, `<<` or tag-like text remain data; built-in YAML tags that parse without warnings are not categorically banned.
 
-For each selected case:
+Authoring resources are relative to the YAML file; checker targets are relative to the evaluated workspace. Neither is silently based on the engine's working directory. Credentials are separate runtime inputs from the invocation directory; see [Credentials](../README.md#credentials).
 
-1. Treat document fields other than `cases` as the common fields.
-2. Reject any top-level field present in both the common fields and that case entry.
-3. Combine the two disjoint sets of fields without inspecting or merging their contents.
-4. Validate the complete resolved case before runtime execution.
+## Implementation Records
 
-Collision detection is by top-level key, even when both values are identical. In particular, common `runner` plus case-local `runner` is an error, even if one contains `model` and the other only `skills`. Do not recurse to decide whether their nested fields differ.
+`$type` selects a registered implementation. All remaining fields belong to its Zod parameter schema; the engine does not understand model, skill or rubric semantics. There is no `params` wrapper, and plain `type` is not the selector.
 
-Different case entries may contain the same top-level keys; they are resolved independently, not combined with one another. A field that varies must be defined in the relevant case entries rather than the common part. If `fixture` applies only to some cases, for example, put it in those entries instead of introducing removal syntax.
+On `run`, the engine validates each record once, reports schema errors with field paths, and passes inferred output to its factory. Built-in schemas reject unknown fields and do not broadly coerce YAML scalars: `false` and `0` stay typed, quoted numbers/booleans stay strings, and explicit null does not trigger a missing-field default. `envPassthrough` is not a supported parameter.
 
-Mappings and arrays are whole values supplied by one side. There is no array append, scalar override, special `$type` replacement rule, or `null` deletion behavior. A null value is ordinary YAML data and remains subject to the final field/implementation schema. Common fragments and named entries do not each have to be executable on their own, but their resolved combination must be complete.
+### Pi Runner (`$type: pi`)
 
-`cases` is a document-level authoring control, not a field passed to a runner or checker. Within implementation records, `$type` still selects the implementation and all other fields remain implementation-owned. The engine does not add special meanings for model, thinking, skills, or rubric.
+| Parameter    | Contract                                                                                          |
+| ------------ | ------------------------------------------------------------------------------------------------- |
+| `model`      | Required non-empty Pi model selector, normally `provider/model`.                                  |
+| `thinking`   | `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, or `max`; default `medium`.                   |
+| `skills`     | Explicit config-relative skill files/directories; default empty. Automatic discovery is disabled. |
+| `executable` | Pi executable name/path; default `pi`.                                                            |
 
-## Scope and Path Origins
+The runner exposes read/write/edit/bash tools for one initial message with autonomous tool turns. Operator skills, extensions, MCP servers, sessions, context files, prompt templates and themes are not automatically inherited. A final native assistant error is an execution error, even if files already satisfy checks; a recovered intermediate retry is not necessarily a failure.
 
-Use one file. Do not support `extends`, imported case collections, nested `cases` inside a case entry, template interpolation, a variable-expression language, or implicit environment expansion in this revision.
+### File Checker (`$type: file`)
 
-Reject YAML anchor declarations and alias nodes. Also reserve and reject the scalar mapping key `<<` in every mapping, including quoted keys: the current parser treats it as an ordinary string key, so do not depend on a special merge-node type to detect it. Ordinary string values containing characters such as `&`, `*`, or `<<` remain data; rejection must inspect the parsed structure rather than search the source text.
+| Parameter   | Contract                                                                                                                                                 |
+| ----------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `path`      | Required workspace-relative file path, not absolute and without `..` segments.                                                                           |
+| `exists`    | Optional boolean; `false` is supported. Only regular files count.                                                                                        |
+| `matches`   | Optional regex string or list, at most 100 patterns. Search semantics, not an implicit whole-file match. Empty/invalid regexes are configuration errors. |
+| `unchanged` | Optional literal `true`; compare bytes against the initial baseline. `false` is invalid.                                                                 |
 
-Parser warnings, including unresolved application tags such as `!include`, are configuration errors. Literal tag-like text in an ordinary string remains data, and built-in YAML tags that parse without warnings remain supported.
+At least one assertion is required; each produces its own result. Regex work runs in a terminable worker with the check deadline and an internal five-second ceiling. File reads are capped at 1 MiB. Missing required files fail checks; unsafe/replaced roots, escaping/broken symlinks, non-regular, oversized or unreadable evidence are errors rather than passes. No content normalization or `includes` alias is provided.
 
-These parser behaviors were verified against the installed `yaml` library: ordinary aliases resolve; both plain and quoted `<<` keys remain ordinary keys without inherited-field expansion when merge handling is disabled; quoted string values containing reuse-like text have no anchor/alias nodes. The new format must explicitly reject the reserved structures rather than rely on library defaults.
+### Judge Checker (`$type: judge`)
 
-All authoring assets are relative to that file's directory. Check targets remain relative to the evaluated workspace. One declaring directory per runner/checker record is sufficient; do not add a per-field source-directory API for a multi-file problem that this scope does not have.
+| Parameter                         | Contract                                                  |
+| --------------------------------- | --------------------------------------------------------- |
+| `model`, `thinking`, `executable` | Same meanings as for Pi; judge invocation is independent. |
+| `file`                            | Required workspace-relative evidence file.                |
+| `rubric`                          | Required non-empty list of non-empty statements.          |
 
-For each final top-level field, preserve its source file, the 1-based line of that field's declaration, and whether it came from the common part or the selected named case. This is the required annotation granularity for `view`. Nested values share their top-level field's origin; per-leaf-value line annotations and override history are not required.
+The judge receives the task, selected regular-file evidence (or an explicit missing-file signal), and rubric. Its separate Pi invocation has no tools and no access to the evaluated workspace. Verdict JSON must have exactly one criterion per rubric item, each with boolean `pass` and non-empty `reason`. Extra fields/criterion labels are ignored. Valid negative judgments are `fail`; malformed, absent or wrong-count verdicts are checker errors.
 
-File names have no semantic meaning. A file called `skills.yml` does not activate a skill-specific mode.
+## Inspecting and Recording
 
-## Read-Only `view`
+`view` uses the same authoring resolver as `run`, then prints the resolved declaration and each top-level field's source file, 1-based declaration line, and common/selected-case origin. Case labels are JSON-escaped. It does not show implementation defaults or invoke implementation schemas, factories, credential lookups or harnesses; it is not a runtime-readiness check.
 
-Provide a `view` operation that displays the resolved case with the top-level source annotations defined above. It must not launch a harness, invoke a model, require provider credentials, or fetch credential values from the environment.
+`run` writes `.eval-results/<run-id>/result.json` by default. Schema version 2 retains source path/optional case name, declared `resolvedConfig`, runner outcome, individual checks, overall status, diagnostics and cleanup status. Credentials and schema-normalized/defaulted values do not replace the declaration. No resource hashes or workspace snapshots are retained, so old resource contents cannot be reconstructed from their unchanged paths.
 
-Use the same composition function and resolved values for inspection and execution. Inspection can report parse, structural, and top-level collision errors without runtime preparation. It does not establish that runtime prerequisites such as provider credentials or the harness executable are available; execution performs the full implementation/runtime validation before launching anything.
+Overall statuses are `pass`, `fail`, `error`, `timeout`, and `cancelled`; individual checks are `pass`, `fail`, or `error`. Exit codes are 0 for pass, 1 for failed checks, and 2 for configuration/execution/checker/timeout/cancellation errors. Early configuration errors need not produce a run record.
 
-Do not call implementation parameter schemas or `create` from `view`: schema validation is the run-path parameter boundary, and `create` also performs readiness checks such as executable/platform availability and required provider-credential resolution. `view` therefore performs YAML, structural, and top-level collision validation only. It does not validate implementation parameters or establish runtime readiness.
+## Trusted Extensions
 
-The implemented commands are:
+`run` registers the built-ins and can load `.ts`, `.js` or `.mjs` modules from explicitly supplied trusted directories. A runner module exports `runner`; a checker module exports `checker`. Duplicate/unknown types or malformed exports are errors, never fallback reasons.
 
-```sh
-agent-evals view <config.yml> [--case <name>]
-agent-evals run <config.yml> [--case <name>] [--results-dir <path>] \
-  [--runner-dir <path>] [--checker-dir <path>]
-````
-
-The installed `agent-evals` command and the development `npm run eval -- <command>` form execute the same built `dist/cli.js`. `view` prints the resolved configuration followed by one `field: origin` line per top-level field, where the origin is `common` or `case <JSON-string>`, and includes the source file and 1-based declaration line. Case labels are JSON-escaped so newline and control characters cannot inject additional output structure. `run` prints the run status and writes the result record.
-
-## Run Records and Implementation Boundary
-
-Retain the actual resolved, non-sensitive configuration passed to execution, together with the source configuration path and optional case name. This is part of the revision: changing YAML later must not erase which declared parameters an old run used.
-
-Resource-directory or fixture hashing, content/version identifiers, and resource snapshots are outside this revision's acceptance. An unchanged path does not prove unchanged content: the retained configuration alone cannot recover the earlier skill or fixture contents and does not guarantee complete reproduction. Do not imply those stronger guarantees in results or documentation.
-
-Do not retain secret values or credential values. Credentials are not part of the declared case configuration. This small configuration record is not a commitment to a generic tracer or offline regrading of all checks.
-
-The single-file format, `view`, top-level source annotations, and resolved-configuration retention are implemented. A result record stores the source path, optional case name, and the non-sensitive resolved configuration under `resolvedConfig`; it does not include environment values or provide resource snapshots.
-
-See [cases and configuration](cases.md) for shared authoring and implementation-selection rules, [architecture](architecture.md) for responsibilities, and [M1](m1-plan.md) for the delivered behavior.
+Extensions use the same schema/factory/instance contracts as built-ins; see [Definitions, Factories, and Instances](architecture.md#definitions-factories-and-instances) and [`registry.ts`](../src/engine/registry.ts). They execute as trusted host code. Never use an agent-writable workspace or generated result directory as an extension discovery root.
