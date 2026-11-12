@@ -82,34 +82,45 @@ class PiRunner implements Runner {
   };
 }
 
-async function assertSkillsAvailable(skills: readonly string[], authoringDir: string): Promise<void> {
+interface SkillSource {
+  readonly skill: string;
+  readonly source: string;
+  readonly info: Awaited<ReturnType<typeof stat>>;
+}
+
+async function inspectSkills(skills: readonly string[], authoringDir: string): Promise<SkillSource[]> {
+  const inspected: SkillSource[] = [];
   for (const skill of skills) {
-    const path = resolveAuthoringAsset(authoringDir, skill, "pi runner skill");
+    const source = resolveAuthoringAsset(authoringDir, skill, "pi runner skill");
     let info;
     try {
-      info = await stat(path);
+      info = await stat(source);
     } catch (error) {
       throw new ConfigError(`pi runner skill ${skill} is not accessible: ${errorMessage(error)}`);
     }
     if (info.isDirectory()) {
       try {
-        await stat(join(path, "SKILL.md"));
+        await stat(join(source, "SKILL.md"));
       } catch {
         throw new ConfigError(`pi runner skill directory ${skill} has no SKILL.md`);
       }
     } else if (!info.isFile()) {
       throw new ConfigError(`pi runner skill ${skill} must be a directory or a Markdown file`);
     }
+    inspected.push({ skill, source, info });
   }
+  return inspected;
+}
+
+async function assertSkillsAvailable(skills: readonly string[], authoringDir: string): Promise<void> {
+  await inspectSkills(skills, authoringDir);
 }
 
 async function stageSkills(skills: readonly string[], authoringDir: string, destination: string): Promise<string[]> {
   await mkdir(destination, { recursive: true, mode: 0o700 });
   const staged: string[] = [];
   const names = new Set<string>();
-  for (const skill of skills) {
-    const source = resolveAuthoringAsset(authoringDir, skill, "pi runner skill");
-    const info = await stat(source);
+  for (const { source, info } of await inspectSkills(skills, authoringDir)) {
     const name = basename(source);
     if (names.has(name)) {
       throw new ConfigError(`pi runner skills contain duplicate name: ${name}`);
@@ -117,11 +128,6 @@ async function stageSkills(skills: readonly string[], authoringDir: string, dest
     names.add(name);
     const target = join(destination, name);
     if (info.isDirectory()) {
-      try {
-        await stat(join(source, "SKILL.md"));
-      } catch {
-        throw new ConfigError(`pi runner skill directory ${skill} has no SKILL.md`);
-      }
       await cp(source, target, { recursive: true });
     } else {
       await copyFile(source, target);

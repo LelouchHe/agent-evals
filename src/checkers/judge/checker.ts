@@ -2,6 +2,8 @@ import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { z } from "zod";
 import { errorMessage } from "../../engine/config.ts";
+import { runRelativePathSchema } from "../../engine/params.ts";
+import { truncate } from "../../engine/truncate.ts";
 import type { CheckResult, Checker, CheckerContext, CheckerDefinition } from "../../engine/registry.ts";
 import { isMissing, readRunFile } from "../../engine/workspace.ts";
 import { assertSeatbeltAvailable } from "../../platform/macos/policy.ts";
@@ -14,23 +16,25 @@ import {
 } from "../../runners/pi/params.ts";
 import { buildJudgePrompt } from "./prompt.ts";
 
-const runRelativePath = z
-  .string()
-  .min(1, "must be a non-empty run-relative path")
-  .refine((value) => !value.startsWith("/") && !value.split(/[\\/]+/).includes(".."), {
-    message: "must be relative to the run workspace without '..' segments",
-  });
-
 const judgeParamsSchema = z.strictObject({
   model: nonEmptyTrimmedString,
   thinking: thinkingSchema.default("medium"),
   rubric: z.array(nonEmptyTrimmedString).min(1, "must contain at least one statement"),
-  file: runRelativePath,
+  file: runRelativePathSchema,
   executable: nonEmptyTrimmedString.default("pi"),
   envPassthrough: envPassthroughSchema,
 });
 
 type JudgeParams = z.output<typeof judgeParamsSchema>;
+
+const verdictSchema = z.object({
+  criteria: z.array(
+    z.object({
+      pass: z.boolean(),
+      reason: z.string().refine((value) => value.trim().length > 0, { message: "reason is missing" }),
+    }),
+  ),
+});
 
 export class JudgeError extends Error {
   constructor(message: string) {
@@ -126,10 +130,14 @@ function parseVerdict(text: string | null, rubric: readonly string[], diagnostic
   } catch (error) {
     throw new JudgeError(withDiagnostics(`invalid judge verdict: ${errorMessage(error)}`, diagnostics));
   }
-  if (typeof parsed !== "object" || parsed === null || !Array.isArray((parsed as { criteria?: unknown }).criteria)) {
-    throw new JudgeError(withDiagnostics("invalid judge verdict: missing criteria array", diagnostics));
+  const verdict = verdictSchema.safeParse(parsed);
+  if (!verdict.success) {
+    const issue = verdict.error.issues[0];
+    const detail =
+      issue === undefined ? "invalid shape" : `${issue.path.map(String).join(".") || "verdict"}: ${issue.message}`;
+    throw new JudgeError(withDiagnostics(`invalid judge verdict: ${detail}`, diagnostics));
   }
-  const criteria = (parsed as { criteria: unknown[] }).criteria;
+  const criteria = verdict.data.criteria;
   if (criteria.length !== rubric.length) {
     throw new JudgeError(
       withDiagnostics(
@@ -139,26 +147,12 @@ function parseVerdict(text: string | null, rubric: readonly string[], diagnostic
     );
   }
 
-  return criteria.map((entry, index) => {
-    if (typeof entry !== "object" || entry === null) {
-      throw new JudgeError(withDiagnostics(`invalid judge verdict: criteria[${index}] is not an object`, diagnostics));
-    }
-    const record = entry as Record<string, unknown>;
-    if (typeof record.pass !== "boolean") {
-      throw new JudgeError(
-        withDiagnostics(`invalid judge verdict: criteria[${index}].pass is not a boolean`, diagnostics),
-      );
-    }
-    if (typeof record.reason !== "string" || record.reason.trim().length === 0) {
-      throw new JudgeError(withDiagnostics(`invalid judge verdict: criteria[${index}].reason is missing`, diagnostics));
-    }
-    return {
-      checker: "judge",
-      subject: rubric[index] ?? "",
-      status: record.pass ? "pass" : "fail",
-      reason: truncate(record.reason.trim(), 500),
-    } satisfies CheckResult;
-  });
+  return criteria.map((entry, index) => ({
+    checker: "judge",
+    subject: rubric[index] ?? "",
+    status: entry.pass ? "pass" : "fail",
+    reason: truncate(entry.reason.trim(), 500),
+  }));
 }
 
 function extractJson(text: string): string {
@@ -176,9 +170,6 @@ function extractJson(text: string): string {
 }
 
 function formatInvocationError(error: unknown): string {
-  if (error instanceof JudgeError) {
-    return error.message;
-  }
   const diagnostic = isPiSessionError(error) ? error.diagnostics[0] : undefined;
   const base = `judge invocation failed: ${errorMessage(error)}`;
   return diagnostic === undefined ? base : truncate(`${base} (${diagnostic})`, 800);
@@ -190,8 +181,4 @@ function isPiSessionError(error: unknown): error is PiSessionError {
 
 function withDiagnostics(message: string, diagnostics: readonly string[]): string {
   return diagnostics.length === 0 ? message : truncate(`${message} (${diagnostics[0]})`, 800);
-}
-
-function truncate(value: string, limit: number): string {
-  return value.length <= limit ? value : value.slice(0, limit) + "…";
 }

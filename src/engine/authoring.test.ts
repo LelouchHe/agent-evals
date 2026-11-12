@@ -473,6 +473,27 @@ test("a case name is metadata only, including names that resemble paths", async 
   assert.equal(dirname(resolved.path), directory);
 });
 
+test("unknown YAML tags are configuration errors while literal tag text remains data", async (t) => {
+  const validTail = [
+    "runner:",
+    "  $type: pi",
+    "  model: p/m",
+    "checks:",
+    "  - $type: file",
+    "    path: hello.txt",
+    "    exists: true",
+  ];
+
+  for (const tag of ["!include file.txt", "!foo value"]) {
+    const { path } = await writeDocument(t, [`input: ${tag}`, ...validTail]);
+    await expectConfigError(() => loadCase(path), /unsupported YAML.*Unresolved tag/);
+  }
+
+  const { path } = await writeDocument(t, ["input: literal !include and !foo text", ...validTail]);
+  const loaded = await loadCase(path);
+  assert.equal(loaded.config.input, "literal !include and !foo text");
+});
+
 test("authoring assets resolve relative to the declaring configuration", async (t) => {
   const declaring = await makeTempDir(t, "ae-config-");
   await mkdir(join(declaring, "skill"));

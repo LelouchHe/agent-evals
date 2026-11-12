@@ -5,7 +5,7 @@ import type { ResolvedCase } from "./config.ts";
 export function formatResolvedCase(resolved: ResolvedCase): string {
   const lines = [
     `configuration: ${resolved.path}`,
-    `case: ${resolved.name === undefined ? "(ordinary)" : resolved.name}`,
+    `case: ${resolved.name === undefined ? "(ordinary)" : JSON.stringify(resolved.name)}`,
     "resolved configuration:",
   ];
 
@@ -16,7 +16,7 @@ export function formatResolvedCase(resolved: ResolvedCase): string {
 
   lines.push("field origins:");
   for (const [field, origin] of Object.entries(resolved.origins)) {
-    const source = origin.kind === "common" ? "common" : `case "${origin.caseName}"`;
+    const source = origin.kind === "common" ? "common" : `case ${JSON.stringify(origin.caseName)}`;
     lines.push(`  ${field}: ${source} ${origin.file}:${origin.line}`);
   }
   return lines.join("\n") + "\n";

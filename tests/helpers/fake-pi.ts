@@ -104,7 +104,12 @@ function handlePrompt(command) {
       settle("Environment checked.");
       break;
     case "judge-valid":
-      settle(JSON.stringify({ criteria: [{ criterion: "copied", pass: true, reason: "content matches" }] }));
+      settle(
+        JSON.stringify({
+          extraTopLevel: "ignored",
+          criteria: [{ criterion: "copied", pass: true, reason: "content matches" }],
+        }),
+      );
       break;
     case "judge-fail":
       settle(JSON.stringify({ criteria: [{ criterion: "copied", pass: false, reason: "content differs" }] }));

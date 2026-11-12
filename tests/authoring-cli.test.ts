@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { chmod, readFile, readdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { test } from "node:test";
-import { parse } from "yaml";
+import { parse, stringify } from "yaml";
 import type { EvaluationRecord } from "../src/engine/results.ts";
 import { runCliProcess } from "./helpers/cli-process.ts";
 import { createFakePi, makeTempDir, type FakePi } from "./helpers/fake-pi-control.ts";
@@ -88,13 +88,41 @@ test("view succeeds without Pi or credentials and annotates common versus select
     unsetEnv: ["OPENCODE_API_KEY"],
   });
   assert.equal(result.code, 0, result.stderr);
-  assert.match(result.stdout, /^case: with-skill$/m);
+  assert.match(result.stdout, /^case: "with-skill"$/m);
   assert.match(result.stdout, new RegExp(`^  input: common ${escapeRegExp(configPath)}:1$`, "m"));
   assert.match(result.stdout, new RegExp(`^  timeoutMs: common ${escapeRegExp(configPath)}:2$`, "m"));
   assert.match(result.stdout, new RegExp(`^  checks: common ${escapeRegExp(configPath)}:3$`, "m"));
   assert.match(result.stdout, new RegExp(`^  runner: case "with-skill" ${escapeRegExp(configPath)}:9$`, "m"));
   assert.doesNotMatch(result.stdout, /view-secret-value/);
   assert.doesNotMatch(result.stdout, /CANARY-LAUNCHED/);
+});
+
+test("view escapes control characters in selected case labels", async (t) => {
+  const name = 'line\nbreak\u0007 "quoted"\nfield origins:\n  spoof: yes';
+  const directory = await makeTempDir(t, "ae-view-control-");
+  const configPath = join(directory, "case.yml");
+  await writeFile(
+    configPath,
+    stringify({
+      input: "task",
+      checks: [{ $type: "file", path: "hello.txt", exists: true }],
+      cases: { [name]: { runner: { $type: "pi", model: "test/model" } } },
+    }),
+  );
+  const cwd = await makeTempDir(t, "ae-view-control-cwd-");
+
+  const result = await runCli(t, ["view", configPath, "--case", name], { cwd, TMPDIR: cwd });
+  assert.equal(result.code, 0, result.stderr);
+  const expected = JSON.stringify(name);
+  const lines = result.stdout.split("\n");
+  assert.ok(lines.includes(`case: ${expected}`), result.stdout);
+  assert.ok(
+    lines.some((line) => line.startsWith(`  runner: case ${expected} ${configPath}:`)),
+    result.stdout,
+  );
+  assert.equal(lines.filter((line) => line === "field origins:").length, 1);
+  assert.ok(!lines.includes("  spoof: yes"), result.stdout);
+  assert.ok(!result.stdout.includes("\u0007"));
 });
 
 test("view and run resolve the same configuration payload", async (t) => {
@@ -227,6 +255,29 @@ test("view reports configuration errors with exit code 2", async (t) => {
   const result = await runCli(t, ["view", configPath, "--case", "missing"], { cwd, TMPDIR: cwd });
   assert.equal(result.code, 2);
   assert.match(result.stderr, /configuration error: .*has no case named "missing"/);
+});
+
+test("CLI rejects unknown YAML tags before runtime", async (t) => {
+  const directory = await makeTempDir(t, "ae-view-tag-");
+  const configPath = join(directory, "case.yml");
+  await writeFile(
+    configPath,
+    [
+      "input: !include injected.txt",
+      "runner:",
+      "  $type: pi",
+      "  model: test/model",
+      "checks:",
+      "  - $type: file",
+      "    path: hello.txt",
+      "    exists: true",
+    ].join("\n") + "\n",
+  );
+  const cwd = await makeTempDir(t, "ae-view-tag-cwd-");
+
+  const result = await runCli(t, ["view", configPath], { cwd, TMPDIR: cwd });
+  assert.equal(result.code, 2);
+  assert.match(result.stderr, /unsupported YAML.*Unresolved tag/);
 });
 
 function escapeRegExp(value: string): string {

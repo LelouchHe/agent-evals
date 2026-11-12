@@ -185,7 +185,7 @@ The example's `matches` pattern tolerates one optional final newline. The checke
 | `file`                         | One run-relative evidence file. Missing evidence is stated explicitly in the prompt. |
 | `executable`, `envPassthrough` | Same meaning as for the runner.                                                      |
 
-The judge is a separate isolated Pi invocation with tools disabled. It receives the case input and selected file content, not the evaluated workspace or its own process environment besides the explicit allowlist. Evidence must be a regular file. The verdict must be a JSON object with one boolean `pass` and a reason per rubric statement. A valid failing verdict is a failed check; a malformed or missing verdict is a checker error.
+The judge is a separate isolated Pi invocation with tools disabled. It receives the case input and selected file content, not the evaluated workspace or its own process environment besides the explicit allowlist. Evidence must be a regular file. The verdict is structurally validated with Zod: a JSON object with one boolean `pass` and a non-empty reason per rubric statement, and exactly one criterion per rubric statement. Extra fields and criterion labels are ignored rather than requiring a stricter model output format. A valid failing verdict is a failed check; a malformed, wrong-count, or missing verdict is a checker error.
 
 ### Trusted Implementation Directories
 

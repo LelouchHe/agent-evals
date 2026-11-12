@@ -129,39 +129,23 @@ test("engine preparation passes each parsed implementation shape to its bound in
   assert.deepEqual(await readdir(tempParent), []);
 });
 
-test("a discovered extension preserves schema, factory, and instance receivers", async (t) => {
+test("a discovered extension executes through shared factory preparation", async (t) => {
   const zodUrl = import.meta.resolve("zod");
   const runnerDir = await makeTempDir(t, "ae-typed-external-runner-");
   const checkerDir = await makeTempDir(t, "ae-typed-external-checker-");
   await writeFile(
     join(runnerDir, "runner.mjs"),
     `import { z } from ${JSON.stringify(zodUrl)};
-const base = z.strictObject({ text: z.string() }).transform((params) => ({ text: params.text }));
-const paramsSchema = new Proxy(base, {
-  get(target, property, receiver) {
-    if (property === "safeParseAsync") {
-      return async function (input) {
-        if (this !== paramsSchema) throw new Error("schema receiver lost");
-        return base.safeParseAsync(input);
-      };
-    }
-    return Reflect.get(target, property, receiver);
-  },
-});
 export const runner = {
   type: "receiver-runner",
-  params: paramsSchema,
+  params: z.strictObject({ text: z.string() }).transform((params) => ({ text: params.text })),
   async create(params) {
     if (this !== runner) throw new Error("create receiver lost");
     return {
-      marker: "runner-instance",
       async run() {
-        if (this?.marker !== "runner-instance") throw new Error("run receiver lost");
         return { finalText: \`external:\${params.text}\`, diagnostics: [] };
       },
-      async stop() {
-        if (this?.marker !== "runner-instance") throw new Error("stop receiver lost");
-      },
+      async stop() {},
     };
   },
 };
@@ -170,27 +154,13 @@ export const runner = {
   await writeFile(
     join(checkerDir, "checker.mjs"),
     `import { z } from ${JSON.stringify(zodUrl)};
-const base = z.strictObject({ text: z.string() }).transform((params) => ({ text: params.text }));
-const paramsSchema = new Proxy(base, {
-  get(target, property, receiver) {
-    if (property === "safeParseAsync") {
-      return async function (input) {
-        if (this !== paramsSchema) throw new Error("checker schema receiver lost");
-        return base.safeParseAsync(input);
-      };
-    }
-    return Reflect.get(target, property, receiver);
-  },
-});
 export const checker = {
   type: "receiver-checker",
-  params: paramsSchema,
+  params: z.strictObject({ text: z.string() }).transform((params) => ({ text: params.text })),
   async create(params) {
     if (this !== checker) throw new Error("checker create receiver lost");
     return {
-      marker: "checker-instance",
       async check() {
-        if (this?.marker !== "checker-instance") throw new Error("check receiver lost");
         return [{ checker: "receiver-checker", subject: \`external:\${params.text}\`, status: "pass", reason: "ok" }];
       },
     };

@@ -1,17 +1,12 @@
 import { z } from "zod";
 import { errorMessage } from "../../engine/config.ts";
 import type { CheckResult, Checker, CheckerContext, CheckerDefinition } from "../../engine/registry.ts";
+import { runRelativePathSchema } from "../../engine/params.ts";
+import { truncate } from "../../engine/truncate.ts";
 import { isMissing, readRunFile, runFileExists, type RunRoot } from "../../engine/workspace.ts";
 import { evaluateRegexes } from "./regex.ts";
 
 const MAX_PATTERNS = 100;
-
-const runRelativePath = z
-  .string()
-  .min(1, "must be a non-empty run-relative path")
-  .refine((value) => !value.startsWith("/") && !value.split(/[\\/]+/).includes(".."), {
-    message: "must be relative to the run workspace without '..' segments",
-  });
 
 const patternSchema = z
   .string()
@@ -29,7 +24,7 @@ const patternSchema = z
 
 const fileCheckParamsSchema = z
   .strictObject({
-    path: runRelativePath,
+    path: runRelativePathSchema,
     exists: z.boolean().optional(),
     matches: z.union([patternSchema, z.array(patternSchema).max(MAX_PATTERNS)]).optional(),
     unchanged: z.literal(true).optional(),
@@ -183,8 +178,4 @@ function fail(reason: string): CheckResult {
 
 function errorResult(subject: string, reason: string): CheckResult {
   return { checker: "file", subject, status: "error", reason };
-}
-
-function truncate(value: string, limit: number): string {
-  return value.length <= limit ? value : value.slice(0, limit) + "…";
 }

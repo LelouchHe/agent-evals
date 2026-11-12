@@ -42,6 +42,10 @@ export async function loadCase(path: string, selection: CaseSelection = {}): Pro
   if (firstError !== undefined) {
     throw new ConfigError(`invalid YAML in case configuration ${file}: ${firstError.message}`);
   }
+  const firstWarning = document.warnings[0];
+  if (firstWarning !== undefined) {
+    throw new ConfigError(`unsupported YAML in case configuration ${file}: ${firstWarning.message}`);
+  }
   if (document.contents === null || document.contents === undefined) {
     throw new ConfigError(`case configuration ${file} must contain a YAML mapping`);
   }

@@ -1,5 +1,6 @@
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
 import { errorMessage } from "../../engine/config.ts";
+import { truncate } from "../../engine/truncate.ts";
 
 const MAX_PROTOCOL_LINE_BYTES = 2 * 1024 * 1024;
 const MAX_STDERR_CHARS = 16 * 1024;
@@ -388,8 +389,4 @@ function describeErrorEvent(record: Record<string, unknown>): string {
   const reason = typeof record.reason === "string" ? record.reason : "error";
   const error = typeof record.error === "string" ? record.error : "";
   return truncate(`${reason}${error.length > 0 ? `: ${error}` : ""}`, 500);
-}
-
-function truncate(value: string, limit: number): string {
-  return value.length <= limit ? value : value.slice(0, limit) + "…";
 }

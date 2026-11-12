@@ -26,6 +26,7 @@ import {
   type RunnerStatus,
 } from "./results.ts";
 import { parseImplementationParams } from "./params.ts";
+import { truncate, truncateNullable } from "./truncate.ts";
 import { openRunRoot, type RunRoot } from "./workspace.ts";
 
 const DEFAULT_TIMEOUT_MS = 300_000;
@@ -154,7 +155,7 @@ export async function runEvaluation(request: RunRequest): Promise<EvaluationReco
       type: registered.runnerType,
       status: runnerStatus,
       durationMs: Math.round(performance.now() - started),
-      finalText: outcome === undefined ? null : truncateNullable(outcome.finalText),
+      finalText: outcome === undefined ? null : truncateNullable(outcome.finalText, MAX_RECORDED_TEXT),
     };
     if (outcome !== undefined) {
       diagnostics.push(...outcome.diagnostics);
@@ -377,12 +378,4 @@ function diagnosticsOf(error: unknown): string[] {
 
 function boundedDiagnostics(diagnostics: readonly string[]): string[] {
   return diagnostics.slice(0, 20).map((line) => truncate(line, 2_000));
-}
-
-function truncate(value: string, limit = MAX_RECORDED_TEXT): string {
-  return value.length <= limit ? value : value.slice(0, limit) + "…";
-}
-
-function truncateNullable(value: string | null, limit = MAX_RECORDED_TEXT): string | null {
-  return value === null ? null : truncate(value, limit);
 }

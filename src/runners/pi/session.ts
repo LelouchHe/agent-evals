@@ -3,6 +3,7 @@ import { constants } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { ConfigError, errorMessage } from "../../engine/config.ts";
+import { truncate } from "../../engine/truncate.ts";
 import { siblingRuntimeModule } from "../../engine/runtime-assets.ts";
 import { spawnSandboxed } from "../../platform/macos/launch.ts";
 import { writeSeatbeltPolicy, type SandboxPolicy } from "../../platform/macos/policy.ts";
@@ -334,10 +335,6 @@ async function assertFinalAssistantHealthy(process: PiProcess): Promise<void> {
       `assistant error: ${detail}`,
     ]);
   }
-}
-
-function truncate(value: string, limit: number): string {
-  return value.length <= limit ? value : value.slice(0, limit) + "…";
 }
 
 function diagnosticsOf(process: PiProcess): string[] {

@@ -1,5 +1,13 @@
-import type { ZodError, ZodType } from "zod";
-import { ConfigError, errorMessage, type ImplementationParams } from "./config.ts";
+import { z, type ZodError, type ZodType } from "zod";
+import { ConfigError, type ImplementationParams } from "./config.ts";
+
+/** Shared schema rule for check targets relative to the evaluated workspace. */
+export const runRelativePathSchema = z
+  .string()
+  .min(1, "must be a non-empty run-relative path")
+  .refine((value) => !value.startsWith("/") && !value.split(/[\\/]+/).includes(".."), {
+    message: "must be relative to the run workspace without '..' segments",
+  });
 
 /** Parse raw declared parameters exactly once with the implementation's Zod schema. */
 export async function parseImplementationParams<P>(
@@ -7,12 +15,7 @@ export async function parseImplementationParams<P>(
   raw: ImplementationParams,
   label: string,
 ): Promise<P> {
-  let result;
-  try {
-    result = await schema.safeParseAsync(raw);
-  } catch (error) {
-    throw new ConfigError(`${label} parameter validation failed: ${errorMessage(error)}`);
-  }
+  const result = await schema.safeParseAsync(raw);
   if (result.success) {
     return result.data;
   }
@@ -20,15 +23,11 @@ export async function parseImplementationParams<P>(
 }
 
 function formatSchemaError(label: string, error: ZodError): string {
-  const issues = error.issues;
-  if (issues.length === 0) {
-    return `${label} parameters are invalid`;
-  }
-  const shown = issues.slice(0, 10).map((issue) => {
-    const path = issue.path.map(String).join(".");
-    const location = path.length === 0 ? `${label} parameters` : `${label} parameter ${path}`;
-    return `${location}: ${issue.message}`;
-  });
-  const remaining = issues.length - shown.length;
-  return shown.join("; ") + (remaining > 0 ? `; ${remaining} more parameter issue${remaining === 1 ? "" : "s"}` : "");
+  return error.issues
+    .map((issue) => {
+      const path = issue.path.map(String).join(".");
+      const location = path.length === 0 ? `${label} parameters` : `${label} parameter ${path}`;
+      return `${location}: ${issue.message}`;
+    })
+    .join("; ");
 }

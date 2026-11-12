@@ -104,6 +104,8 @@ Use one file. Do not support `extends`, imported case collections, nested `cases
 
 Reject YAML anchor declarations and alias nodes. Also reserve and reject the scalar mapping key `<<` in every mapping, including quoted keys: the current parser treats it as an ordinary string key, so do not depend on a special merge-node type to detect it. Ordinary string values containing characters such as `&`, `*`, or `<<` remain data; rejection must inspect the parsed structure rather than search the source text.
 
+Parser warnings, including unresolved application tags such as `!include`, are configuration errors. Literal tag-like text in an ordinary string remains data, and built-in YAML tags that parse without warnings remain supported.
+
 These parser behaviors were verified against the installed `yaml` library: ordinary aliases resolve; both plain and quoted `<<` keys remain ordinary keys without inherited-field expansion when merge handling is disabled; quoted string values containing reuse-like text have no anchor/alias nodes. The new format must explicitly reject the reserved structures rather than rely on library defaults.
 
 All authoring assets are relative to that file's directory. Check targets remain relative to the evaluated workspace. One declaring directory per runner/checker record is sufficient; do not add a per-field source-directory API for a multi-file problem that this scope does not have.
@@ -128,7 +130,7 @@ agent-evals run <config.yml> [--case <name>] [--results-dir <path>] \
   [--runner-dir <path>] [--checker-dir <path>]
 ```
 
-The installed `agent-evals` command and the development `npm run eval -- <command>` form execute the same built `dist/cli.js`. `view` prints the resolved configuration followed by one `field: origin` line per top-level field, where the origin is `common` or `case "<name>"` and includes the source file and 1-based declaration line. `run` prints the run status and writes the result record.
+The installed `agent-evals` command and the development `npm run eval -- <command>` form execute the same built `dist/cli.js`. `view` prints the resolved configuration followed by one `field: origin` line per top-level field, where the origin is `common` or `case <JSON-string>`, and includes the source file and 1-based declaration line. Case labels are JSON-escaped so newline and control characters cannot inject additional output structure. `run` prints the run status and writes the result record.
 
 ## Run Records and Implementation Boundary
 

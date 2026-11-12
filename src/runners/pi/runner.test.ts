@@ -144,6 +144,11 @@ test("pi runner rejects invalid parameters and missing prerequisites before laun
     const params = await parsePi({ model: "test/model", executable: fake.executable, skills: ["missing"] });
     await piRunner.create(params, dirs.root);
   }, ConfigError);
+  await mkdir(join(dirs.root, "dir-without-skill"));
+  await assert.rejects(async () => {
+    const params = await parsePi({ model: "test/model", executable: fake.executable, skills: ["dir-without-skill"] });
+    await piRunner.create(params, dirs.root);
+  }, ConfigError);
   await assert.rejects(async () => {
     const params = await parsePi({ model: "test/model", executable: "missing-pi-executable" });
     await piRunner.create(params, dirs.root);
