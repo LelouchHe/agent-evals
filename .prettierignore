@@ -1,5 +1,6 @@
 node_modules/
 .eval-results/
+.agent-evals/
 .husky/_/
 
 # Local, generated agent adapters are not project formatting targets.

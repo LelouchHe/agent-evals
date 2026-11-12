@@ -271,6 +271,146 @@ test("CLI rejects unknown YAML tags before runtime", async (t) => {
   assert.match(result.stderr, /unsupported YAML.*Unresolved tag/);
 });
 
+test("CLI reports help and built-in argument errors with exit code 2", async (t) => {
+  const directory = await makeTempDir(t, "ae-cli-grammar-");
+  const configPath = join(directory, "case.yml");
+  await writeFile(
+    configPath,
+    stringify({
+      input: "task",
+      checks: [{ $type: "file", path: "hello.txt", exists: true }],
+      runner: { $type: "pi", model: "test/model" },
+    }),
+  );
+  const cwd = await makeTempDir(t, "ae-cli-grammar-cwd-");
+
+  const help = await runCli(t, ["--help"], { cwd, TMPDIR: cwd });
+  assert.equal(help.code, 0, help.stderr);
+  assert.match(help.stdout, /Usage: agent-evals/);
+  assert.match(help.stdout, /default: \.agent-evals/);
+
+  const missingValue = await runCli(t, ["view", configPath, "--case"], { cwd, TMPDIR: cwd });
+  assert.equal(missingValue.code, 2);
+  assert.match(missingValue.stderr, /Option '--case <value>' argument missing/);
+
+  const unknown = await runCli(t, ["view", configPath, "--unknown"], { cwd, TMPDIR: cwd });
+  assert.equal(unknown.code, 2);
+  assert.match(unknown.stderr, /Unknown option '--unknown'/);
+
+  const extra = await runCli(t, ["view", configPath, "extra"], { cwd, TMPDIR: cwd });
+  assert.equal(extra.code, 2);
+  assert.match(extra.stderr, /unexpected argument: extra/);
+
+  const runOnly = await runCli(t, ["view", configPath, "--results-dir", join(directory, "results")], {
+    cwd,
+    TMPDIR: cwd,
+  });
+  assert.equal(runOnly.code, 2);
+  assert.match(runOnly.stderr, /view does not accept --results-dir, --runner-dir, or --checker-dir/);
+});
+
+test("CLI accepts equals values and a dash-prefixed config path after --", async (t) => {
+  const cwd = await makeTempDir(t, "ae-cli-dash-cwd-");
+  const caseName = "-selected";
+  await writeFile(
+    join(cwd, "-case.yml"),
+    stringify({
+      input: "task",
+      cases: {
+        [caseName]: {
+          checks: [{ $type: "file", path: "hello.txt", exists: true }],
+          runner: { $type: "pi", model: "test/model" },
+        },
+      },
+    }),
+  );
+
+  const result = await runCli(t, ["view", `--case=${caseName}`, "--", "-case.yml"], { cwd, TMPDIR: cwd });
+  assert.equal(result.code, 0, result.stderr);
+  assert.match(result.stdout, new RegExp(`^case: ${escapeRegExp(JSON.stringify(caseName))}$`, "m"));
+});
+
+test("CLI loads repeated extension directories and writes to the default results root", async (t) => {
+  const zodUrl = import.meta.resolve("zod");
+  const runnerDirA = await makeTempDir(t, "ae-cli-runner-a-");
+  const runnerDirB = await makeTempDir(t, "ae-cli-runner-b-");
+  const checkerDirA = await makeTempDir(t, "ae-cli-checker-a-");
+  const checkerDirB = await makeTempDir(t, "ae-cli-checker-b-");
+  const runnerModule = (type: string) => `import { z } from ${JSON.stringify(zodUrl)};
+export const runner = {
+  type: ${JSON.stringify(type)},
+  params: z.strictObject({}),
+  async create() {
+    return {
+      async run() { return { finalText: ${JSON.stringify(`runner:${type}`)}, diagnostics: [] }; },
+      async stop() {},
+    };
+  },
+};
+`;
+  const checkerModule = (type: string) => `import { z } from ${JSON.stringify(zodUrl)};
+export const checker = {
+  type: ${JSON.stringify(type)},
+  params: z.strictObject({}),
+  async create() {
+    return {
+      async check() {
+        return [{ checker: ${JSON.stringify(type)}, subject: ${JSON.stringify(`checker:${type}`)}, status: "pass", reason: "ok" }];
+      },
+    };
+  },
+};
+`;
+  await writeFile(join(runnerDirA, "unused.mjs"), runnerModule("unused-runner"));
+  await writeFile(join(runnerDirB, "used.mjs"), runnerModule("external-runner"));
+  await writeFile(join(checkerDirA, "used.mjs"), checkerModule("external-checker"));
+  await writeFile(join(checkerDirB, "unused.mjs"), checkerModule("unused-checker"));
+
+  const directory = await makeTempDir(t, "ae-cli-default-");
+  const configPath = join(directory, "case.yml");
+  await writeFile(
+    configPath,
+    stringify({
+      input: "task",
+      timeoutMs: 5_000,
+      checks: [{ $type: "external-checker" }],
+      runner: { $type: "external-runner" },
+    }),
+  );
+  const cwd = await makeTempDir(t, "ae-cli-default-cwd-");
+  const tempParent = await makeTempDir(t, "ae-cli-default-tmp-");
+  const result = await runCli(
+    t,
+    [
+      "run",
+      configPath,
+      "--runner-dir",
+      runnerDirA,
+      "--runner-dir",
+      runnerDirB,
+      "--checker-dir",
+      checkerDirA,
+      "--checker-dir",
+      checkerDirB,
+    ],
+    { cwd, TMPDIR: tempParent },
+  );
+  assert.equal(result.code, 0, result.stderr);
+
+  const resultsDir = join(cwd, ".agent-evals");
+  const runDirectories = await readdir(resultsDir);
+  assert.equal(runDirectories.length, 1);
+  const record = JSON.parse(
+    await readFile(join(resultsDir, runDirectories[0] ?? "", "result.json"), "utf8"),
+  ) as EvaluationRecord;
+  assert.equal(record.status, "pass", record.error);
+  assert.equal(record.runner.finalText, "runner:external-runner");
+  assert.equal(record.checks[0]?.subject, "checker:external-checker");
+  assert.match(result.stdout, /results: .*\/\.agent-evals\/[^/]+\/result\.json/);
+  await assert.rejects(() => access(join(cwd, ".eval-results")), /ENOENT/);
+  assert.deepEqual(await readdir(tempParent), []);
+});
+
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }

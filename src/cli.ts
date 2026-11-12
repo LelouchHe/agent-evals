@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { join, resolve } from "node:path";
+import { parseArgs } from "node:util";
 import { fileChecker } from "./checkers/file/checker.ts";
 import { judgeChecker } from "./checkers/judge/checker.ts";
 import { loadCase } from "./engine/authoring.ts";
@@ -18,7 +19,7 @@ Commands:
 
 Options:
   --case <name>            Named case to select (required for files with cases)
-  --results-dir <path>     Where run records are written (default: .eval-results)
+  --results-dir <path>     Where run records are written (default: .agent-evals)
   --runner-dir <path>      Trusted directory of runner modules (repeatable)
   --checker-dir <path>     Trusted directory of checker modules (repeatable)
   --help                   Show this help
@@ -102,7 +103,7 @@ async function runCommand(options: CliOptions): Promise<number> {
       runnerDirs: options.runnerDirs,
       checkerDirs: options.checkerDirs,
     });
-    const resultsDir = options.resultsDir ?? resolve(".eval-results");
+    const resultsDir = options.resultsDir ?? resolve(".agent-evals");
     const record = await runEvaluation({
       case: resolved,
       registry,
@@ -118,73 +119,51 @@ async function runCommand(options: CliOptions): Promise<number> {
 }
 
 function parseArguments(argv: readonly string[]): CliOptions {
-  if (argv.includes("--help") || argv.includes("-h")) {
+  let parsed;
+  try {
+    parsed = parseArgs({
+      args: argv,
+      allowPositionals: true,
+      strict: true,
+      options: {
+        case: { type: "string" },
+        "results-dir": { type: "string" },
+        "runner-dir": { type: "string", multiple: true },
+        "checker-dir": { type: "string", multiple: true },
+        help: { type: "boolean", short: "h" },
+      },
+    });
+  } catch (error) {
+    throw new ConfigError(errorMessage(error));
+  }
+
+  const { values, positionals } = parsed;
+  if (values.help === true) {
     throw new HelpRequested();
   }
 
-  const command = argv[0];
+  const [command, rawConfigPath, ...unexpected] = positionals;
   if (command !== "run" && command !== "view") {
     throw new ConfigError(command === undefined ? "a command is required" : `unknown command: ${command}`);
   }
-
-  let configPath: string | undefined;
-  let caseName: string | undefined;
-  let resultsDir: string | undefined;
-  let resultsDirGiven = false;
-  const runnerDirs: string[] = [];
-  const checkerDirs: string[] = [];
-
-  for (let index = 1; index < argv.length; index += 1) {
-    const argument = argv[index];
-    if (argument === undefined) {
-      continue;
-    }
-    if (!argument.startsWith("-")) {
-      if (configPath !== undefined) {
-        throw new ConfigError(`unexpected argument: ${argument}`);
-      }
-      configPath = resolve(argument);
-      continue;
-    }
-    const value = () => {
-      index += 1;
-      const next = argv[index];
-      if (next === undefined) {
-        throw new ConfigError(`${argument} requires a value`);
-      }
-      return next;
-    };
-    switch (argument) {
-      case "--case":
-        caseName = value();
-        break;
-      case "--results-dir":
-        resultsDir = resolve(value());
-        resultsDirGiven = true;
-        break;
-      case "--runner-dir":
-        runnerDirs.push(resolve(value()));
-        break;
-      case "--checker-dir":
-        checkerDirs.push(resolve(value()));
-        break;
-      default:
-        throw new ConfigError(`unknown argument: ${argument}`);
-    }
-  }
-
-  if (configPath === undefined) {
+  if (rawConfigPath === undefined) {
     throw new ConfigError("a configuration file is required");
   }
-  if (command === "view" && (resultsDirGiven || runnerDirs.length > 0 || checkerDirs.length > 0)) {
+  if (unexpected.length > 0) {
+    throw new ConfigError(`unexpected argument: ${unexpected[0]}`);
+  }
+
+  const runnerDirs = (values["runner-dir"] ?? []).map((directory) => resolve(directory));
+  const checkerDirs = (values["checker-dir"] ?? []).map((directory) => resolve(directory));
+  if (command === "view" && (values["results-dir"] !== undefined || runnerDirs.length > 0 || checkerDirs.length > 0)) {
     throw new ConfigError("view does not accept --results-dir, --runner-dir, or --checker-dir");
   }
 
   return {
     command,
-    configPath,
-    ...(caseName === undefined ? {} : { caseName }),
-    ...(resultsDir === undefined ? {} : { resultsDir }),
+    configPath: resolve(rawConfigPath),
+    ...(values.case === undefined ? {} : { caseName: values.case }),
+    ...(values["results-dir"] === undefined ? {} : { resultsDir: resolve(values["results-dir"]) }),
     runnerDirs,
     checkerDirs,
   };
