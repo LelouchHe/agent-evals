@@ -49,6 +49,10 @@ Keep evaluation on the host OS under its own sandbox rather than making Linux co
 
 The intended coverage is macOS, Linux and Windows, beginning with macOS and then Linux. Each backend must state its actual capabilities and fail closed when a required restriction is unavailable; common test inputs/checks do not imply identical guarantees.
 
+## Open Questions
+
+Unsettled interface decisions are tracked together in [Open Discussions](../handover.md#open-discussions), including general value bindings, ACP permission policy, collaborator substitution and tracer contracts. They remain pending rather than promised configuration features.
+
 ## Delivery
 
 Only [M1](m1-plan.md) has a concrete delivery/acceptance record. Define later milestone plans when there is a real scenario and agreed scope; this document does not invent an M2/M3 schedule or turn the directions above into implementation obligations.

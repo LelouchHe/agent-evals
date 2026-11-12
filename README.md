@@ -34,14 +34,18 @@ Then use that command as `agent-evals run case.yml --case name` or `agent-evals 
 
 ## Credentials
 
-Keep credentials out of YAML. On `run`, the only default source is `.env` in the invocation working directory; for `npm run eval`, normal npm working-directory semantics apply. There is no upward, case-directory, package-directory, HOME, personal Pi-auth or ambient API-key fallback. Start from [`.env.example`](.env.example).
+Keep credential values out of YAML; declare only their names. On `run`, the only default source is `.env` in the invocation working directory; for `npm run eval`, normal npm working-directory semantics apply. There is no upward, case-directory, package-directory, HOME, personal Pi-auth or ambient API-key fallback. Start from [`.env.example`](.env.example).
 
-| Pi provider selector       | Required entry     |
-| -------------------------- | ------------------ |
-| `opencode-go` / `opencode` | `OPENCODE_API_KEY` |
-| `deepseek`                 | `DEEPSEEK_API_KEY` |
+Each Pi runner or judge record explicitly lists the names it needs:
 
-Only listed providers receive automatic credential injection in this revision; other selectors receive none. Missing required entries fail before the model starts. This is not universal provider/authentication support.
+```yaml
+runner:
+  $type: pi
+  model: opencode-go/deepseek-v4.1-flash
+  credentials: [OPENCODE_API_KEY]
+```
+
+Each name is read from `.env` and injected under the same environment-variable name. The list defaults to empty: no key is inferred from a provider/model, and missing declared entries fail before model start. Choose names recognized by the harness. There is no provider/key mapping, aliasing or arbitrary parameter binding; future binding questions are tracked in [Open Discussions](handover.md#open-discussions). Runtime-control names cannot be overridden; see [Pi parameters](docs/configuration.md#pi-runner-type-pi).
 
 Use a plain value, or a parsed value starting with `!` to fetch an existing secret:
 
@@ -51,7 +55,7 @@ OPENCODE_API_KEY=replace-with-your-local-key
 # OPENCODE_API_KEY="!security find-generic-password -w -s opencode-api-key"
 ```
 
-The file is parsed in memory with Node's dotenv parser, not sourced as shell code. Only requested entries are resolved; an unused command does not run. Each requested key is cached once per run and shared by runner/judge as needed. Only that provider's credential reaches its isolated process, not all `.env` values or the operator environment. `envPassthrough` is not a Case parameter.
+The file is parsed in memory with Node's dotenv parser, not sourced as shell code. Only requested entries are resolved; an unused command does not run. Each requested key is cached once per run and shared by runner/judge as needed. Only each instance's declared credentials reach its isolated process, not all `.env` values or the operator environment. `envPassthrough` is not a Case parameter.
 
 Lookup commands execute as trusted host operator code from the invocation directory, with the operator environment. Node `execFile` limits the direct shell/command to five seconds and 64 KiB of output; timeout or abort terminates that direct process with SIGKILL. Use synchronous lookup commands that manage their own descendants: background jobs and daemons are operator-owned and are not tracked or promised cleaned by this toolkit. This does not change the separate Pi agent-process cleanup.
 
@@ -82,6 +86,8 @@ The pinned development toolchain's `minimatch@10.2.6` has [GHSA-g3hv-75wg-m249](
 | [Writing Cases](docs/cases.md)                   | How should tasks, fixtures and assertions be designed?                                |
 | [Roadmap](docs/roadmap.md)                       | What is the target shape, and which capabilities are planned rather than implemented? |
 | [M1 Delivery](docs/m1-plan.md)                   | What shipped, what was verified, and which limits remain?                             |
+
+Active work and unresolved decisions are tracked in [Handover](handover.md); confirmed target capabilities stay in Roadmap.
 
 Module tests live beside source; cross-module/hook/package tests live under `tests/`. Runtime code is under `src/engine`, `src/runners`, `src/checkers`, and `src/platform`; see the [source map](docs/architecture.md#source-map). Known runtime limitations belong in [M1](docs/m1-plan.md#known-limitations), not a second list here.
 

@@ -22,6 +22,7 @@ timeoutMs: 120000
 runner:
   $type: pi
   model: opencode-go/deepseek-v4.1-flash
+  credentials: [OPENCODE_API_KEY]
 checks:
   - $type: file
     path: hello.txt
@@ -37,11 +38,13 @@ cases:
     runner:
       $type: pi
       model: opencode-go/deepseek-v4.1-flash
+      credentials: [OPENCODE_API_KEY]
       skills: [skill]
   without-skill:
     runner:
       $type: pi
       model: opencode-go/deepseek-v4.1-flash
+      credentials: [OPENCODE_API_KEY]
       skills: []
 ```
 
@@ -74,12 +77,15 @@ On `run`, the engine validates each record once, reports schema errors with fiel
 
 ### Pi Runner (`$type: pi`)
 
-| Parameter    | Contract                                                                                          |
-| ------------ | ------------------------------------------------------------------------------------------------- |
-| `model`      | Required non-empty Pi model selector, normally `provider/model`.                                  |
-| `thinking`   | `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, or `max`; default `medium`.                   |
-| `skills`     | Explicit config-relative skill files/directories; default empty. Automatic discovery is disabled. |
-| `executable` | Pi executable name/path; default `pi`.                                                            |
+| Parameter     | Contract                                                                                                                              |
+| ------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| `model`       | Required non-empty Pi model selector, normally `provider/model`.                                                                      |
+| `thinking`    | `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, or `max`; default `medium`.                                                       |
+| `skills`      | Explicit config-relative skill files/directories; default empty. Automatic discovery is disabled.                                     |
+| `credentials` | `.env` names to inject under the same environment-variable names; default `[]`. No provider inference or arbitrary parameter binding. |
+| `executable`  | Pi executable name/path; default `pi`.                                                                                                |
+
+Credential names must be valid environment-variable names. Runtime-controlled names `HOME`, `PATH`, `TMPDIR`, `TMP`, `TEMP`, `LANG` and prefixes `NODE_`, `PI_`, `AGENT_EVALS_`, `DYLD_`, `LD_` are reserved. These bindings cannot replace isolation settings. Missing declared names fail during preparation; omission performs no credential lookup. The file/value/command rules belong in [Credentials](../README.md#credentials).
 
 The runner exposes read/write/edit/bash tools for one initial message with autonomous tool turns. Operator skills, extensions, MCP servers, sessions, context files, prompt templates and themes are not automatically inherited. A final native assistant error is an execution error, even if files already satisfy checks; a recovered intermediate retry is not necessarily a failure.
 
@@ -96,11 +102,11 @@ At least one assertion is required; each produces its own result. Regex work run
 
 ### Judge Checker (`$type: judge`)
 
-| Parameter                         | Contract                                                  |
-| --------------------------------- | --------------------------------------------------------- |
-| `model`, `thinking`, `executable` | Same meanings as for Pi; judge invocation is independent. |
-| `file`                            | Required workspace-relative evidence file.                |
-| `rubric`                          | Required non-empty list of non-empty statements.          |
+| Parameter                                        | Contract                                                  |
+| ------------------------------------------------ | --------------------------------------------------------- |
+| `model`, `thinking`, `executable`, `credentials` | Same meanings as for Pi; judge invocation is independent. |
+| `file`                                           | Required workspace-relative evidence file.                |
+| `rubric`                                         | Required non-empty list of non-empty statements.          |
 
 The judge receives the task, selected regular-file evidence (or an explicit missing-file signal), and rubric. Its separate Pi invocation has no tools and no access to the evaluated workspace. Verdict JSON must have exactly one criterion per rubric item, each with boolean `pass` and non-empty `reason`. Extra fields/criterion labels are ignored. Valid negative judgments are `fail`; malformed, absent or wrong-count verdicts are checker errors.
 

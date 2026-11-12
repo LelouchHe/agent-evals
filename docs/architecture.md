@@ -66,7 +66,7 @@ Built-ins and trusted extensions follow the same path. A runner module exports `
 
 ## One Run, in Order
 
-1. **Resolve and prepare.** Load one case and preserve its declared configuration. Select definitions, validate schemas, create instances and validate the fixture before allocating the evaluated runtime. A shared, lazy credential source serves factories; the Pi implementation chooses which provider key to request. Its source and command rules are in [Credentials](../README.md#credentials).
+1. **Resolve and prepare.** Load one case and preserve its declared configuration. Select definitions, validate schemas, create instances and validate the fixture before allocating the evaluated runtime. A shared, lazy credential source serves factories; the Pi runner/judge requests only its declared credential names, without provider-to-key inference. Its source and command rules are in [Credentials](../README.md#credentials).
 2. **Create independent state.** Make an atomic, neutrally named temporary root. Copy the fixture into `workspace` or start empty. Capture an initial `baseline`, and prepare separate `home`, `config`, and `scratch` directories. Source fixtures are not modified.
 3. **Execute.** The runner receives the task, directories, deadline and cancellation signal. Pi-specific preparation stages explicitly selected skills and launches the isolated session under Seatbelt. The agent may make autonomous tool calls after the single initial message.
 4. **Stop before observing.** Await runner teardown before checks. A timeout, cancellation or execution failure is not an ordinary failed assertion. The supported process-cleanup boundary is documented in [M1 limits](m1-plan.md#known-limitations).
