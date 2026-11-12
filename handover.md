@@ -1,12 +1,12 @@
 # Handover
 
-Updated: 2026-11-12T06:32Z.
+Updated: 2026-11-12T06:39Z.
 
 ## Progress
 
-The runtime, single-file authoring, typed factories, private CLI package and repeatable verification commands are delivered through `fdd647a`; [M1](docs/m1-plan.md) owns completed delivery evidence and limitations.
+Explicit credential declarations are complete at `a5bf3ed`; the parent-reviewed combined checkpoint `b862f79` passed clean-checkout gates and the installed-package test. Pi runner/judge records use `credentials: [NAME]` from the invocation `.env`, with the same source/target environment-variable name and no provider mapping. Arbitrary parameter binding is not implemented.
 
-Explicit credential declarations are implemented at `a5bf3ed`: Pi runner/judge records use `credentials: [NAME]`, read only the invocation `.env`, and inject under the same environment-variable names. The provider-to-key mapping is removed; arbitrary parameter binding is not implemented. The source task has handed off; the parent owns final documentation and combined verification.
+No implementation task is active. [M1](docs/m1-plan.md) owns delivery evidence and limits; [Configuration Reference](docs/configuration.md) owns current syntax and parameters.
 
 ## Open Discussions
 
@@ -23,9 +23,9 @@ Confirmed target capabilities remain in [Roadmap](docs/roadmap.md); this record 
 
 ## Next Steps
 
-1. Finish the parent's combined clean-checkout gate and `test:package` verification, then close the current documentation record.
-2. Keep future binding proposals pending until there is a separate decision and concrete need. No live-model rerun or push is approved by this record.
+1. Select further implementation only after a separate user decision; the questions below do not preapprove work.
+2. Keep the current credential-name list until general binding has a concrete need and agreed contract. No live-model rerun or push is approved by this record.
 
 ## Blockers and Documentation Gaps
 
-General parameter binding is deliberately deferred, not a blocker for explicit same-name credential injection. Current references now describe the list-based implementation; no schema/source syntax from the pending discussions is implemented.
+No known blocker or current-reference gap remains for the credential-name list. General parameter binding is deliberately deferred; no syntax from the pending discussions is implemented.
