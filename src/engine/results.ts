@@ -15,7 +15,7 @@ export interface RunnerRecord {
 }
 
 export interface EvaluationRecord {
-  readonly schemaVersion: 2;
+  readonly schemaVersion: 1;
   readonly runId: string;
   readonly startedAt: string;
   readonly finishedAt: string;

@@ -223,7 +223,7 @@ export async function runEvaluation(request: RunRequest): Promise<EvaluationReco
   }
 
   const record: EvaluationRecord = {
-    schemaVersion: 2,
+    schemaVersion: 1,
     runId,
     startedAt,
     finishedAt: new Date().toISOString(),
