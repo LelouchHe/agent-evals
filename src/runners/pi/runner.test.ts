@@ -100,7 +100,7 @@ test("pi runner passes explicit model, tools, and isolated environment", async (
   assert.doesNotMatch(recorded.env.PATH ?? "", /\/Users\/lelouch\/mine/);
 });
 
-test("pi runner injects only the resolved provider credential into its isolated environment", async (t) => {
+test("pi runner injects only declared credentials into its isolated environment", async (t) => {
   const dirs = await setup(t);
   const fake = await createFakePi(t, "env");
   await writeFile(
@@ -147,6 +147,29 @@ test("pi runner injects only the resolved provider credential into its isolated 
   assert.doesNotMatch(env.path, /dotenv/);
 });
 
+test("explicit credential names may intentionally override isolated environment values", async (t) => {
+  const dirs = await setup(t);
+  const fake = await createFakePi(t, "env");
+  await writeFile(
+    join(dirs.root, ".env"),
+    ["HOME=/synthetic/home", "PATH=/synthetic/path", "HOST_SECRET=dotenv-secret"].join("\n") + "\n",
+  );
+
+  await runPrepared(
+    { model: "test/model", executable: fake.executable, skills: [], credentials: ["HOME"] },
+    dirs,
+    10_000,
+  );
+  const env = JSON.parse(await readFile(join(dirs.workspaceDir, "env.json"), "utf8")) as {
+    home: string;
+    path: string;
+    host: string | null;
+  };
+  assert.equal(env.home, "/synthetic/home");
+  assert.notEqual(env.path, "/synthetic/path");
+  assert.equal(env.host, null);
+});
+
 test("pi runner stages declared skills inside isolated config", async (t) => {
   const dirs = await setup(t);
   const fake = await createFakePi(t, "success");
@@ -175,12 +198,10 @@ test("pi runner rejects invalid parameters and missing prerequisites before laun
     () => parsePi({ model: "test/model", executable: fake.executable, envPassthrough: ["OPENCODE_API_KEY"] }),
     ConfigError,
   );
-  for (const reserved of ["HOME", "PATH", "NODE_OPTIONS", "PI_CODING_AGENT_DIR"]) {
-    await assert.rejects(
-      () => parsePi({ model: "test/model", executable: fake.executable, credentials: [reserved] }),
-      ConfigError,
-    );
-  }
+  await assert.rejects(
+    () => parsePi({ model: "test/model", executable: fake.executable, credentials: ["NOT-A-NAME"] }),
+    ConfigError,
+  );
   await assert.rejects(async () => {
     const params = await parsePi({ model: "test/model", executable: fake.executable, skills: ["missing"] });
     await piRunner.create(params, implementationContext(dirs.root));
