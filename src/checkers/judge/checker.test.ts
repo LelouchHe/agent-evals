@@ -26,7 +26,6 @@ async function context(root: string, workspace: string, baseline: string): Promi
     workspace: await openRunRoot(workspace),
     baseline: await openRunRoot(baseline),
     runRootDir: root,
-    authoringDir: root,
     input: "Create hello.txt with exactly the content Hello, world!",
     timeoutMs: 5_000,
     signal: AbortSignal.timeout(10_000),
@@ -48,8 +47,8 @@ async function checkRaw(
   contextValue: CheckerContext,
 ): Promise<readonly import("../../engine/registry.ts").CheckResult[]> {
   const paramsValue = await parseImplementationParams(judgeChecker.params, raw, 'checker "judge"');
-  const checker = await judgeChecker.create(paramsValue, contextValue.authoringDir);
-  return checker.check(paramsValue, contextValue);
+  const checker = await judgeChecker.create(paramsValue, process.cwd());
+  return checker.check(contextValue);
 }
 
 test("judge passes when every rubric statement passes", async (t) => {

@@ -12,9 +12,9 @@ import {
   requireChecker,
   requireRunner,
   type CheckResult,
-  type PreparedChecker,
-  type PreparedRunner,
+  type Checker,
   type Registry,
+  type Runner,
   type RunnerOutcome,
 } from "./registry.ts";
 import {
@@ -25,6 +25,7 @@ import {
   type RunStatus,
   type RunnerStatus,
 } from "./results.ts";
+import { parseImplementationParams } from "./params.ts";
 import { openRunRoot, type RunRoot } from "./workspace.ts";
 
 const DEFAULT_TIMEOUT_MS = 300_000;
@@ -66,10 +67,10 @@ export async function runEvaluation(request: RunRequest): Promise<EvaluationReco
   const scratchDir = join(root, "scratch");
   const baselineDir = join(root, "baseline");
 
-  let runner: PreparedRunner | undefined;
+  let runner: Runner | undefined;
   let cleanup: EvaluationRecord["cleanup"] = { status: "removed" };
   let runnerRecord: EvaluationRecord["runner"] = {
-    type: registered.runner.type,
+    type: registered.runnerType,
     status: "error",
     durationMs: 0,
     finalText: null,
@@ -118,17 +119,14 @@ export async function runEvaluation(request: RunRequest): Promise<EvaluationReco
         scratchDir,
         runRootDir: root,
         input: request.case.config.input,
-        authoringDir: request.case.dir,
         timeoutMs,
         signal: abort.signal,
       });
     } catch (caught) {
       if (!abort.signal.aborted) {
         error = errorMessage(caught);
-        diagnostics.push(...diagnosticsOf(caught));
-      } else {
-        diagnostics.push(...diagnosticsOf(caught));
       }
+      diagnostics.push(...diagnosticsOf(caught));
     } finally {
       if (timer !== undefined) {
         clearTimeout(timer);
@@ -153,7 +151,7 @@ export async function runEvaluation(request: RunRequest): Promise<EvaluationReco
             ? "timeout"
             : "error";
     runnerRecord = {
-      type: registered.runner.type,
+      type: registered.runnerType,
       status: runnerStatus,
       durationMs: Math.round(performance.now() - started),
       finalText: outcome === undefined ? null : truncateNullable(outcome.finalText),
@@ -235,22 +233,27 @@ export async function runEvaluation(request: RunRequest): Promise<EvaluationReco
   return record;
 }
 
-function prepareImplementations(request: RunRequest): Promise<{
-  runner: PreparedRunner;
-  checks: PreparedChecker[];
+async function prepareImplementations(request: RunRequest): Promise<{
+  runnerType: string;
+  runner: Runner;
+  checks: readonly { readonly type: string; readonly checker: Checker }[];
 }> {
-  return (async () => {
-    const runnerDefinition = requireRunner(request.registry, request.case.config.runner.$type);
-    const runner = await runnerDefinition.prepare(paramsOf(request.case.config.runner), request.case.dir);
+  const runnerDefinition = requireRunner(request.registry, request.case.config.runner.$type);
+  const runnerParams = await parseImplementationParams(
+    runnerDefinition.params,
+    paramsOf(request.case.config.runner),
+    `runner "${runnerDefinition.type}"`,
+  );
+  const runner = await runnerDefinition.create(runnerParams, request.case.dir);
 
-    const checks: PreparedChecker[] = [];
-    for (const record of request.case.config.checks) {
-      const definition = requireChecker(request.registry, record.$type);
-      checks.push(await definition.prepare(paramsOf(record), request.case.dir));
-    }
+  const checks: { type: string; checker: Checker }[] = [];
+  for (const record of request.case.config.checks) {
+    const definition = requireChecker(request.registry, record.$type);
+    const params = await parseImplementationParams(definition.params, paramsOf(record), `checker "${definition.type}"`);
+    checks.push({ type: definition.type, checker: await definition.create(params, request.case.dir) });
+  }
 
-    return { runner, checks };
-  })();
+  return { runnerType: runnerDefinition.type, runner, checks };
 }
 
 async function validateFixture(loadedCase: ResolvedCase): Promise<void> {
@@ -271,7 +274,7 @@ async function validateFixture(loadedCase: ResolvedCase): Promise<void> {
 }
 
 async function runChecks(
-  prepared: readonly PreparedChecker[],
+  prepared: readonly { readonly type: string; readonly checker: Checker }[],
   request: RunRequest,
   root: string,
   workspaceRoot: RunRoot,
@@ -300,11 +303,10 @@ async function runChecks(
       timedOutCheck = true;
       controller.abort();
     }, timeoutMs);
-    const promise = check.check({
+    const promise = check.checker.check({
       workspace: workspaceRoot,
       baseline: baselineRoot,
       runRootDir: root,
-      authoringDir: request.case.dir,
       input: request.case.config.input,
       timeoutMs,
       signal: combined,

@@ -52,7 +52,6 @@ const fileCheckParamsSchema = z
       ...(params.exists === undefined ? {} : { exists: params.exists }),
       ...(params.unchanged === undefined ? {} : { unchanged: params.unchanged }),
       patterns,
-      matches: patterns.map((pattern) => new RegExp(pattern)),
     };
   });
 
@@ -62,13 +61,20 @@ type FileCheckParams = z.output<typeof fileCheckParamsSchema>;
 export const fileChecker: CheckerDefinition<FileCheckParams> = {
   type: "file",
   params: fileCheckParamsSchema,
-  create() {
-    return new FileChecker();
+  create(params) {
+    return new FileChecker(params);
   },
 };
 
-class FileChecker implements Checker<FileCheckParams> {
-  readonly check = async (parsed: FileCheckParams, context: CheckerContext): Promise<readonly CheckResult[]> => {
+class FileChecker implements Checker {
+  readonly #params: FileCheckParams;
+
+  constructor(params: FileCheckParams) {
+    this.#params = params;
+  }
+
+  readonly check = async (context: CheckerContext): Promise<readonly CheckResult[]> => {
+    const parsed = this.#params;
     const results: CheckResult[] = [];
 
     if (parsed.exists !== undefined) {

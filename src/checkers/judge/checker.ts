@@ -47,12 +47,19 @@ export const judgeChecker: CheckerDefinition<JudgeParams> = {
     await resolvePiExecutable(params.executable);
     assertEnvPassthroughAvailable(params.envPassthrough);
     assertSeatbeltAvailable();
-    return new JudgeChecker();
+    return new JudgeChecker(params);
   },
 };
 
-class JudgeChecker implements Checker<JudgeParams> {
-  readonly check = async (parsed: JudgeParams, context: CheckerContext): Promise<readonly CheckResult[]> => {
+class JudgeChecker implements Checker {
+  readonly #params: JudgeParams;
+
+  constructor(params: JudgeParams) {
+    this.#params = params;
+  }
+
+  readonly check = async (context: CheckerContext): Promise<readonly CheckResult[]> => {
+    const parsed = this.#params;
     let fileContent: string | null;
     try {
       fileContent = (await readRunFile(context.workspace, parsed.file)).toString("utf8");

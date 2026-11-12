@@ -9,6 +9,7 @@ import {
   addChecker,
   addRunner,
   createRegistry,
+  loadTrustedImplementations,
   type CheckerContext,
   type CheckerDefinition,
   type RunnerContext,
@@ -43,12 +44,12 @@ test("engine preparation passes each parsed implementation shape to its bound in
   const runnerDefinition: RunnerDefinition<RunnerParsed> = {
     type: "record-runner",
     params: runnerSchema,
-    create: () => {
+    create: (params) => {
       runnerCreateCalls += 1;
+      runnerReceived = params;
       return {
-        run: async (params, context) => {
+        run: async (context) => {
           runnerRunCalls += 1;
-          runnerReceived = params;
           runnerContext = context;
           await writeFile(join(context.workspaceDir, "runner.txt"), params.label);
           return { finalText: params.label, diagnostics: [] };
@@ -70,12 +71,12 @@ test("engine preparation passes each parsed implementation shape to its bound in
   const checkerDefinition: CheckerDefinition<CheckerParsed> = {
     type: "record-checker",
     params: checkerSchema,
-    create: () => {
+    create: (params) => {
       checkerCreateCalls += 1;
+      checkerReceived = params;
       return {
-        check: async (params, context) => {
+        check: async (context) => {
           checkerCheckCalls += 1;
-          checkerReceived = params;
           checkerContext = context;
           return [{ checker: "record-checker", subject: params.label, status: "pass", reason: "opaque" }];
         },
@@ -125,5 +126,105 @@ test("engine preparation passes each parsed implementation shape to its bound in
   assert.deepEqual(record.resolvedConfig.checks[0], { $type: "record-checker", marker: "declared-check" });
   assert.equal(record.checks[0]?.status, "pass");
   assert.equal(record.checks[0]?.subject, "checker:declared-check");
+  assert.deepEqual(await readdir(tempParent), []);
+});
+
+test("a discovered extension preserves schema, factory, and instance receivers", async (t) => {
+  const zodUrl = import.meta.resolve("zod");
+  const runnerDir = await makeTempDir(t, "ae-typed-external-runner-");
+  const checkerDir = await makeTempDir(t, "ae-typed-external-checker-");
+  await writeFile(
+    join(runnerDir, "runner.mjs"),
+    `import { z } from ${JSON.stringify(zodUrl)};
+const base = z.strictObject({ text: z.string() }).transform((params) => ({ text: params.text }));
+const paramsSchema = new Proxy(base, {
+  get(target, property, receiver) {
+    if (property === "safeParseAsync") {
+      return async function (input) {
+        if (this !== paramsSchema) throw new Error("schema receiver lost");
+        return base.safeParseAsync(input);
+      };
+    }
+    return Reflect.get(target, property, receiver);
+  },
+});
+export const runner = {
+  type: "receiver-runner",
+  params: paramsSchema,
+  async create(params) {
+    if (this !== runner) throw new Error("create receiver lost");
+    return {
+      marker: "runner-instance",
+      async run() {
+        if (this?.marker !== "runner-instance") throw new Error("run receiver lost");
+        return { finalText: \`external:\${params.text}\`, diagnostics: [] };
+      },
+      async stop() {
+        if (this?.marker !== "runner-instance") throw new Error("stop receiver lost");
+      },
+    };
+  },
+};
+`,
+  );
+  await writeFile(
+    join(checkerDir, "checker.mjs"),
+    `import { z } from ${JSON.stringify(zodUrl)};
+const base = z.strictObject({ text: z.string() }).transform((params) => ({ text: params.text }));
+const paramsSchema = new Proxy(base, {
+  get(target, property, receiver) {
+    if (property === "safeParseAsync") {
+      return async function (input) {
+        if (this !== paramsSchema) throw new Error("checker schema receiver lost");
+        return base.safeParseAsync(input);
+      };
+    }
+    return Reflect.get(target, property, receiver);
+  },
+});
+export const checker = {
+  type: "receiver-checker",
+  params: paramsSchema,
+  async create(params) {
+    if (this !== checker) throw new Error("checker create receiver lost");
+    return {
+      marker: "checker-instance",
+      async check() {
+        if (this?.marker !== "checker-instance") throw new Error("check receiver lost");
+        return [{ checker: "receiver-checker", subject: \`external:\${params.text}\`, status: "pass", reason: "ok" }];
+      },
+    };
+  },
+};
+`,
+  );
+
+  const registry = createRegistry();
+  await loadTrustedImplementations(registry, { runnerDirs: [runnerDir], checkerDirs: [checkerDir] });
+  const directory = await makeTempDir(t, "ae-typed-external-case-");
+  const casePath = join(directory, "case.yml");
+  await writeFile(
+    casePath,
+    stringify({
+      input: "task",
+      checks: [{ $type: "receiver-checker", text: "declared-check" }],
+      runner: { $type: "receiver-runner", text: "declared-runner" },
+    }),
+  );
+  const resultsDir = await makeTempDir(t, "ae-typed-external-results-");
+  const tempParent = await makeTempDir(t, "ae-typed-external-tmp-");
+
+  const record = await runEvaluation({
+    case: await loadCase(casePath),
+    registry,
+    resultsDir,
+    tempParent,
+  });
+
+  assert.equal(record.status, "pass", record.error);
+  assert.equal(record.runner.finalText, "external:declared-runner");
+  assert.equal(record.checks[0]?.subject, "external:declared-check");
+  assert.deepEqual(record.resolvedConfig.runner, { $type: "receiver-runner", text: "declared-runner" });
+  assert.equal(record.cleanup.status, "removed");
   assert.deepEqual(await readdir(tempParent), []);
 });

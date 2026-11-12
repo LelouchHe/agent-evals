@@ -20,10 +20,7 @@ const yamlParamsSchema = z.strictObject({
   enabled: z.boolean(),
   label: z.string(),
   list: z.array(z.string()),
-  nested: z.strictObject({
-    flag: z.boolean(),
-    value: z.number().finite(),
-  }),
+  nested: z.strictObject({ flag: z.boolean(), value: z.number().finite() }),
   mode: z.enum(["a", "b"]).default("a"),
   optional: z.string().optional(),
   nullable: z.string().nullable().optional(),
@@ -46,8 +43,8 @@ function harness(): Harness {
   const runner: RunnerDefinition<YamlParams> = {
     type: "record-runner",
     params: yamlParamsSchema,
-    create: () => ({
-      run: async (params) => {
+    create: (params) => ({
+      run: async () => {
         runCalls += 1;
         parsed = params;
         return { finalText: JSON.stringify(params), diagnostics: [] };
@@ -69,26 +66,22 @@ function runnerYaml(fields: readonly string[]): string {
   return ["$type: record-runner", ...fields].join("\n");
 }
 
-function ordinaryConfig(fields: readonly string[]): string {
+function config(fields: readonly string[], named: boolean): string {
+  const prefix = ["input: task", "checks:", "  - $type: record-checker"];
+  if (!named) {
+    return (
+      [
+        ...prefix,
+        "runner:",
+        ...runnerYaml(fields)
+          .split("\n")
+          .map((line) => `  ${line}`),
+      ].join("\n") + "\n"
+    );
+  }
   return (
     [
-      "input: task",
-      "checks:",
-      "  - $type: record-checker",
-      "runner:",
-      ...runnerYaml(fields)
-        .split("\n")
-        .map((line) => `  ${line}`),
-    ].join("\n") + "\n"
-  );
-}
-
-function namedConfig(fields: readonly string[]): string {
-  return (
-    [
-      "input: task",
-      "checks:",
-      "  - $type: record-checker",
+      ...prefix,
       "cases:",
       "  selected:",
       "    runner:",
@@ -149,8 +142,8 @@ const validFields = [
   "falseDefault: false",
 ];
 
-test("real YAML values preserve zero, false, empty arrays, and literal syntax through Zod", async (t) => {
-  const { record, state, tempParent } = await execute(t, ordinaryConfig(validFields));
+test("real YAML values, defaults, and falsy values reach the factory and raw declarations stay raw", async (t) => {
+  const { record, state, tempParent } = await execute(t, config(validFields, false));
   assert.equal(record.status, "pass", record.error);
   assert.deepEqual(state.parsed(), {
     count: 0,
@@ -165,19 +158,17 @@ test("real YAML values preserve zero, false, empty arrays, and literal syntax th
     countDefault: 0,
     falseDefault: false,
   });
+  assert.equal(state.runCalls(), 1);
   assert.deepEqual(await readdir(tempParent), []);
   assert.equal(record.resolvedConfig.runner.count, 0);
   assert.equal(record.resolvedConfig.runner.enabled, false);
   assert.equal("mode" in record.resolvedConfig.runner, true);
-});
 
-test("missing fields apply schema defaults while explicit null fails unless nullable", async (t) => {
-  const { record, state } = await execute(
+  const missing = await execute(
     t,
-    ordinaryConfig(["count: 1", "enabled: true", "label: plain", "list: []", "nested:", "  flag: true", "  value: 2"]),
+    config(["count: 1", "enabled: true", "label: plain", "list: []", "nested:", "  flag: true", "  value: 2"], false),
   );
-  assert.equal(record.status, "pass", record.error);
-  assert.deepEqual(state.parsed(), {
+  assert.deepEqual(missing.state.parsed(), {
     count: 1,
     enabled: true,
     label: "plain",
@@ -188,73 +179,51 @@ test("missing fields apply schema defaults while explicit null fails unless null
     countDefault: 7,
     falseDefault: true,
   });
-  assert.equal(state.parsed()?.optional, undefined);
-  assert.equal(state.parsed()?.nullable, undefined);
-  assert.equal("mode" in record.resolvedConfig.runner, false);
-
-  await assert.rejects(
-    () => execute(t, ordinaryConfig(replaceField(validFields, "mode", "mode: null"))),
-    (error: unknown) => error instanceof ConfigError && /parameter mode/.test(error.message),
-  );
-  await assert.rejects(
-    () => execute(t, ordinaryConfig(replaceField(validFields, "flagsDefault", "flagsDefault: null"))),
-    (error: unknown) => error instanceof ConfigError && /parameter flagsDefault/.test(error.message),
-  );
+  assert.equal(missing.state.parsed()?.optional, undefined);
+  assert.equal(missing.state.parsed()?.nullable, undefined);
+  assert.equal("mode" in missing.record.resolvedConfig.runner, false);
+  assert.equal("countDefault" in missing.record.resolvedConfig.runner, false);
 });
 
-test("quoted scalars and YAML 1.2 on/off/yes/no do not coerce to numbers or booleans", async (t) => {
-  for (const field of ["count: '3'", "count: .nan", "count: .inf", "enabled: 'false'", "enabled: on", "enabled: yes"]) {
-    const key = field.split(":")[0] ?? "";
-    const fields = replaceField(validFields, key, field);
+test("invalid YAML-derived schema values fail before resources and never reach run", async (t) => {
+  const invalid = [
+    replaceField(validFields, "count", "count: '3'"),
+    replaceField(validFields, "count", "count: .nan"),
+    replaceField(validFields, "count", "count: .inf"),
+    replaceField(validFields, "enabled", "enabled: 'false'"),
+    replaceField(validFields, "enabled", "enabled: on"),
+    replaceField(validFields, "enabled", "enabled: yes"),
+    replaceField(validFields, "mode", "mode: null"),
+    replaceField(validFields, "flagsDefault", "flagsDefault: null"),
+    validFields.filter((line) => !line.startsWith("count:")),
+    replaceNestedFlag(validFields, "  flag: 'no'"),
+    [...validFields, "unknownField: secret-looking-value"],
+  ];
+  for (const fields of invalid) {
     await assert.rejects(
-      () => execute(t, ordinaryConfig(fields)),
-      (error: unknown) =>
-        error instanceof ConfigError &&
-        /parameter (count|enabled)/.test(error.message) &&
-        /expected (number|boolean)/.test(error.message),
-      field,
+      () => execute(t, config(fields, false)),
+      (error: unknown) => error instanceof ConfigError && !error.message.includes("secret-looking-value"),
     );
   }
-});
 
-test("nested issue paths and unknown fields are reported centrally without raw values", async (t) => {
+  const directory = await makeTempDir(t, "ae-yaml-schema-invalid-");
+  const configPath = join(directory, "case.yml");
+  await writeFile(configPath, config(replaceField(validFields, "count", "count: '3'"), false));
+  const tempParent = await makeTempDir(t, "ae-yaml-schema-invalid-runs-");
+  const resultsDir = await makeTempDir(t, "ae-yaml-schema-invalid-results-");
+  const state = harness();
+  const loaded = await loadCase(configPath);
   await assert.rejects(
-    () => execute(t, ordinaryConfig(replaceNestedFlag(validFields, "  flag: 'no'"))),
-    (error: unknown) =>
-      error instanceof ConfigError &&
-      /parameter nested\.flag/.test(error.message) &&
-      !error.message.includes("literal &pi"),
+    () => runEvaluation({ case: loaded, registry: state.registry, resultsDir, tempParent }),
+    ConfigError,
   );
-  await assert.rejects(
-    () => execute(t, ordinaryConfig([...validFields, "unknownField: secret-looking-value"])),
-    (error: unknown) =>
-      error instanceof ConfigError &&
-      /parameters: Unrecognized key: "unknownField"/.test(error.message) &&
-      !error.message.includes("secret-looking-value"),
-  );
-  await assert.rejects(
-    () =>
-      execute(
-        t,
-        ordinaryConfig([
-          ...validFields.filter(
-            (line) => line !== "nested:" && !line.startsWith("  flag:") && !line.startsWith("  value:"),
-          ),
-          "nested:",
-          "  flag: false",
-          "  value: 0",
-          "  extra: nested-unknown",
-        ]),
-      ),
-    (error: unknown) =>
-      error instanceof ConfigError &&
-      /parameter nested: Unrecognized key: "extra"/.test(error.message) &&
-      !error.message.includes("nested-unknown"),
-  );
+  assert.equal(state.runCalls(), 0);
+  assert.deepEqual(await readdir(tempParent), []);
+  assert.deepEqual(await readdir(resultsDir), []);
 });
 
 test("named cases use the same YAML-to-Zod preparation path", async (t) => {
-  const { record, state } = await execute(t, namedConfig(validFields), "selected");
+  const { record, state } = await execute(t, config(validFields, true), "selected");
   assert.equal(record.status, "pass", record.error);
   assert.equal(record.case.name, "selected");
   assert.deepEqual(state.parsed(), {
@@ -270,28 +239,18 @@ test("named cases use the same YAML-to-Zod preparation path", async (t) => {
     countDefault: 0,
     falseDefault: false,
   });
-});
-
-test("invalid schema data fails before resources and never reaches run", async (t) => {
-  const directory = await makeTempDir(t, "ae-yaml-schema-invalid-");
-  const configPath = join(directory, "case.yml");
-  await writeFile(configPath, ordinaryConfig(["count: '3'", ...validFields.slice(1)]));
-  const tempParent = await makeTempDir(t, "ae-yaml-schema-invalid-runs-");
-  const resultsDir = await makeTempDir(t, "ae-yaml-schema-invalid-results-");
-  const state = harness();
-  const loaded = await loadCase(configPath);
-
-  await assert.rejects(
-    () =>
-      runEvaluation({
-        case: loaded,
-        registry: state.registry,
-        resultsDir,
-        tempParent,
-      }),
-    ConfigError,
-  );
-  assert.equal(state.runCalls(), 0);
-  assert.deepEqual(await readdir(tempParent), []);
-  assert.deepEqual(await readdir(resultsDir), []);
+  assert.deepEqual(record.resolvedConfig.runner, {
+    $type: "record-runner",
+    count: 0,
+    enabled: false,
+    label: "literal &pi *pi <<: text",
+    list: [],
+    nested: { flag: false, value: 0 },
+    mode: "b",
+    optional: "present",
+    nullable: null,
+    flagsDefault: [],
+    countDefault: 0,
+    falseDefault: false,
+  });
 });

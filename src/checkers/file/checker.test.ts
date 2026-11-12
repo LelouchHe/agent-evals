@@ -23,7 +23,6 @@ async function context(root: string, workspace: string, baseline: string): Promi
     workspace: await openRunRoot(workspace),
     baseline: await openRunRoot(baseline),
     runRootDir: root,
-    authoringDir: root,
     input: "task",
     timeoutMs: 5_000,
     signal: AbortSignal.timeout(5_000),
@@ -35,8 +34,8 @@ async function checkRaw(
   contextValue: CheckerContext,
 ): Promise<readonly import("../../engine/registry.ts").CheckResult[]> {
   const params = await parseImplementationParams(fileChecker.params, raw, 'checker "file"');
-  const checker = await fileChecker.create(params, contextValue.authoringDir);
-  return checker.check(params, contextValue);
+  const checker = await fileChecker.create(params, process.cwd());
+  return checker.check(contextValue);
 }
 
 test("file checker passes existence and regex-search conditions", async (t) => {
@@ -147,13 +146,8 @@ test("file checker rejects invalid configuration", async () => {
 
   const scalar = await parse({ path: "a", matches: "x" });
   assert.deepEqual(scalar.patterns, ["x"]);
-  assert.equal(scalar.matches[0]?.source, "x");
   const list = await parse({ path: "a", matches: ["x", "y"] });
   assert.deepEqual(list.patterns, ["x", "y"]);
-  assert.deepEqual(
-    list.matches.map((pattern) => pattern.source),
-    ["x", "y"],
-  );
 });
 
 test("file checker reports symlink escapes as check errors", async (t) => {

@@ -31,7 +31,6 @@ function context(
     scratchDir: dirs.scratchDir,
     runRootDir: dirs.root,
     input: "Create hello.txt with the content Hello, world!",
-    authoringDir: dirs.root,
     timeoutMs,
     signal,
   };
@@ -49,7 +48,7 @@ async function runPrepared(
   const params = await parsePi(raw);
   const runner = await piRunner.create(params, dirs.root);
   try {
-    return await runner.run(params, context(dirs, timeoutMs));
+    return await runner.run(context(dirs, timeoutMs));
   } finally {
     await runner.stop();
   }

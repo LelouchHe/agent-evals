@@ -31,15 +31,23 @@ export const piRunner: RunnerDefinition<PiRunnerParams> = {
     await assertSkillsAvailable(params.skills, authoringDir);
     assertEnvPassthroughAvailable(params.envPassthrough);
     assertSeatbeltAvailable();
-    return new PiRunner();
+    return new PiRunner(params, authoringDir);
   },
 };
 
-class PiRunner implements Runner<PiRunnerParams> {
+class PiRunner implements Runner {
+  readonly #params: PiRunnerParams;
+  readonly #authoringDir: string;
   #stop: (() => Promise<void>) | undefined;
 
-  readonly run = async (params: PiRunnerParams, context: RunnerContext): Promise<RunnerOutcome> => {
-    const skills = await stageSkills(params.skills, context.authoringDir, join(context.configDir, "skills"));
+  constructor(params: PiRunnerParams, authoringDir: string) {
+    this.#params = params;
+    this.#authoringDir = authoringDir;
+  }
+
+  readonly run = async (context: RunnerContext): Promise<RunnerOutcome> => {
+    const params = this.#params;
+    const skills = await stageSkills(params.skills, this.#authoringDir, join(context.configDir, "skills"));
     const result = await invokePi(
       {
         executable: params.executable,
