@@ -51,7 +51,14 @@ The intended coverage is macOS, Linux and Windows, beginning with macOS and then
 
 ## Open Questions
 
-Unsettled interface decisions are tracked together in [Open Discussions](../handover.md#open-discussions), including general value bindings, ACP permission policy, collaborator substitution and tracer contracts. They remain pending rather than promised configuration features.
+The following product-design questions are **pending**, not implementation requirements or approved syntax. Session progress and agent coordination do not belong in this document.
+
+- **General value sources and bindings.** How should a value's source be declared independently of an extension's parameter names and schema? Distinguish shared `.env` lookup from automatically filling an arbitrary `apiKey`, model or other parameter. Source-to-target aliases, lookup/conversion/validation order and additional sources are undecided. `$ref`, `!env`, `.env:...` and interpolation were discussed but none was selected; the current contract is the simple credential-name list only.
+- **Retaining effective values.** If external references later supply ordinary configuration, how should actual non-sensitive resolved/defaulted values be recorded without retaining secrets? References alone would not identify which value an earlier run used. No second effective-config record or resource snapshot is approved now.
+- **Credential-command unlock UX.** The current direct lookup budget is five seconds. A longer budget for Touch ID/secret-manager authorization was suggested but not measured or approved. Raw command stdout/stderr must remain private.
+- **ACP permissions and capabilities.** Define the permission-answering policy and supported session/capability coverage without assuming every harness exposes identical operations.
+- **Collaborator substitutes.** Settle case ownership versus harness assembly, declaration/injection/lifecycle interfaces, and how to assess fidelity and drift for substituted skills/tools/services.
+- **Observation/tracer contracts.** Define collection timing, snapshots versus streams, selected retention, evidence references and any regrading boundary. Do not infer a generic expression language or full-environment snapshot requirement.
 
 ## Delivery
 

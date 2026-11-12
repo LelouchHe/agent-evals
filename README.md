@@ -45,7 +45,7 @@ runner:
   credentials: [OPENCODE_API_KEY]
 ```
 
-Each name is read from `.env` and injected under the same environment-variable name. The list defaults to empty: no key is inferred from a provider/model, and missing declared entries fail before model start. Choose names recognized by the harness. There is no provider/key mapping, aliasing or arbitrary parameter binding; future binding questions are tracked in [Open Discussions](handover.md#open-discussions). Runtime-control names cannot be overridden; see [Pi parameters](docs/configuration.md#pi-runner-type-pi).
+Each name is read from `.env` and injected under the same environment-variable name. The list defaults to empty: no key is inferred from a provider/model, and missing declared entries fail before model start. Choose names recognized by the harness. There is no provider/key mapping, aliasing or arbitrary parameter binding; future binding questions are tracked in [Open Questions](docs/roadmap.md#open-questions). Runtime-control names cannot be overridden; see [Pi parameters](docs/configuration.md#pi-runner-type-pi).
 
 Use a plain value, or a parsed value starting with `!` to fetch an existing secret:
 
@@ -86,8 +86,6 @@ The pinned development toolchain's `minimatch@10.2.6` has [GHSA-g3hv-75wg-m249](
 | [Writing Cases](docs/cases.md)                   | How should tasks, fixtures and assertions be designed?                                |
 | [Roadmap](docs/roadmap.md)                       | What is the target shape, and which capabilities are planned rather than implemented? |
 | [M1 Delivery](docs/m1-plan.md)                   | What shipped, what was verified, and which limits remain?                             |
-
-Active work and unresolved decisions are tracked in [Handover](handover.md); confirmed target capabilities stay in Roadmap.
 
 Module tests live beside source; cross-module/hook/package tests live under `tests/`. Runtime code is under `src/engine`, `src/runners`, `src/checkers`, and `src/platform`; see the [source map](docs/architecture.md#source-map). Known runtime limitations belong in [M1](docs/m1-plan.md#known-limitations), not a second list here.
 
