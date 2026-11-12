@@ -91,108 +91,160 @@ async function runLookupCommand(
       stdio: ["ignore", "pipe", "ignore"],
       detached: true,
     });
+    const stdoutStream = child.stdout;
+    const stdoutClosed = new Promise<void>((resolveClose) => {
+      if (stdoutStream === null) {
+        resolveClose();
+      } else {
+        stdoutStream.once("close", () => resolveClose());
+      }
+    });
 
     let stdout = "";
     let outputBytes = 0;
     let exitInfo: { readonly code: number | null } | undefined;
-    let settled = false;
-    let stopPromise: Promise<void> | undefined;
+    let finalized = false;
+    let terminalError: Error | undefined;
 
-    const signalGroup = (signal: NodeJS.Signals): void => {
+    const signalGroup = (value: NodeJS.Signals): void => {
       if (child.pid === undefined) {
         return;
       }
       try {
-        process.kill(-child.pid, signal);
+        process.kill(-child.pid, value);
       } catch {
         try {
-          child.kill(signal);
+          child.kill(value);
         } catch {
           // Already gone.
         }
       }
     };
 
-    const waitForExit = (timeoutMs: number): Promise<boolean> => {
-      if (exitInfo !== undefined) {
-        return Promise.resolve(true);
+    const groupAlive = (): boolean => {
+      if (child.pid === undefined) {
+        return false;
       }
-      return new Promise<boolean>((resolveExit) => {
-        const timeout = setTimeout(() => {
-          child.off("exit", onExit);
-          resolveExit(false);
-        }, timeoutMs);
-        function onExit(): void {
-          clearTimeout(timeout);
-          resolveExit(true);
-        }
-        child.once("exit", onExit);
-      });
+      try {
+        process.kill(-child.pid, 0);
+        return true;
+      } catch {
+        return false;
+      }
     };
 
-    const stop = (): Promise<void> => {
-      stopPromise ??= (async () => {
-        if (exitInfo !== undefined) {
-          return;
+    const waitForGroupExit = async (timeoutMs: number): Promise<boolean> => {
+      const deadline = performance.now() + timeoutMs;
+      while (groupAlive()) {
+        if (performance.now() >= deadline) {
+          return false;
         }
-        signalGroup("SIGTERM");
-        if (await waitForExit(COMMAND_STOP_GRACE_MS)) {
-          // The group leader exited; also clear any owned descendants.
-          signalGroup("SIGKILL");
-          return;
-        }
-        signalGroup("SIGKILL");
-        if (await waitForExit(COMMAND_REAP_MS)) {
-          return;
-        }
-        child.unref();
-      })();
-      return stopPromise;
+        await new Promise((resolveDelay) => setTimeout(resolveDelay, 20));
+      }
+      return true;
     };
 
-    const settle = (error: Error | undefined, value?: string): void => {
-      if (settled) {
+    const stopGroup = async (): Promise<boolean> => {
+      if (!groupAlive()) {
+        return true;
+      }
+      signalGroup("SIGTERM");
+      if (await waitForGroupExit(COMMAND_STOP_GRACE_MS)) {
+        return true;
+      }
+      signalGroup("SIGKILL");
+      if (await waitForGroupExit(COMMAND_REAP_MS)) {
+        return true;
+      }
+      child.unref();
+      return false;
+    };
+
+    const waitForStdoutClose = async (timeoutMs: number): Promise<boolean> => {
+      let timer: NodeJS.Timeout | undefined;
+      const closed = await Promise.race([
+        stdoutClosed.then(() => true),
+        new Promise<boolean>((resolveWait) => {
+          timer = setTimeout(() => resolveWait(false), timeoutMs);
+        }),
+      ]);
+      if (timer !== undefined) {
+        clearTimeout(timer);
+      }
+      return closed;
+    };
+
+    const finalize = (exitCode?: number | null): void => {
+      if (finalized) {
         return;
       }
-      settled = true;
+      finalized = true;
       clearTimeout(timer);
       signal?.removeEventListener("abort", onAbort);
-      if (error === undefined) {
-        resolve(value ?? "");
-        return;
-      }
-      void stop().finally(() => reject(error));
+      void (async () => {
+        const groupStopped = await stopGroup();
+        const stdoutDrained = await waitForStdoutClose(COMMAND_REAP_MS);
+        if (!stdoutDrained) {
+          stdoutStream?.destroy();
+        }
+
+        let error = terminalError;
+        if (outputBytes > COMMAND_MAX_OUTPUT_BYTES) {
+          error = new ConfigError(`credential lookup for ${name} exceeded ${COMMAND_MAX_OUTPUT_BYTES} bytes`);
+        } else if (error === undefined && !groupStopped) {
+          error = new ConfigError(`credential lookup for ${name} could not terminate its process group`);
+        } else if (error === undefined && !stdoutDrained) {
+          error = new ConfigError(`credential lookup for ${name} left an open output stream`);
+        }
+
+        if (error !== undefined) {
+          reject(error);
+          return;
+        }
+
+        const code = exitCode ?? exitInfo?.code ?? null;
+        if (code !== 0) {
+          reject(new ConfigError(`credential lookup for ${name} exited with code ${String(code)}`));
+          return;
+        }
+        const value = stdout.trim();
+        if (value.length === 0) {
+          reject(new ConfigError(`credential lookup for ${name} produced no value`));
+          return;
+        }
+        resolve(value);
+      })();
     };
 
     child.once("error", (error) => {
-      settle(new ConfigError(`could not start credential lookup for ${name}: ${errorMessage(error)}`));
+      terminalError = new ConfigError(`could not start credential lookup for ${name}: ${errorMessage(error)}`);
+      finalize();
     });
     child.once("exit", (code) => {
       exitInfo = { code };
-      if (code === 0) {
-        const value = stdout.trim();
-        settle(
-          value.length === 0 ? new ConfigError(`credential lookup for ${name} produced no value`) : undefined,
-          value,
-        );
-      } else {
-        settle(new ConfigError(`credential lookup for ${name} exited with code ${String(code)}`));
-      }
+      finalize(code);
     });
-    child.stdout?.on("data", (chunk: Buffer) => {
+    stdoutStream?.on("data", (chunk: Buffer) => {
       outputBytes += chunk.length;
       if (outputBytes > COMMAND_MAX_OUTPUT_BYTES) {
-        settle(new ConfigError(`credential lookup for ${name} exceeded ${COMMAND_MAX_OUTPUT_BYTES} bytes`));
+        if (terminalError === undefined) {
+          terminalError = new ConfigError(`credential lookup for ${name} exceeded ${COMMAND_MAX_OUTPUT_BYTES} bytes`);
+        }
+        finalize();
         return;
       }
       stdout += chunk.toString("utf8");
     });
 
     const timer = setTimeout(() => {
-      settle(new ConfigError(`credential lookup for ${name} timed out after ${COMMAND_TIMEOUT_MS}ms`));
+      terminalError = new ConfigError(`credential lookup for ${name} timed out after ${COMMAND_TIMEOUT_MS}ms`);
+      finalize();
     }, COMMAND_TIMEOUT_MS);
 
-    const onAbort = () => settle(new ConfigError(`credential lookup for ${name} was cancelled`));
+    const onAbort = () => {
+      terminalError = new ConfigError(`credential lookup for ${name} was cancelled`);
+      finalize();
+    };
     if (signal?.aborted === true) {
       onAbort();
     } else {

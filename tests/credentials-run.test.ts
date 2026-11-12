@@ -1,5 +1,4 @@
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
 import { chmod, readFile, readdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -12,6 +11,7 @@ import { runEvaluation } from "../src/engine/run.ts";
 import { fileChecker } from "../src/checkers/file/checker.ts";
 import { judgeChecker } from "../src/checkers/judge/checker.ts";
 import { piRunner } from "../src/runners/pi/runner.ts";
+import { runCliProcess } from "./helpers/cli-process.ts";
 import { createFakePi, makeTempDir } from "./helpers/fake-pi-control.ts";
 
 async function script(dir: string, name: string, body: string): Promise<void> {
@@ -28,22 +28,16 @@ function registry() {
   return value;
 }
 
-async function runCli(
+function runCli(
+  t: Parameters<typeof makeTempDir>[0],
   args: readonly string[],
   cwd: string,
   tmpdir: string,
 ): Promise<{ readonly code: number | null; readonly stdout: string; readonly stderr: string }> {
-  const child = spawn(process.execPath, [join(import.meta.dirname, "..", "src", "cli.ts"), ...args], {
+  return runCliProcess(t, join(import.meta.dirname, "..", "src", "cli.ts"), args, {
     cwd,
     env: { ...process.env, TMPDIR: tmpdir },
-    stdio: ["ignore", "pipe", "pipe"],
   });
-  let stdout = "";
-  let stderr = "";
-  child.stdout.on("data", (chunk: Buffer) => (stdout += chunk.toString("utf8")));
-  child.stderr.on("data", (chunk: Buffer) => (stderr += chunk.toString("utf8")));
-  const code = await new Promise<number | null>((resolve) => child.on("exit", (value) => resolve(value)));
-  return { code, stdout, stderr };
 }
 
 test("runner and judge share one cached provider credential and ambient keys do not leak", async (t) => {
@@ -217,7 +211,7 @@ test("CLI resolves .env only from the invocation working directory", async (t) =
   const resultsDir = await makeTempDir(t, "ae-credentials-cli-results-");
   const tempParent = await makeTempDir(t, "ae-credentials-cli-tmp-");
 
-  const result = await runCli(["run", configPath, "--results-dir", resultsDir], invocation, tempParent);
+  const result = await runCli(t, ["run", configPath, "--results-dir", resultsDir], invocation, tempParent);
   assert.equal(result.code, 0, result.stderr);
   assert.match(result.stdout, /: pass/);
   assert.equal(await readFile(join(invocation, "count"), "utf8"), "x");
@@ -225,7 +219,7 @@ test("CLI resolves .env only from the invocation working directory", async (t) =
 
   await writeFile(join(caseDir, ".env"), "OPENCODE_API_KEY=case-directory-key\n");
   const elsewhere = await makeTempDir(t, "ae-credentials-cli-elsewhere-");
-  const missing = await runCli(["run", configPath, "--results-dir", resultsDir], elsewhere, tempParent);
+  const missing = await runCli(t, ["run", configPath, "--results-dir", resultsDir], elsewhere, tempParent);
   assert.equal(missing.code, 2);
   assert.match(missing.stderr, /credential OPENCODE_API_KEY is unavailable/);
   assert.deepEqual(await readdir(tempParent), []);
