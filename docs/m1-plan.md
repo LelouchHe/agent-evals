@@ -87,7 +87,7 @@ Status: implemented with declarative Zod schemas and context-only instances. Raw
 - [x] Compile-time fixtures prove schema-output inference, defaults, wrong factory arguments, and schema-output mismatches. Runtime tests prove validate/create once, context-only instance execution, pre-instance failure, raw declaration retention, external receiver semantics, and YAML/Zod compatibility.
 - [x] Direct and trusted-discovery definitions invoke schema methods and `create` with the exported definition/schema as receiver, and instance `run`/`check`/`stop` methods retain their instance receiver.
 - [x] Complete bounded independent parent review and external-artifact verification of the Zod schema-based parameter boundary.
-- [ ] Cumulative independent review of this context-only interface simplification remains pending.
+- [x] Complete bounded independent parent review and installed-artifact verification of the context-only interface simplification.
 
 ## Delivered
 
@@ -150,6 +150,7 @@ Context-only instance simplification `945dac0` passed the complete gate with 114
 - Parent review of schema range `605f7e8..8ed4a2a` confirmed the direct Zod types, schema-output inference, central validation/error translation, strict built-in schemas, separate readiness factory, preserved receivers, and unchanged `view` and declared-result boundaries. No new material introduced defect was established.
 - Independent parent verification of the fixed `8ed4a2a` artifact used an external clean checkout: `npm ci` and `npm run check` passed with 120 tests, no failures or skips, followed by a real tarball and production-only disposable installation. Both `yaml` and `zod` resolved inside that installation. The installed built-in fake-runtime path passed all eight file/worker/judge checks; npm/bin help and view remained identical.
 - A separate installed external runner/checker probe used an independently copied Zod module. Ordinary and named YAML cases both preserved zero, false, and empty arrays; applied defaults only to execution output; validated each definition once; and preserved schema/factory/instance receivers. Quoted-boolean, explicit-null, and unknown-field inputs failed before instance creation or run-resource allocation. Declared `resolvedConfig` stayed unchanged, runtime directories were removed, and no model or credential was used.
+- Parent review of `c4b5202..a321704` found no material introduced defect in the context-only simplification. The authorized test pruning removed obsolete wrapper/type guards while preserving runtime regressions. An external clean checkout passed all 114 tests; its production-only tarball install passed eight built-in fake-runtime checks and an independent external extension using a separate Zod copy, asynchronous schema conversion, captured factory parameters/paths, and context-only execution. Receivers, raw result configuration, credential-free view, and cleanup remained correct; no model was called.
 - This closes the reviewed concrete mechanisms, not universal containment of arbitrary child processes. The successful historical real-model smoke below does not remove the documented capability limits.
 
 ### Single-File Revision Verification
