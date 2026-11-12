@@ -1,6 +1,6 @@
 # M1: Filesystem Evaluation
 
-Status: the original filesystem runtime and its approved real-model smoke are complete. The single-file authoring revision is implemented and covered by model-free tests; it has not been live-model tested.
+Status: implemented and independently reviewed. Both current single-file example cases passed approved real-model smoke through the shared built CLI; the separate tarball installation remains model-free verified.
 
 ## Goal
 
@@ -50,7 +50,7 @@ These completed checks cover the original runtime. The authoring revision has it
 
 ## Single-File Authoring Revision
 
-Status: implemented. [Case Configuration](configuration.md) is the authoritative behavior specification. The historical smoke below still describes the original two-file format.
+Status: implemented. [Case Configuration](configuration.md) is the authoritative behavior specification. The real-model smoke below covers the current single-file example and retains the original two-file run as historical evidence.
 
 Acceptance:
 
@@ -158,25 +158,27 @@ Context-only instance simplification `945dac0` passed the complete gate with 114
 - The model-free suite exercised the real installed `yaml` parser, source positions, duplicate-key errors, and forbidden anchor/alias/`<<` structures at root and nested locations.
 - Real macOS Seatbelt probes and installed-Pi RPC bash/skill probes passed without prompts, model calls, network, or credentials. Deterministic fake RPC executables covered `run` integration, `view`/`run` payload equality, credential-free `view`, harness-canary non-invocation, and retained resolved-configuration values.
 - The packaged `agent-evals` bin and `npm run eval` produced identical help and view output. The clean local tarball installed without dev dependencies or Git metadata; its installed run verified the generated supervisor, safe-process-group, shell wrapper, regex worker, file checks, and independent fake judge.
-- Independent review and parent-focused closure are recorded above. The implementation and packaged artifact remain model-free validated; the original two-file live smoke is not evidence of live-model validation for this migration.
+- Independent review and parent-focused closure are recorded above. The current single-file example also passed the real-model smoke below through the shared built CLI entry; the isolated tarball installation itself has model-free verification.
 
 ### Real-Model Smoke
 
-The approved `write-file` example passed in one evaluation invocation on 2026-11-11 using the original two-file format. The old CLI invocation was:
+The current single-file example passed on code revision `8fd2778` on 2026-11-12. With the selected OpenCode key injected only through `OPENCODE_API_KEY`, each existing command was run once, sequentially, without an extra script or retries:
 
 ```sh
-npm run eval -- --case examples/write-file/case.yml --candidate examples/write-file/candidate.yml
+npm run eval -- run examples/write-file/case.yml --case with-skill
+npm run eval -- run examples/write-file/case.yml --case without-skill
 ```
 
-That command shape is no longer accepted after the single-file migration. This historical smoke proves the original two-file runtime integration, checks, and cleanup; it is not a live-model test of the migrated single-file loader or example, whose coverage is model-free only.
+| Case            | Result                  | Total time | Runner time | Retained result directory                          |
+| --------------- | ----------------------- | ---------- | ----------- | -------------------------------------------------- |
+| `with-skill`    | All three checks passed | 22.8 s     | 17.4 s      | `.eval-results/2026-11-12T02-33-57-461Z-074a8624/` |
+| `without-skill` | All three checks passed | 22.0 s     | 17.0 s      | `.eval-results/2026-11-12T02-34-43-457Z-88b3d849/` |
 
-- Runner and judge: `opencode-go/deepseek-v4.1-flash`, each in its own isolated Pi invocation, default thinking `medium`, 120-second execution budget per invocation. The evaluation was not automatically rerun.
-- Result: `pass` in approximately 30 seconds; the runner completed in approximately 25 seconds. File existence, regex content matching, and the independent judge criterion all passed. Diagnostics were empty.
-- Cleanup: the runtime directory was removed, and a post-run process check found no remaining evaluation supervisors or shell wrappers. No additional Seatbelt permissions were needed.
-- Credentials: only the selected provider key was injected in memory through `OPENCODE_API_KEY`; personal authentication/configuration files were not copied into the run, and the retained result did not contain the key.
-- Result record: `.eval-results/2026-11-11T15-06-44-228Z-898d5cc9/result.json` (ignored by Git). The workspace was not retained. Token usage and monetary cost were not measured; this smoke used invocation/time limits rather than a hard cost cap.
+Both used `opencode-go/deepseek-v4.1-flash` for the runner and independent judge, default thinking `medium`, and the example's 120-second invocation budget. File existence, regex content, and judge checks passed; both result records report `cleanup: removed` and empty diagnostics. No sandbox permissions or implementation code changed. Results are Git-ignored; credentials were not copied into the run configuration.
 
-This verifies the execution/checking/cleanup integration, not skill effectiveness or support for arbitrary provider endpoints. Routine test gates remain model-free.
+This exercised the current loader, schemas, context-only instances, and shared built `dist/cli.js` through the development npm entry. It was not a live-model run from a separately installed tarball. The original two-file smoke also passed on 2026-11-11; its record remains `.eval-results/2026-11-11T15-06-44-228Z-898d5cc9/result.json`.
+
+These runs prove integration, not skill improvement or support for other provider endpoints. Token usage and monetary cost were not measured. Routine test gates remain model-free.
 
 ### Test Coverage
 
