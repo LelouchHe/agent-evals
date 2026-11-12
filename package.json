@@ -1,0 +1,48 @@
+{
+  "name": "agent-evals",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "A toolkit for evaluating AI agent systems.",
+  "license": "MIT",
+  "engines": {
+    "node": ">=24"
+  },
+  "bin": {
+    "agent-evals": "dist/cli.js"
+  },
+  "files": [
+    "dist",
+    ".env.example"
+  ],
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "lint": "eslint src tests scripts eslint.config.mjs",
+    "lint:fix": "npm run lint -- --fix",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "typecheck": "tsc --noEmit",
+    "test": "node --test --test-timeout=30000",
+    "test:package": "node --test --test-timeout=180000 tests/package-install.ts",
+    "pretest": "npm run build",
+    "check": "npm run lint && npm run format:check && npm run typecheck && npm test",
+    "prepare": "node -e \"const fs=require('node:fs');const cp=require('node:child_process');if(!fs.existsSync('.git')||!fs.existsSync('node_modules/husky'))process.exit(0);const r=cp.spawnSync(process.execPath,['node_modules/husky/bin.js'],{stdio:'inherit'});process.exit(r.status??1)\"",
+    "prepack": "npm run build",
+    "preeval": "npm run build",
+    "eval": "node dist/cli.js"
+  },
+  "dependencies": {
+    "yaml": "2.9.1",
+    "zod": "4.6.7"
+  },
+  "devDependencies": {
+    "@eslint/js": "10.0.1",
+    "@types/node": "24.19.2",
+    "eslint": "10.14.0",
+    "globals": "17.14.0",
+    "husky": "9.1.7",
+    "prettier": "3.9.10",
+    "typescript": "5.9.3",
+    "typescript-eslint": "8.72.2"
+  }
+}

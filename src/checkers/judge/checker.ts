@@ -1,0 +1,178 @@
+import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { join } from "node:path";
+import { z } from "zod";
+import { errorMessage } from "../../engine/config.ts";
+import { runRelativePathSchema } from "../../engine/params.ts";
+import { truncate } from "../../engine/truncate.ts";
+import type { CheckResult, Checker, CheckerContext, CheckerDefinition } from "../../engine/registry.ts";
+import { isMissing, readRunFile } from "../../engine/workspace.ts";
+import { assertSeatbeltAvailable } from "../../platform/macos/policy.ts";
+import { invokePi, resolvePiExecutable, type PiSessionError } from "../../runners/pi/session.ts";
+import { nonEmptyTrimmedString, thinkingSchema } from "../../runners/pi/params.ts";
+import { buildJudgePrompt } from "./prompt.ts";
+
+const judgeParamsSchema = z.strictObject({
+  model: nonEmptyTrimmedString,
+  thinking: thinkingSchema.default("medium"),
+  rubric: z.array(nonEmptyTrimmedString).min(1, "must contain at least one statement"),
+  file: runRelativePathSchema,
+  executable: nonEmptyTrimmedString.default("pi"),
+  apiKey: nonEmptyTrimmedString.optional(),
+});
+
+type JudgeParams = z.output<typeof judgeParamsSchema>;
+
+const verdictSchema = z.object({
+  criteria: z.array(
+    z.object({
+      pass: z.boolean(),
+      reason: z.string().refine((value) => value.trim().length > 0, { message: "reason is missing" }),
+    }),
+  ),
+});
+
+export class JudgeError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "JudgeError";
+  }
+}
+
+/** Independent Pi invocation that evaluates task and file evidence against a rubric. */
+export const judgeChecker: CheckerDefinition<JudgeParams> = {
+  type: "judge",
+  params: judgeParamsSchema,
+  async create(params) {
+    await resolvePiExecutable(params.executable);
+    assertSeatbeltAvailable();
+    return new JudgeChecker(params);
+  },
+};
+
+class JudgeChecker implements Checker {
+  readonly #params: JudgeParams;
+
+  constructor(params: JudgeParams) {
+    this.#params = params;
+  }
+
+  readonly check = async (context: CheckerContext): Promise<readonly CheckResult[]> => {
+    const parsed = this.#params;
+    let fileContent: string | null;
+    try {
+      fileContent = (await readRunFile(context.workspace, parsed.file)).toString("utf8");
+    } catch (error) {
+      if (isMissing(error)) {
+        fileContent = null;
+      } else {
+        throw new JudgeError(`could not read judge evidence ${parsed.file}: ${errorMessage(error)}`);
+      }
+    }
+
+    const judgeDir = await mkdtemp(join(context.runRootDir, "judge-"));
+    try {
+      const workspaceDir = join(judgeDir, "workspace");
+      await mkdir(workspaceDir, { recursive: true, mode: 0o700 });
+      const result = await invokePi(
+        {
+          executable: parsed.executable,
+          runRootDir: judgeDir,
+          model: parsed.model,
+          thinking: parsed.thinking,
+          dirs: {
+            workspaceDir,
+            homeDir: join(judgeDir, "home"),
+            configDir: join(judgeDir, "config"),
+            scratchDir: join(judgeDir, "scratch"),
+          },
+          skills: [],
+          tools: null,
+          ...(parsed.apiKey === undefined ? {} : { apiKey: parsed.apiKey }),
+          allowNetwork: true,
+        },
+        buildJudgePrompt({
+          task: context.input,
+          file: parsed.file,
+          fileContent,
+          rubric: parsed.rubric,
+        }),
+        { timeoutMs: context.timeoutMs, signal: context.signal },
+      );
+      return parseVerdict(result.finalText, parsed.rubric, result.diagnostics);
+    } catch (error) {
+      if (error instanceof JudgeError) {
+        throw error;
+      }
+      throw new JudgeError(formatInvocationError(error));
+    } finally {
+      try {
+        await rm(judgeDir, { recursive: true, force: true, maxRetries: 3 });
+      } catch {
+        // The engine removes the containing run root and records any failure there.
+      }
+    }
+  };
+}
+
+function parseVerdict(text: string | null, rubric: readonly string[], diagnostics: readonly string[]): CheckResult[] {
+  if (text === null) {
+    throw new JudgeError(withDiagnostics("judge produced no assistant text", diagnostics));
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(extractJson(text));
+  } catch (error) {
+    throw new JudgeError(withDiagnostics(`invalid judge verdict: ${errorMessage(error)}`, diagnostics));
+  }
+  const verdict = verdictSchema.safeParse(parsed);
+  if (!verdict.success) {
+    const issue = verdict.error.issues[0];
+    const detail =
+      issue === undefined ? "invalid shape" : `${issue.path.map(String).join(".") || "verdict"}: ${issue.message}`;
+    throw new JudgeError(withDiagnostics(`invalid judge verdict: ${detail}`, diagnostics));
+  }
+  const criteria = verdict.data.criteria;
+  if (criteria.length !== rubric.length) {
+    throw new JudgeError(
+      withDiagnostics(
+        `invalid judge verdict: expected ${rubric.length} criteria, received ${criteria.length}`,
+        diagnostics,
+      ),
+    );
+  }
+
+  return criteria.map((entry, index) => ({
+    checker: "judge",
+    subject: rubric[index] ?? "",
+    status: entry.pass ? "pass" : "fail",
+    reason: truncate(entry.reason.trim(), 500),
+  }));
+}
+
+function extractJson(text: string): string {
+  const trimmed = text.trim();
+  const fenced = /^```(?:json)?\s*\n([\s\S]*?)\n```$/.exec(trimmed);
+  if (fenced?.[1] !== undefined) {
+    return fenced[1];
+  }
+  const start = trimmed.indexOf("{");
+  const end = trimmed.lastIndexOf("}");
+  if (start === -1 || end <= start) {
+    return trimmed;
+  }
+  return trimmed.slice(start, end + 1);
+}
+
+function formatInvocationError(error: unknown): string {
+  const diagnostic = isPiSessionError(error) ? error.diagnostics[0] : undefined;
+  const base = `judge invocation failed: ${errorMessage(error)}`;
+  return diagnostic === undefined ? base : truncate(`${base} (${diagnostic})`, 800);
+}
+
+function isPiSessionError(error: unknown): error is PiSessionError {
+  return typeof error === "object" && error !== null && "diagnostics" in error;
+}
+
+function withDiagnostics(message: string, diagnostics: readonly string[]): string {
+  return diagnostics.length === 0 ? message : truncate(`${message} (${diagnostics[0]})`, 800);
+}

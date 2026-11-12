@@ -1,71 +1,114 @@
 # Architecture
 
-This document records the system's overall direction and responsibility boundaries. Concrete delivery scope, implementation choices, and acceptance criteria belong in milestone plans.
+Agent Evals executes configured tests against agent systems. The engine is generic; the current runtime is deliberately narrow: one input message, a filesystem workspace, a Pi RPC runner, and file/judge checks on macOS.
 
-## Principles
+This page explains how the implemented modules cooperate. [Configuration](configuration.md) owns the authoring/reference rules; [Roadmap](roadmap.md) owns the target shape and planned capabilities.
 
-- Start from scratch. Learn from earlier skill-eval work without importing its package, upstream skill bundles, or the old agent-eval prototype as the foundation.
-- Do not require compatibility with earlier schemas, aggregators, or viewers.
-- Use real evaluation scenarios to grow the system. Extract abstractions from actual repetition rather than anticipated requirements.
-- Skills, workflows, configurations, and harnesses share one evaluation model, not separate hard-coded pipelines.
-
-## Evaluation Model
+## Components and Connections
 
 ```text
-Input message + Candidate + Environment
-    -> Runner
-    -> Output message + Environment observations
-    -> Checkers
-    -> Results and comparisons
+CLI: agent-evals / npm run eval (same dist/cli.js)
+  |
+  v
+Authoring resolver: YAML + optional case selection -> ResolvedCase + origins
+  |                                          |
+  | view                                     | run
+  v                                          v
+Resolved configuration display            Registry: select runner/checkers by $type
+(no harness or credentials)                  |
+                                             v
+                                   Engine: .env values -> Zod -> factories
+                                             |
+                                             v
+                                   Independent runtime directories
+                                             |
+                                             v
+                                   Runner -> harness -> file changes
+                                             |
+                                   Stop supported runtime processes
+                                             |
+                                             v
+                                   Checkers -> individual judgments
+                                             |
+                                   Remove runtime -> save run record
 ```
 
-Messages form the invocation's conversational input and output. Files, environment variables, service state, and other observable external state belong to the environment. A workflow may treat a file as its business result without requiring a separate return-value system in the evaluation engine.
+| Component          | Owns                                                                                             | Does not own                                                                  |
+| ------------------ | ------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------- |
+| CLI                | Commands, arguments, built-in registration, trusted extension paths, signals, exit codes.        | Harness protocols or checker logic.                                           |
+| Authoring resolver | Case selection, disjoint top-level composition, common structure, source annotations.            | Runtime readiness or provider authentication.                                 |
+| Registry           | Mapping `$type` to a trusted definition.                                                         | Skill-specific modes or parameter interpretation.                             |
+| Engine             | Parameter validation, preparation, runtime state, sequencing, cancellation, results and cleanup. | The business meaning of model, skill, rubric, or other implementation fields. |
+| Runner             | Driving a harness and stopping its supported owned processes.                                    | Judging whether the task succeeded.                                           |
+| Checker            | Reading available run evidence and producing checks.                                             | Driving the evaluated session.                                                |
+| Platform module    | Seatbelt policy and sandboxed process launch.                                                    | YAML, tasks or rubric semantics.                                              |
 
-Checks may assess the relationship between input and output messages, environment changes, or both. Execution traces and measurements are additional evidence when available. Evidence must not be limited to the evaluated agent's own account of what happened.
+## Definitions, Factories, and Instances
 
-## Components
+Definitions expose a `type`, a Zod `params` schema, and `create(params, context)`. Runner and checker are separate contracts.
 
-| Component | Responsibility |
-|---|---|
-| Engine | Validate common inputs, prepare environments, coordinate runners and checkers, handle results, and enforce lifecycle and cleanup requirements. |
-| Runner | Drive the evaluated harness, expose its observable events and state, and perform harness-specific cancellation and teardown. |
-| Checker | Interpret its parameters, inspect run state or supplied evidence, and return checks or scores with reasons and evidence references. |
+1. The registry selects the definition by `$type`.
+2. The engine resolves explicit parameter value references, then runs the declared schema once.
+3. The factory receives ordinary typed fields plus the YAML declaring directory. It does not receive an environment-source or credential-lookup interface.
+4. The instance keeps its parameters; execution receives only runtime state:
 
-Keep failed checks of agent behavior distinct from configuration, execution, observation, and checker failures.
+```text
+Runner.run(RunnerContext)     -> RunnerOutcome
+Runner.stop()                -> completion, safe to call again
+Checker.check(CheckerContext) -> CheckResult[]
+```
 
-## Extension Boundaries
+**The engine owns sourcing, declared-schema validation and lifecycle—not business meaning.** Schemas define parameter types, defaults and declared constraints. Implementations own their logic, operational requirements, authentication and outputs. The engine does not infer extra rules from names such as `apiKey`, proactively verify credentials, or automatically redact values.
 
-- Runner and Checker are configurable extension points. Run or candidate configuration selects the runner; cases select checkers.
-- Discover implementations from designated, trusted directories. Adding an implementation that satisfies the established contract should not require changing engine dispatch.
-- Built-in and added implementations follow the same contracts. The engine does not understand their business parameters.
-- Runners manage interaction and session lifecycle; checkers evaluate results and observations. Do not force them into one universal plugin interface.
-- Do not load executable extensions from agent-writable workspaces or generated artifacts. Case-local checker code is a trusted authoring asset, not part of the evaluated working copy.
-- Neither case definitions nor the engine should require WebAgent or one particular harness. Harness-specific startup and communication details belong in runners.
-- Stable contracts avoid routine engine changes; genuinely new requirements may justify explicit contract evolution. Add extension mechanisms when real needs support them, not for completeness.
+Built-ins and trusted extensions share this path. Dynamic modules cross a localized type-erasure boundary; module authors own schema/factory consistency. Source interfaces live in [`registry.ts`](../src/engine/registry.ts).
 
-The `$type` selection convention and authoring rules are documented in [cases and configuration](cases.md).
+## One Run, in Order
 
-## Evidence and the Tracer Direction
+1. **Prepare.** Resolve one case and preserve its declaration/reference metadata. Select definitions; obtain referenced values from the invocation `.env`, validate schemas, create instances and validate the fixture. The engine never interprets provider/key names. [Configuration](configuration.md#values-from-env) owns reference semantics.
+2. **Create state.** Make an atomic temporary root. Copy the fixture into `workspace` or start empty, capture an initial `baseline`, and prepare independent `home`, `config` and `scratch`. Source fixtures remain unchanged.
+3. **Execute.** The runner receives the task, directories, deadline and cancellation signal. Pi stages selected skills and runs its isolated RPC session under Seatbelt, with autonomous tool calls after one initial message.
+4. **Stop.** Await supported runner teardown before checks. Timeouts, cancellation and execution failures are not negative judgments. See [M1 limits](m1-plan.md#known-limitations).
+5. **Check.** Checkers inspect the still-live workspace/baseline. File regex work runs in a terminable worker; the judge reads selected evidence and starts a separate tool-free Pi invocation.
+6. **Clean and record.** Remove runtime state, then save outcomes, declared configuration and cleanup status. Early preparation errors need not produce a run record.
 
-Treat tracing as a coherent evidence-collection responsibility rather than accumulating unrelated engine special cases for messages, env, files, tool calls, permission events, or services. Some observations are snapshots; others are event streams, so collection mechanisms and timing may differ.
+## Pi and Platform Composition
 
-- Checker context concerns the evaluated run, not the engine's working directory or process environment. Never silently substitute engine-host state.
-- Collect required observations while they are accessible. A reference cannot recover state that was never captured.
-- Separate collection from referencing. A tracer adds value by supplying an actual observation capability, not merely by renaming existing data.
-- Retained evidence can enable checking after runtime teardown and regrading without rerunning the agent. Do not assume either that the environment remains alive or that every run retains a full copy.
-- Make unavailable observations and collection failures explicit; they must not count as passing checks.
-- Preserve evidence outside the evaluated agent's writable area when retaining it. Collect only necessary data, especially for secrets-bearing environment variables.
+```text
+Pi Runner --------------------+
+                              v
+                         Pi session helper -> JSONL RPC client
+                              |
+Judge Checker -> evidence ----+    (separate invocation, no tools)
+                              |
+                              v
+                   macOS policy + sandbox-exec
+                              |
+                   in-sandbox supervisor -> Pi
+                                             |
+                                      shell wrapper -> shell tools
+```
 
-The unified tracer direction does not yet define configuration, lifecycle hooks, discovery, evidence layout, or reference syntax. Filenames such as `env.json` and `response.txt` are illustrative, not reserved interfaces. No `$msg`, `$env`, or general variable-expression language is approved.
+The judge reuses Pi transport/session mechanics, not the evaluated runner's session or the engine's full execution loop. The supervisor and shell wrapper cover tracked shell-process teardown inside the same Seatbelt instance. Registry files writable by the agent never authorize unsandboxed host signals.
 
-## Runtime and Platform Boundaries
+The host sandbox is a deliberate execution choice: real platform behavior is part of the subject being measured. Seatbelt is the current backend, not a claim that every OS has identical isolation guarantees.
 
-- Keep platform-specific policy generation and process-launch details in a small, separate module. Cases and checkers should not depend directly on a platform's policy syntax.
-- Isolation, working environments and state, and execution lifecycles are separate responsibilities. An OS sandbox does not automatically provide snapshots, dependencies, or complete task lifecycle management.
-- Prepare independent run state and declare required capabilities. Do not silently fall back to unsandboxed execution when a required restriction cannot be enforced.
-- Keep workspace state, credentials, candidate configuration, results, and diagnostics deliberately scoped. Do not contaminate source fixtures or retain copied credentials as results.
-- Register cleanup when resources are created, and account for failure, timeout, and cancellation as well as successful completion.
-- Platform adaptation must not imply identical capabilities or security guarantees across backends.
-- Keep personal configuration and private run data out of shareable examples.
+## State and Trust Boundaries
 
-See [M1](m1-plan.md) for the first filesystem-evaluation implementation.
+- **Authoring assets:** operator-owned YAML, fixtures, skills and extensions. Config-relative resources resolve from the declaring file; executable extensions are not discovered from the agent-writable workspace. Extension code and `.env` lookup commands are trusted host code, not sandboxed test subjects.
+- **Evaluated runtime:** writable workspace and explicitly permitted per-run state. The initial baseline, case/check definitions, rubric and retained results stay outside the evaluated agent's intended access.
+- **Observations:** directory identity and path/symlink containment are checked before file reads. Non-regular and oversized evidence is an error, not a vacuous pass. A missing observation cannot prove a restraint was respected.
+- **Results:** declarations/reference metadata, source/case identity, outcomes, diagnostics and cleanup. Expanded parameters do not replace the declaration; runtime outputs remain the implementation's responsibility. No full resource snapshot is retained.
+
+Messages are invocation input/output; files, environment variables and service state are environment observations. Current checkers consume task/file state; the runner's final text is retained in the result but is not a general message/event evidence interface. Planned evidence collection belongs in the [Roadmap](roadmap.md#evidence-and-measurements).
+
+## Source Map
+
+| Area                          | Main source                                                                                                                      |
+| ----------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| Entry point and display       | [`cli.ts`](../src/cli.ts), [`view.ts`](../src/engine/view.ts)                                                                    |
+| Resolution and contracts      | [`authoring.ts`](../src/engine/authoring.ts), [`config.ts`](../src/engine/config.ts), [`registry.ts`](../src/engine/registry.ts) |
+| Preparation and lifecycle     | [`params.ts`](../src/engine/params.ts), [`env-source.ts`](../src/engine/env-source.ts), [`run.ts`](../src/engine/run.ts)         |
+| Files and retained records    | [`workspace.ts`](../src/engine/workspace.ts), [`results.ts`](../src/engine/results.ts)                                           |
+| Harness adapter and transport | [`runners/pi/`](../src/runners/pi/)                                                                                              |
+| Assertions and model judgment | [`checkers/file/`](../src/checkers/file/), [`checkers/judge/`](../src/checkers/judge/)                                           |
+| OS enforcement and packaging  | [`platform/macos/`](../src/platform/macos/), [`build.mjs`](../scripts/build.mjs)                                                 |
