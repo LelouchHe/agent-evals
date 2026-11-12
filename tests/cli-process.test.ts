@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { test } from "node:test";
 import { makeTempDir } from "./helpers/fake-pi-control.ts";
@@ -15,11 +15,11 @@ setInterval(() => {}, 1000);
 
 const GRACEFUL_CHILD = `
 const fs = require("node:fs");
-fs.writeFileSync(process.env.AE_CHILD_PID_FILE, String(process.pid));
 process.on("SIGTERM", () => {
   fs.writeFileSync(process.env.AE_CHILD_TERM_MARKER, "terminated");
   process.exit(0);
 });
+fs.writeFileSync(process.env.AE_CHILD_PID_FILE, String(process.pid));
 setTimeout(() => process.exit(0), 10000);
 setInterval(() => {}, 1000);
 `;
@@ -130,6 +130,41 @@ test("helper deadline terminates and reaps a child that ignores SIGTERM", async 
   assert.match(outcome.error.message, /timed out after 700ms/);
   assert.equal(isAlive(pid), false, "child survived the helper deadline");
   assert.ok(performance.now() - started < 3_000, "deadline cleanup took too long");
+});
+
+test("an enclosing test deadline cancels the real helper and lets its process exit", async (t) => {
+  const directory = await makeTempDir(t, "ae-cli-outer-deadline-");
+  const pidFile = join(directory, "pid");
+  const marker = join(directory, "terminated");
+  const innerTest = join(directory, "inner.test.ts");
+  await writeFile(
+    innerTest,
+    `import { test } from "node:test";
+import { runCliProcess } from ${JSON.stringify(new URL("./helpers/cli-process.ts", import.meta.url).href)};
+test("inner deadline", { timeout: 600 }, (t) =>
+  runCliProcess(t, "-e", [${JSON.stringify(GRACEFUL_CHILD)}], { cwd: process.cwd(), env: process.env, timeoutMs: 10000 }));
+`,
+  );
+  const run = runCliProcess(t, "--test", [innerTest], {
+    cwd: directory,
+    // Do not inherit NODE_TEST_CONTEXT: the child must actually run node:test.
+    env: {
+      PATH: process.env.PATH,
+      HOME: directory,
+      TMPDIR: directory,
+      AE_CHILD_PID_FILE: pidFile,
+      AE_CHILD_TERM_MARKER: marker,
+    },
+    timeoutMs: 5_000,
+  });
+  run.catch(() => {});
+  const pid = await waitForPid(pidFile, 2_000);
+  t.after(() => killAndWait(pid));
+  const result = await run;
+  assert.equal(result.code, 1);
+  assert.match(result.stdout + result.stderr, /test timed out after 600ms/);
+  assert.equal(await readFile(marker, "utf8"), "terminated");
+  assert.equal(isAlive(pid), false, "inner test deadline left a live CLI child");
 });
 
 test("helper cancellation stops a child gracefully before the test deadline", async (t) => {

@@ -65,7 +65,9 @@ Treat `.env` as sensitive executable configuration. Do not generate it from an e
 npm run check
 ```
 
-The gate runs ESLint, Prettier, TypeScript checking, a build and deterministic tests. Tests use synthetic credentials/fake harnesses and do not call models. `npm run format` and `npm run lint:fix` apply changes explicitly. `npm ci` sets up repository-local Husky: pre-commit checks lint/format without rewriting files; pre-push runs the complete gate against a clean worktree and the checked-out outgoing HEAD.
+The gate runs ESLint, Prettier, TypeScript checking, a build and deterministic tests. Tests use synthetic credentials/fake harnesses and do not call models.
+
+Run `npm run test:package` separately when verifying a distributable. It packs the current checkout, installs into a disposable directory outside the repository, and exercises the installed CLI with synthetic credentials. It may access the package registry to install runtime dependencies, but never calls a model; this installation step is deliberately not repeated by ordinary unit tests. `npm run format` and `npm run lint:fix` apply changes explicitly. `npm ci` sets up repository-local Husky: pre-commit checks lint/format without rewriting files; pre-push runs the complete gate against a clean worktree and the checked-out outgoing HEAD.
 
 Checkout builds replace shared `dist/` non-atomically. Serialize checkout eval/build/test/pack/check/push commands; for concurrent evaluations use a separate installed prefix that is not rebuilt while in use. Generated `dist/`, tarballs, results and local agent adapters stay out of version control/format targets.
 
