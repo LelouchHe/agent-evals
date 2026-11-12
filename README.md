@@ -6,8 +6,6 @@ Evaluate instructions, skills, workflows, configurations and harnesses through e
 
 Requirements: Node.js 24+; macOS with `sandbox-exec` and an installed `pi` CLI for harness execution. `view` needs neither Pi nor credentials. The package/repository remain private and unpublished; visibility and publication require explicit approval.
 
-Invocation-`.env` credentials are implemented and model-free verified, including command cleanup and an installed-package run. Live-model evidence still refers to the earlier revision recorded in [M1](docs/m1-plan.md#live-example-smoke).
-
 ## Quick Start
 
 From the repository:
