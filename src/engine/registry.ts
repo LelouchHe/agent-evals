@@ -1,7 +1,9 @@
 import { readdir } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
+import type { ZodType } from "zod";
 import { ConfigError, errorMessage, type ImplementationParams } from "./config.ts";
+import { parseImplementationParams } from "./params.ts";
 import type { RunRoot } from "./workspace.ts";
 
 export interface RunnerContext {
@@ -37,9 +39,10 @@ export interface Runner<P> {
 
 export interface RunnerDefinition<P> {
   readonly type: string;
-  /** Parse and validate raw declared parameters, including run-path readiness checks. */
-  readonly parse: (params: ImplementationParams, authoringDir: string) => P | Promise<P>;
-  readonly create: () => Runner<P>;
+  /** Declarative Zod parameter schema; the engine validates raw data once. */
+  readonly params: ZodType<P>;
+  /** Validate operational readiness for parsed params, then create the instance. */
+  readonly create: (params: P, authoringDir: string) => Runner<P> | Promise<Runner<P>>;
 }
 
 /** A runner with its parsed parameters already bound to its instance. */
@@ -84,9 +87,10 @@ export interface Checker<P> {
 
 export interface CheckerDefinition<P> {
   readonly type: string;
-  /** Parse and validate raw declared parameters, including run-path readiness checks. */
-  readonly parse: (params: ImplementationParams, authoringDir: string) => P | Promise<P>;
-  readonly create: () => Checker<P>;
+  /** Declarative Zod parameter schema; the engine validates raw data once. */
+  readonly params: ZodType<P>;
+  /** Validate operational readiness for parsed params, then create the instance. */
+  readonly create: (params: P, authoringDir: string) => Checker<P> | Promise<Checker<P>>;
 }
 
 /** A checker with its parsed parameters already bound to its instance. */
@@ -187,8 +191,8 @@ function registerRunnerDefinition<P>(definition: RunnerDefinition<P>): Registere
   return {
     type: definition.type,
     async prepare(params, authoringDir) {
-      const parsed = await definition.parse(params, authoringDir);
-      const instance = definition.create();
+      const parsed = await parseImplementationParams(definition.params, params, `runner "${definition.type}"`);
+      const instance = await definition.create(parsed, authoringDir);
       return {
         type: definition.type,
         run: (context) => instance.run(parsed, context),
@@ -202,8 +206,8 @@ function registerCheckerDefinition<P>(definition: CheckerDefinition<P>): Registe
   return {
     type: definition.type,
     async prepare(params, authoringDir) {
-      const parsed = await definition.parse(params, authoringDir);
-      const instance = definition.create();
+      const parsed = await parseImplementationParams(definition.params, params, `checker "${definition.type}"`);
+      const instance = await definition.create(parsed, authoringDir);
       return {
         type: definition.type,
         check: (context) => instance.check(parsed, context),
@@ -233,8 +237,8 @@ function registerChecker(registry: Registry, definition: RegisteredCheckerDefini
  */
 interface ExternalDefinition {
   readonly type: string;
-  readonly parse: (params: ImplementationParams, authoringDir: string) => unknown | Promise<unknown>;
-  readonly create: () => unknown;
+  readonly params: ZodType<unknown>;
+  readonly create: (params: unknown, authoringDir: string) => unknown | Promise<unknown>;
 }
 
 function adaptExternalRunner(definition: Record<string, unknown>): RegisteredRunnerDefinition {
@@ -243,8 +247,8 @@ function adaptExternalRunner(definition: Record<string, unknown>): RegisteredRun
     type: external.type,
     async prepare(params, authoringDir) {
       // Method calls intentionally preserve the exported definition as receiver.
-      const parsed = await external.parse(params, authoringDir);
-      const instance = external.create() as {
+      const parsed = await parseImplementationParams(external.params, params, `runner "${external.type}"`);
+      const instance = (await external.create(parsed, authoringDir)) as {
         readonly run: (params: unknown, context: RunnerContext) => Promise<RunnerOutcome>;
         readonly stop: () => Promise<void>;
       };
@@ -263,8 +267,8 @@ function adaptExternalChecker(definition: Record<string, unknown>): RegisteredCh
     type: external.type,
     async prepare(params, authoringDir) {
       // Method calls intentionally preserve the exported definition as receiver.
-      const parsed = await external.parse(params, authoringDir);
-      const instance = external.create() as {
+      const parsed = await parseImplementationParams(external.params, params, `checker "${external.type}"`);
+      const instance = (await external.create(parsed, authoringDir)) as {
         readonly check: (params: unknown, context: CheckerContext) => Promise<readonly CheckResult[]>;
       };
       return {
@@ -283,8 +287,14 @@ function assertDefinition(definition: unknown, kind: "runner" | "checker"): Reco
   if (typeof candidate.type !== "string" || candidate.type.length === 0) {
     throw new ConfigError(`${kind} implementation must declare a non-empty string type`);
   }
-  if (typeof candidate.parse !== "function" || typeof candidate.create !== "function") {
-    throw new ConfigError(`${kind} implementation "${candidate.type}" must provide parse() and create()`);
+  const schema = candidate.params;
+  if (
+    (typeof schema !== "object" && typeof schema !== "function") ||
+    schema === null ||
+    typeof (schema as { readonly safeParseAsync?: unknown }).safeParseAsync !== "function" ||
+    typeof candidate.create !== "function"
+  ) {
+    throw new ConfigError(`${kind} implementation "${candidate.type}" must provide a Zod params schema and create()`);
   }
   return candidate;
 }

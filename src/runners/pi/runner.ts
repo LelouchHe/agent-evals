@@ -1,36 +1,36 @@
 import { cp, copyFile, mkdir, stat } from "node:fs/promises";
 import { basename, join } from "node:path";
-import { ConfigError, errorMessage, resolveAuthoringAsset, type ImplementationParams } from "../../engine/config.ts";
+import { z } from "zod";
+import { ConfigError, errorMessage, resolveAuthoringAsset } from "../../engine/config.ts";
 import { assertSeatbeltAvailable } from "../../platform/macos/policy.ts";
 import type { Runner, RunnerContext, RunnerDefinition, RunnerOutcome } from "../../engine/registry.ts";
 import {
-  invokePi,
-  resolvePiExecutable,
-  THINKING_LEVELS,
-  validateEnvPassthrough,
-  type ThinkingLevel,
-} from "./session.ts";
+  assertEnvPassthroughAvailable,
+  envPassthroughSchema,
+  nonEmptyTrimmedString,
+  thinkingSchema,
+} from "./params.ts";
+import { invokePi, resolvePiExecutable } from "./session.ts";
 
-const RUNNER_KEYS = new Set(["model", "thinking", "skills", "executable", "envPassthrough"]);
+const piRunnerParamsSchema = z.strictObject({
+  model: nonEmptyTrimmedString,
+  thinking: thinkingSchema.default("medium"),
+  skills: z.array(z.string().min(1, "must be a non-empty relative path")).default([]),
+  executable: nonEmptyTrimmedString.default("pi"),
+  envPassthrough: envPassthroughSchema,
+});
 
-interface PiRunnerParams {
-  readonly model: string;
-  readonly thinking: ThinkingLevel;
-  readonly skills: readonly string[];
-  readonly executable: string;
-  readonly resolvedExecutable: string;
-  readonly envPassthrough: readonly string[];
-}
+type PiRunnerParams = z.output<typeof piRunnerParamsSchema>;
 
 /** Pi native RPC runner: one user message, autonomous tool turns, Seatbelt isolation. */
 export const piRunner: RunnerDefinition<PiRunnerParams> = {
   type: "pi",
-  async parse(params: ImplementationParams, authoringDir: string): Promise<PiRunnerParams> {
-    const parsed = await parseParams(params, authoringDir);
+  params: piRunnerParamsSchema,
+  async create(params, authoringDir) {
+    await resolvePiExecutable(params.executable);
+    await assertSkillsAvailable(params.skills, authoringDir);
+    assertEnvPassthroughAvailable(params.envPassthrough);
     assertSeatbeltAvailable();
-    return parsed;
-  },
-  create() {
     return new PiRunner();
   },
 };
@@ -42,7 +42,7 @@ class PiRunner implements Runner<PiRunnerParams> {
     const skills = await stageSkills(params.skills, context.authoringDir, join(context.configDir, "skills"));
     const result = await invokePi(
       {
-        executable: params.resolvedExecutable,
+        executable: params.executable,
         runRootDir: context.runRootDir,
         model: params.model,
         thinking: params.thinking,
@@ -74,29 +74,7 @@ class PiRunner implements Runner<PiRunnerParams> {
   };
 }
 
-async function parseParams(params: ImplementationParams, authoringDir: string): Promise<PiRunnerParams> {
-  rejectUnknownParams(params);
-  const model = params.model;
-  if (typeof model !== "string" || model.trim().length === 0) {
-    throw new ConfigError("pi runner parameter model must be a non-empty string");
-  }
-
-  const thinking = params.thinking ?? "medium";
-  if (typeof thinking !== "string" || !isThinkingLevel(thinking)) {
-    throw new ConfigError(`pi runner parameter thinking must be one of: ${THINKING_LEVELS.join(", ")}`);
-  }
-
-  const executable = params.executable ?? "pi";
-  if (typeof executable !== "string" || executable.trim().length === 0) {
-    throw new ConfigError("pi runner parameter executable must be a non-empty string");
-  }
-  const resolvedExecutable = await resolvePiExecutable(executable);
-
-  const rawSkills = params.skills ?? [];
-  if (!Array.isArray(rawSkills) || rawSkills.some((skill) => typeof skill !== "string" || skill.length === 0)) {
-    throw new ConfigError("pi runner parameter skills must be a list of relative paths");
-  }
-  const skills = rawSkills as string[];
+async function assertSkillsAvailable(skills: readonly string[], authoringDir: string): Promise<void> {
   for (const skill of skills) {
     const path = resolveAuthoringAsset(authoringDir, skill, "pi runner skill");
     let info;
@@ -115,26 +93,6 @@ async function parseParams(params: ImplementationParams, authoringDir: string): 
       throw new ConfigError(`pi runner skill ${skill} must be a directory or a Markdown file`);
     }
   }
-
-  const rawEnv = params.envPassthrough ?? [];
-  if (!Array.isArray(rawEnv) || rawEnv.some((name) => typeof name !== "string")) {
-    throw new ConfigError("pi runner parameter envPassthrough must be a list of variable names");
-  }
-  const envPassthrough = rawEnv as string[];
-  validateEnvPassthrough(envPassthrough);
-
-  return { model, thinking, skills, executable, resolvedExecutable, envPassthrough };
-}
-
-function rejectUnknownParams(params: ImplementationParams): void {
-  const unknown = Object.keys(params).filter((key) => !RUNNER_KEYS.has(key));
-  if (unknown.length > 0) {
-    throw new ConfigError(`pi runner has unknown parameter${unknown.length === 1 ? "" : "s"}: ${unknown.join(", ")}`);
-  }
-}
-
-function isThinkingLevel(value: string): value is ThinkingLevel {
-  return (THINKING_LEVELS as readonly string[]).includes(value);
 }
 
 async function stageSkills(skills: readonly string[], authoringDir: string, destination: string): Promise<string[]> {

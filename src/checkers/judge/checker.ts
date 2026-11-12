@@ -1,30 +1,36 @@
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
-import { ConfigError, errorMessage, type ImplementationParams } from "../../engine/config.ts";
+import { z } from "zod";
+import { errorMessage } from "../../engine/config.ts";
 import type { CheckResult, Checker, CheckerContext, CheckerDefinition } from "../../engine/registry.ts";
 import { isMissing, readRunFile } from "../../engine/workspace.ts";
 import { assertSeatbeltAvailable } from "../../platform/macos/policy.ts";
+import { invokePi, resolvePiExecutable, type PiSessionError } from "../../runners/pi/session.ts";
 import {
-  invokePi,
-  resolvePiExecutable,
-  THINKING_LEVELS,
-  validateEnvPassthrough,
-  type PiSessionError,
-  type ThinkingLevel,
-} from "../../runners/pi/session.ts";
+  assertEnvPassthroughAvailable,
+  envPassthroughSchema,
+  nonEmptyTrimmedString,
+  thinkingSchema,
+} from "../../runners/pi/params.ts";
 import { buildJudgePrompt } from "./prompt.ts";
 
-const JUDGE_KEYS = new Set(["model", "thinking", "rubric", "file", "executable", "envPassthrough"]);
+const runRelativePath = z
+  .string()
+  .min(1, "must be a non-empty run-relative path")
+  .refine((value) => !value.startsWith("/") && !value.split(/[\\/]+/).includes(".."), {
+    message: "must be relative to the run workspace without '..' segments",
+  });
 
-interface JudgeParams {
-  readonly model: string;
-  readonly thinking: ThinkingLevel;
-  readonly rubric: readonly string[];
-  readonly file: string;
-  readonly executable: string;
-  readonly resolvedExecutable: string;
-  readonly envPassthrough: readonly string[];
-}
+const judgeParamsSchema = z.strictObject({
+  model: nonEmptyTrimmedString,
+  thinking: thinkingSchema.default("medium"),
+  rubric: z.array(nonEmptyTrimmedString).min(1, "must contain at least one statement"),
+  file: runRelativePath,
+  executable: nonEmptyTrimmedString.default("pi"),
+  envPassthrough: envPassthroughSchema,
+});
+
+type JudgeParams = z.output<typeof judgeParamsSchema>;
 
 export class JudgeError extends Error {
   constructor(message: string) {
@@ -36,12 +42,11 @@ export class JudgeError extends Error {
 /** Independent Pi invocation that evaluates task and file evidence against a rubric. */
 export const judgeChecker: CheckerDefinition<JudgeParams> = {
   type: "judge",
-  async parse(params: ImplementationParams): Promise<JudgeParams> {
-    const parsed = await parseParams(params);
+  params: judgeParamsSchema,
+  async create(params) {
+    await resolvePiExecutable(params.executable);
+    assertEnvPassthroughAvailable(params.envPassthrough);
     assertSeatbeltAvailable();
-    return parsed;
-  },
-  create() {
     return new JudgeChecker();
   },
 };
@@ -65,7 +70,7 @@ class JudgeChecker implements Checker<JudgeParams> {
       await mkdir(workspaceDir, { recursive: true, mode: 0o700 });
       const result = await invokePi(
         {
-          executable: parsed.resolvedExecutable,
+          executable: parsed.executable,
           runRootDir: judgeDir,
           model: parsed.model,
           thinking: parsed.thinking,
@@ -101,65 +106,6 @@ class JudgeChecker implements Checker<JudgeParams> {
         // The engine removes the containing run root and records any failure there.
       }
     }
-  };
-}
-
-async function parseParams(params: ImplementationParams): Promise<JudgeParams> {
-  const unknown = Object.keys(params).filter((key) => !JUDGE_KEYS.has(key));
-  if (unknown.length > 0) {
-    throw new ConfigError(
-      `judge checker has unknown parameter${unknown.length === 1 ? "" : "s"}: ${unknown.join(", ")}`,
-    );
-  }
-
-  const model = params.model;
-  if (typeof model !== "string" || model.trim().length === 0) {
-    throw new ConfigError("judge checker parameter model must be a non-empty string");
-  }
-
-  const thinking = params.thinking ?? "medium";
-  if (typeof thinking !== "string" || !(THINKING_LEVELS as readonly string[]).includes(thinking)) {
-    throw new ConfigError(`judge checker parameter thinking must be one of: ${THINKING_LEVELS.join(", ")}`);
-  }
-
-  const rubric = params.rubric;
-  if (
-    !Array.isArray(rubric) ||
-    rubric.length === 0 ||
-    rubric.some((item) => typeof item !== "string" || item.trim().length === 0)
-  ) {
-    throw new ConfigError("judge checker parameter rubric must be a non-empty list of statements");
-  }
-
-  const file = params.file;
-  if (typeof file !== "string" || file.length === 0) {
-    throw new ConfigError("judge checker parameter file must be a non-empty run-relative path");
-  }
-  if (file.startsWith("/") || file.split(/[\\/]+/).includes("..")) {
-    throw new ConfigError(`judge checker file must be relative to the run workspace: ${file}`);
-  }
-
-  const executable = params.executable ?? "pi";
-  if (typeof executable !== "string" || executable.trim().length === 0) {
-    throw new ConfigError("judge checker parameter executable must be a non-empty string");
-  }
-  const resolvedExecutable = await resolvePiExecutable(executable);
-
-  const rawEnv = params.envPassthrough ?? [];
-  if (!Array.isArray(rawEnv) || rawEnv.some((name) => typeof name !== "string")) {
-    throw new ConfigError("judge checker parameter envPassthrough must be a list of variable names");
-  }
-  const envPassthrough = rawEnv as string[];
-  validateEnvPassthrough(envPassthrough);
-
-  return {
-    model,
-    thinking: thinking as ThinkingLevel,
-    rubric: rubric as string[],
-    file,
-    executable,
-    resolvedExecutable,
-    envPassthrough,
   };
 }
 

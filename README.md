@@ -10,7 +10,7 @@ Make agent changes measurable through repeatable tasks, controlled environments,
 
 ## How It Works
 
-A case supplies an input message, an initial environment, and checks. A configured runner drives the agent; checkers assess its messages, environment changes, or other available observations. Runner and checker implementations are selected through configuration rather than evaluation-specific engine branches.
+A case supplies an input message, an initial environment, and checks. A configured runner drives the agent; checkers assess its messages, environment changes, or other available observations. Runner and checker implementations are selected through configuration rather than evaluation-specific engine branches. Implementations declare their parameters with Zod schemas; the engine validates YAML-derived data once and passes only validated typed output to execution.
 
 ```text
 Create an isolated run directory
@@ -102,7 +102,7 @@ This advisory is temporarily accepted for the reviewed, pinned toolchain; the de
 
 - macOS only. There is no Linux or container backend.
 - One initial user message and one resolved case per invocation.
-- The installable CLI is a Node.js package, not a bundled standalone executable; Node.js 24+, the `yaml` dependency, and the package layout are required.
+- The installable CLI is a Node.js package, not a bundled standalone executable; Node.js 24+, the declared `yaml` and `zod` dependencies, and the package layout are required.
 - Checks run after the agent stops and before the workspace is removed; full workspace snapshots are not retained.
 - The judge reads one selected file; there is no general evidence-reference language.
 - Checks read regular files only. A FIFO, device, socket, or directory is a check error rather than a blocking open or a passing observation.

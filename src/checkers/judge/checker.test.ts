@@ -3,6 +3,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { test } from "node:test";
 import { ConfigError, type ImplementationParams } from "../../engine/config.ts";
+import { parseImplementationParams } from "../../engine/params.ts";
 import type { CheckerContext } from "../../engine/registry.ts";
 import { createFakePi, makeTempDir } from "../../../tests/helpers/fake-pi-control.ts";
 import { judgeChecker, JudgeError } from "./checker.ts";
@@ -43,22 +44,19 @@ function params(executable: string, rubric: string[] = ["hello.txt exists and co
 }
 
 async function checkRaw(
-  checker: ReturnType<typeof judgeChecker.create>,
   raw: ImplementationParams,
   contextValue: CheckerContext,
 ): Promise<readonly import("../../engine/registry.ts").CheckResult[]> {
-  return checker.check(await judgeChecker.parse(raw, contextValue.authoringDir), contextValue);
+  const paramsValue = await parseImplementationParams(judgeChecker.params, raw, 'checker "judge"');
+  const checker = await judgeChecker.create(paramsValue, contextValue.authoringDir);
+  return checker.check(paramsValue, contextValue);
 }
 
 test("judge passes when every rubric statement passes", async (t) => {
   const dirs = await setup(t);
   const fake = await createFakePi(t, "judge-valid");
 
-  const results = await checkRaw(
-    judgeChecker.create(),
-    params(fake.executable),
-    await context(dirs.root, dirs.workspace, dirs.baseline),
-  );
+  const results = await checkRaw(params(fake.executable), await context(dirs.root, dirs.workspace, dirs.baseline));
   assert.equal(results.length, 1);
   assert.equal(results[0]?.status, "pass");
   assert.equal(results[0]?.checker, "judge");
@@ -69,11 +67,7 @@ test("judge preserves a valid failing verdict as a failed check", async (t) => {
   const dirs = await setup(t);
   const fake = await createFakePi(t, "judge-fail");
 
-  const results = await checkRaw(
-    judgeChecker.create(),
-    params(fake.executable),
-    await context(dirs.root, dirs.workspace, dirs.baseline),
-  );
+  const results = await checkRaw(params(fake.executable), await context(dirs.root, dirs.workspace, dirs.baseline));
   assert.equal(results[0]?.status, "fail");
   assert.match(results[0]?.reason ?? "", /differs/);
 });
@@ -82,11 +76,7 @@ test("judge accepts a fenced JSON verdict", async (t) => {
   const dirs = await setup(t);
   const fake = await createFakePi(t, "judge-fenced");
 
-  const results = await checkRaw(
-    judgeChecker.create(),
-    params(fake.executable),
-    await context(dirs.root, dirs.workspace, dirs.baseline),
-  );
+  const results = await checkRaw(params(fake.executable), await context(dirs.root, dirs.workspace, dirs.baseline));
   assert.equal(results[0]?.status, "pass");
 });
 
@@ -96,12 +86,7 @@ test("judge reports malformed verdicts as checker failures, not failed checks", 
   for (const scenario of ["judge-invalid", "judge-count", "judge-type"]) {
     const fake = await createFakePi(t, scenario);
     await assert.rejects(
-      async () =>
-        checkRaw(
-          judgeChecker.create(),
-          params(fake.executable),
-          await context(dirs.root, dirs.workspace, dirs.baseline),
-        ),
+      async () => checkRaw(params(fake.executable), await context(dirs.root, dirs.workspace, dirs.baseline)),
       JudgeError,
       scenario,
     );
@@ -113,8 +98,7 @@ test("judge invocation failure is a checker failure", async (t) => {
   const fake = await createFakePi(t, "crash");
 
   await assert.rejects(
-    async () =>
-      checkRaw(judgeChecker.create(), params(fake.executable), await context(dirs.root, dirs.workspace, dirs.baseline)),
+    async () => checkRaw(params(fake.executable), await context(dirs.root, dirs.workspace, dirs.baseline)),
     JudgeError,
   );
 });
@@ -123,11 +107,7 @@ test("judge prompt contains the task, file evidence, and rubric", async (t) => {
   const dirs = await setup(t, "Hello, world!\n");
   const fake = await createFakePi(t, "judge-echo");
 
-  const results = await checkRaw(
-    judgeChecker.create(),
-    params(fake.executable),
-    await context(dirs.root, dirs.workspace, dirs.baseline),
-  );
+  const results = await checkRaw(params(fake.executable), await context(dirs.root, dirs.workspace, dirs.baseline));
   const reason = results[0]?.reason ?? "";
   assert.match(reason, /Create hello\.txt/);
   assert.match(reason, /Hello, world!/);
@@ -139,11 +119,7 @@ test("judge invocation disables tools and discovered resources", async (t) => {
   const dirs = await setup(t);
   const fake = await createFakePi(t, "judge-args");
 
-  const results = await checkRaw(
-    judgeChecker.create(),
-    params(fake.executable),
-    await context(dirs.root, dirs.workspace, dirs.baseline),
-  );
+  const results = await checkRaw(params(fake.executable), await context(dirs.root, dirs.workspace, dirs.baseline));
   const args = results[0]?.reason ?? "";
   assert.match(args, /--no-tools/);
   assert.doesNotMatch(args, /\s--tools\s/);
@@ -160,33 +136,34 @@ test("judge receives an explicit missing-file signal", async (t) => {
   const dirs = await setup(t, null);
   const fake = await createFakePi(t, "judge-echo");
 
-  const results = await checkRaw(
-    judgeChecker.create(),
-    params(fake.executable),
-    await context(dirs.root, dirs.workspace, dirs.baseline),
-  );
+  const results = await checkRaw(params(fake.executable), await context(dirs.root, dirs.workspace, dirs.baseline));
   assert.match(results[0]?.reason ?? "", /the file does not exist/);
 });
 
-test("judge validates its parameters before launch", async (t) => {
+test("judge rejects invalid parameters before launch", async (t) => {
   await setup(t);
   const fake = await createFakePi(t, "judge-valid");
-  const validate = async (value: ImplementationParams) => judgeChecker.parse(value, process.cwd());
+  const parse = (value: ImplementationParams) =>
+    parseImplementationParams(judgeChecker.params, value, 'checker "judge"');
 
   await assert.rejects(
-    () => validate({ model: "", file: "hello.txt", rubric: ["x"], executable: fake.executable }),
+    () => parse({ model: "", file: "hello.txt", rubric: ["x"], executable: fake.executable }),
     ConfigError,
   );
   await assert.rejects(
-    () => validate({ model: "m", file: "hello.txt", rubric: [], executable: fake.executable }),
+    () => parse({ model: "m", file: "hello.txt", rubric: [], executable: fake.executable }),
     ConfigError,
   );
   await assert.rejects(
-    () => validate({ model: "m", file: "/etc/passwd", rubric: ["x"], executable: fake.executable }),
+    () => parse({ model: "m", file: "/etc/passwd", rubric: ["x"], executable: fake.executable }),
     ConfigError,
   );
   await assert.rejects(
-    () => validate({ model: "m", file: "hello.txt", rubric: ["x"], executable: fake.executable, extra: 1 }),
+    () => parse({ model: "m", file: "hello.txt", rubric: ["x"], executable: fake.executable, extra: 1 }),
     ConfigError,
   );
+
+  const defaults = await parse({ model: "m", file: "hello.txt", rubric: ["x"], executable: fake.executable });
+  assert.equal(defaults.thinking, "medium");
+  assert.deepEqual(defaults.envPassthrough, []);
 });

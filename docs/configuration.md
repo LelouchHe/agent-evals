@@ -118,7 +118,7 @@ Provide a `view` operation that displays the resolved case with the top-level so
 
 Use the same composition function and resolved values for inspection and execution. Inspection can report parse, structural, and top-level collision errors without runtime preparation. It does not establish that runtime prerequisites such as provider credentials or the harness executable are available; execution performs the full implementation/runtime validation before launching anything.
 
-Do not call runner or checker `parse` methods from `view`: parsing also performs run-path readiness checks such as executable, platform, and credential-variable presence. `view` therefore performs YAML, structural, and top-level collision validation only. It does not call implementation parsing or validation.
+Do not call implementation parameter schemas or `create` from `view`: schema validation is the run-path parameter boundary, and `create` also performs readiness checks such as executable, platform, and credential-variable presence. `view` therefore performs YAML, structural, and top-level collision validation only. It does not validate implementation parameters or establish runtime readiness.
 
 The implemented commands are:
 

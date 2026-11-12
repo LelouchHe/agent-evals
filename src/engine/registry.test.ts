@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { pathToFileURL } from "node:url";
 import { test } from "node:test";
+import { pathToFileURL } from "node:url";
+import { z } from "zod";
 import { makeTempDir } from "../../tests/helpers/fake-pi-control.ts";
 import { ConfigError, type ImplementationParams } from "./config.ts";
 import {
@@ -18,15 +19,12 @@ import {
   type RunnerDefinition,
 } from "./registry.ts";
 
-interface FakeParams {
-  readonly marker: string;
-}
+const fakeParamsSchema = z.strictObject({ marker: z.string() });
+type FakeParams = z.output<typeof fakeParamsSchema>;
 
 const fakeChecker = (type: string): CheckerDefinition<FakeParams> => ({
   type,
-  parse() {
-    return { marker: type };
-  },
+  params: fakeParamsSchema,
   create() {
     return {
       check: async (params) => {
@@ -39,9 +37,7 @@ const fakeChecker = (type: string): CheckerDefinition<FakeParams> => ({
 
 const fakeRunner = (type: string): RunnerDefinition<FakeParams> => ({
   type,
-  parse() {
-    return { marker: type };
-  },
+  params: fakeParamsSchema,
   create() {
     return {
       run: async (params) => ({ finalText: params.marker, diagnostics: [] }),
@@ -64,19 +60,36 @@ test("registry rejects duplicate types and reports unknown implementations", () 
 test("registry rejects malformed implementation definitions", () => {
   const registry = createRegistry();
   assert.throws(() => addChecker(registry, {} as never, "test"), ConfigError);
-  assert.throws(() => addRunner(registry, { type: "bad", parse() {} } as never, "test"), ConfigError);
+  assert.throws(() => addRunner(registry, { type: "bad", params: fakeParamsSchema } as never, "test"), ConfigError);
+  assert.throws(() => addChecker(registry, { type: "bad", params: {}, create() {} } as never, "test"), ConfigError);
 });
 
-test("trusted directories load runner and checker modules", async (t) => {
+const zodImport = `import { z } from ${JSON.stringify(import.meta.resolve("zod"))};\n`;
+
+test("trusted directories load runner and checker modules with sync and async schemas", async (t) => {
   const checkers = await makeTempDir(t, "ae-trusted-checkers-");
   await writeFile(
     join(checkers, "custom-checker.ts"),
-    `export const checker = { type: "custom", async parse() { return { token: "external-checker-parsed" }; }, create() { return { async check(params) { return [{ checker: "custom", subject: params.token, status: "pass", reason: "ok" }]; } }; } };\n`,
+    `${zodImport}export const checker = {
+  type: "custom",
+  params: z.strictObject({ raw: z.boolean() }).transform(async () => ({ token: "external-checker-parsed" })),
+  create(params) {
+    return { async check() { return [{ checker: "custom", subject: params.token, status: "pass", reason: "ok" }]; } };
+  },
+};
+`,
   );
   const runners = await makeTempDir(t, "ae-trusted-runners-");
   await writeFile(
     join(runners, "custom-runner.ts"),
-    `export const runner = { type: "custom", parse() { return { token: "external-runner-parsed" }; }, create() { return { async run(params) { return { finalText: params.token, diagnostics: [] }; }, async stop() {} }; } };\n`,
+    `${zodImport}export const runner = {
+  type: "custom",
+  params: z.strictObject({ raw: z.boolean() }).transform(() => ({ token: "external-runner-parsed" })),
+  create(params) {
+    return { async run() { return { finalText: params.token, diagnostics: [] }; }, async stop() {} };
+  },
+};
+`,
   );
 
   const registry = createRegistry();
@@ -127,7 +140,7 @@ test("trusted discovery fails closed for malformed modules", async (t) => {
 test("trusted directories reject duplicate implementation types", async (t) => {
   const first = await makeTempDir(t, "ae-trusted-dup-a-");
   const second = await makeTempDir(t, "ae-trusted-dup-b-");
-  const body = `export const checker = { type: "same", parse() { return {}; }, create() { return { async check() { return []; } }; } };\n`;
+  const body = `${zodImport}export const checker = { type: "same", params: z.strictObject({}), create() { return { async check() { return []; } }; } };\n`;
   await writeFile(join(first, "a.ts"), body);
   await writeFile(join(second, "b.ts"), body);
 
@@ -137,7 +150,7 @@ test("trusted directories reject duplicate implementation types", async (t) => {
   );
 });
 
-test("preparation parses once and binds each parsed shape to its own instance", async () => {
+test("preparation validates once and binds each parsed shape to its own instance", async () => {
   interface RunnerParsed {
     readonly label: string;
     readonly compiled: number;
@@ -157,15 +170,16 @@ test("preparation parses once and binds each parsed shape to its own instance", 
   let runnerRaw: ImplementationParams | undefined;
   let runnerReceived: RunnerParsed | undefined;
   const runnerParsed: RunnerParsed = { label: "runner-sentinel", compiled: 42 };
+  const runnerSchema = z.strictObject({ value: z.string() }).transform((raw): RunnerParsed => {
+    runnerParseCalls += 1;
+    runnerRaw = raw;
+    return runnerParsed;
+  });
   addRunner(
     registry,
     {
       type: "typed-runner",
-      parse: async (params) => {
-        runnerParseCalls += 1;
-        runnerRaw = params;
-        return runnerParsed;
-      },
+      params: runnerSchema,
       create: () => {
         runnerCreateCalls += 1;
         return {
@@ -183,14 +197,15 @@ test("preparation parses once and binds each parsed shape to its own instance", 
   let checkerAParseCalls = 0;
   let checkerAReceived: CheckerAParsed | undefined;
   const checkerAParsed: CheckerAParsed = { kind: "a", compiled: "a-sentinel" };
+  const checkerASchema = z.strictObject({ kind: z.literal("raw-a") }).transform((): CheckerAParsed => {
+    checkerAParseCalls += 1;
+    return checkerAParsed;
+  });
   addChecker(
     registry,
     {
       type: "typed-checker-a",
-      parse: () => {
-        checkerAParseCalls += 1;
-        return checkerAParsed;
-      },
+      params: checkerASchema,
       create: () => ({
         check: async (params) => {
           checkerAReceived = params;
@@ -204,14 +219,15 @@ test("preparation parses once and binds each parsed shape to its own instance", 
   let checkerBParseCalls = 0;
   let checkerBReceived: CheckerBParsed | undefined;
   const checkerBParsed: CheckerBParsed = { kind: "b", compiled: 7 };
+  const checkerBSchema = z.strictObject({ kind: z.literal("raw-b") }).transform(async (): Promise<CheckerBParsed> => {
+    checkerBParseCalls += 1;
+    return checkerBParsed;
+  });
   addChecker(
     registry,
     {
       type: "typed-checker-b",
-      parse: async () => {
-        checkerBParseCalls += 1;
-        return checkerBParsed;
-      },
+      params: checkerBSchema,
       create: () => ({
         check: async (params) => {
           checkerBReceived = params;
@@ -222,11 +238,11 @@ test("preparation parses once and binds each parsed shape to its own instance", 
     "test",
   );
 
-  const raw = { value: "raw", $type: "typed-runner" };
+  const raw = { value: "raw" };
   const preparedRunner = await requireRunner(registry, "typed-runner").prepare(raw, "/authoring");
   assert.equal(runnerParseCalls, 1);
   assert.equal(runnerCreateCalls, 1);
-  assert.equal(runnerRaw, raw);
+  assert.deepEqual(runnerRaw, raw);
 
   const preparedCheckerA = await requireChecker(registry, "typed-checker-a").prepare({ kind: "raw-a" }, "/authoring");
   const preparedCheckerB = await requireChecker(registry, "typed-checker-b").prepare({ kind: "raw-b" }, "/authoring");
@@ -259,16 +275,14 @@ test("preparation parses once and binds each parsed shape to its own instance", 
   assert.equal(checkerBParseCalls, 1);
 });
 
-test("parse failures stop preparation before an instance is created or run", async () => {
+test("schema failures stop preparation before an instance is created or run", async () => {
   const registry = createRegistry();
   let createCalls = 0;
   addRunner(
     registry,
     {
       type: "failing-runner",
-      parse: async () => {
-        throw new ConfigError("parse rejected raw params");
-      },
+      params: z.strictObject({ raw: z.literal(false) }),
       create: () => {
         createCalls += 1;
         return { run: async () => ({ finalText: null, diagnostics: [] }), stop: async () => {} };
@@ -279,33 +293,42 @@ test("parse failures stop preparation before an instance is created or run", asy
 
   await assert.rejects(
     () => requireRunner(registry, "failing-runner").prepare({ raw: true }, "/authoring"),
-    /parse rejected raw params/,
+    /runner "failing-runner" parameter raw/,
   );
   assert.equal(createCalls, 0);
 });
 
 function receiverRunnerModule(type: string): string {
-  return `export const runner = {
-  type: ${JSON.stringify(type)},
-  parseCalls: 0,
-  createCalls: 0,
-  async parse(params) {
-    if (this !== runner) throw new Error("parse receiver lost");
-    this.parseCalls += 1;
-    return { text: String(params.text), compiled: 7 };
+  return `${zodImport}const base = z.strictObject({ text: z.string() }).transform((input) => ({ text: input.text, compiled: 7 }));
+let parseCalls = 0;
+const paramsSchema = new Proxy(base, {
+  get(target, property, receiver) {
+    if (property === "parseCalls") return parseCalls;
+    if (property === "safeParseAsync") {
+      return async function (input) {
+        if (this !== paramsSchema) throw new Error("schema receiver lost");
+        parseCalls += 1;
+        return base.safeParseAsync(input);
+      };
+    }
+    return Reflect.get(target, property, receiver);
   },
-  create() {
+});
+export const runner = {
+  type: ${JSON.stringify(type)},
+  params: paramsSchema,
+  createCalls: 0,
+  create(params) {
     if (this !== runner) throw new Error("create receiver lost");
     this.createCalls += 1;
     return {
       marker: "runner-instance",
-      async run(params) {
+      async run(runParams) {
         if (this?.marker !== "runner-instance") throw new Error("run receiver lost");
-        return { finalText: \`parsed:\${params.text}:\${params.compiled}\`, diagnostics: [] };
+        return { finalText: \`parsed:\${runParams.text}:\${runParams.compiled}\`, diagnostics: [] };
       },
       async stop() {
         if (this?.marker !== "runner-instance") throw new Error("stop receiver lost");
-        this.stopped = true;
       },
     };
   },
@@ -314,23 +337,74 @@ function receiverRunnerModule(type: string): string {
 }
 
 function receiverCheckerModule(type: string): string {
-  return `export const checker = {
-  type: ${JSON.stringify(type)},
-  parseCalls: 0,
-  createCalls: 0,
-  parse(params) {
-    if (this !== checker) throw new Error("checker parse receiver lost");
-    this.parseCalls += 1;
-    return { text: String(params.text), compiled: 3 };
+  return `${zodImport}const base = z.strictObject({ text: z.string() }).transform((input) => ({ text: input.text, compiled: 3 }));
+let parseCalls = 0;
+const paramsSchema = new Proxy(base, {
+  get(target, property, receiver) {
+    if (property === "parseCalls") return parseCalls;
+    if (property === "safeParseAsync") {
+      return async function (input) {
+        if (this !== paramsSchema) throw new Error("checker schema receiver lost");
+        parseCalls += 1;
+        return base.safeParseAsync(input);
+      };
+    }
+    return Reflect.get(target, property, receiver);
   },
-  create() {
+});
+export const checker = {
+  type: ${JSON.stringify(type)},
+  params: paramsSchema,
+  createCalls: 0,
+  create(params) {
     if (this !== checker) throw new Error("checker create receiver lost");
     this.createCalls += 1;
     return {
       marker: "checker-instance",
-      async check(params) {
+      async check(checkParams) {
         if (this?.marker !== "checker-instance") throw new Error("check receiver lost");
-        return [{ checker: "receiver-checker", subject: \`parsed:\${params.text}:\${params.compiled}\`, status: "pass", reason: "ok" }];
+        return [{ checker: "receiver-checker", subject: \`parsed:\${checkParams.text}:\${checkParams.compiled}\`, status: "pass", reason: "ok" }];
+      },
+    };
+  },
+};
+`;
+}
+
+function createReceiverRunnerModule(type: string): string {
+  return `${zodImport}export const runner = {
+  type: ${JSON.stringify(type)},
+  createCalls: 0,
+  params: z.strictObject({ text: z.string() }).transform((params) => ({ text: params.text, compiled: 7 })),
+  create(params) {
+    if (this !== runner) throw new Error("create receiver lost");
+    this.createCalls += 1;
+    return {
+      marker: "runner-instance",
+      async run(runParams) {
+        if (this?.marker !== "runner-instance") throw new Error("run receiver lost");
+        return { finalText: \`parsed:\${runParams.text}:\${runParams.compiled}\`, diagnostics: [] };
+      },
+      async stop() {},
+    };
+  },
+};
+`;
+}
+
+function createReceiverCheckerModule(type: string): string {
+  return `${zodImport}export const checker = {
+  type: ${JSON.stringify(type)},
+  createCalls: 0,
+  params: z.strictObject({ text: z.string() }).transform((params) => ({ text: params.text, compiled: 3 })),
+  create(params) {
+    if (this !== checker) throw new Error("checker create receiver lost");
+    this.createCalls += 1;
+    return {
+      marker: "checker-instance",
+      async check(checkParams) {
+        if (this?.marker !== "checker-instance") throw new Error("check receiver lost");
+        return [{ checker: "receiver-checker", subject: \`parsed:\${checkParams.text}:\${checkParams.compiled}\`, status: "pass", reason: "ok" }];
       },
     };
   },
@@ -342,9 +416,13 @@ interface ReceiverParams {
   readonly text: string;
   readonly compiled: number;
 }
-interface ReceiverExported {
-  readonly parseCalls: number;
+interface ReceiverRunnerExported {
   readonly createCalls: number;
+  readonly params: { readonly parseCalls: number };
+}
+interface ReceiverCheckerExported {
+  readonly createCalls: number;
+  readonly params: { readonly parseCalls: number };
 }
 
 const runnerContext: RunnerContext = {
@@ -359,7 +437,7 @@ const runnerContext: RunnerContext = {
   signal: new AbortController().signal,
 };
 
-test("direct and trusted discovery preserve definition receivers for parse, create, and instance methods", async (t) => {
+test("direct and trusted discovery preserve definition and schema receivers", async (t) => {
   const directRunnerDir = await makeTempDir(t, "ae-receiver-direct-runner-");
   const directCheckerDir = await makeTempDir(t, "ae-receiver-direct-checker-");
   const discoveredRunnerDir = await makeTempDir(t, "ae-receiver-discovered-runner-");
@@ -370,10 +448,10 @@ test("direct and trusted discovery preserve definition receivers for parse, crea
   await writeFile(join(discoveredCheckerDir, "checker.mjs"), receiverCheckerModule("receiver-discovered-checker"));
 
   const directRunnerModule = (await import(pathToFileURL(join(directRunnerDir, "runner.mjs")).href)) as {
-    runner: RunnerDefinition<ReceiverParams> & ReceiverExported;
+    runner: RunnerDefinition<ReceiverParams> & ReceiverRunnerExported;
   };
   const directCheckerModule = (await import(pathToFileURL(join(directCheckerDir, "checker.mjs")).href)) as {
-    checker: CheckerDefinition<ReceiverParams> & ReceiverExported;
+    checker: CheckerDefinition<ReceiverParams> & ReceiverCheckerExported;
   };
   const directRegistry = createRegistry();
   addRunner(directRegistry, directRunnerModule.runner, "direct");
@@ -393,9 +471,9 @@ test("direct and trusted discovery preserve definition receivers for parse, crea
 
   assert.equal(directRun.finalText, "parsed:direct:7");
   assert.equal(directChecks[0]?.subject, "parsed:direct:3");
-  assert.equal(directRunnerModule.runner.parseCalls, 1);
+  assert.equal(directRunnerModule.runner.params.parseCalls, 1);
   assert.equal(directRunnerModule.runner.createCalls, 1);
-  assert.equal(directCheckerModule.checker.parseCalls, 1);
+  assert.equal(directCheckerModule.checker.params.parseCalls, 1);
   assert.equal(directCheckerModule.checker.createCalls, 1);
 
   const discoveredRegistry = createRegistry();
@@ -404,10 +482,10 @@ test("direct and trusted discovery preserve definition receivers for parse, crea
     checkerDirs: [discoveredCheckerDir],
   });
   const discoveredRunnerModule = (await import(pathToFileURL(join(discoveredRunnerDir, "runner.mjs")).href)) as {
-    runner: ReceiverExported;
+    runner: ReceiverRunnerExported;
   };
   const discoveredCheckerModule = (await import(pathToFileURL(join(discoveredCheckerDir, "checker.mjs")).href)) as {
-    checker: ReceiverExported;
+    checker: ReceiverCheckerExported;
   };
 
   const discoveredRunner = await requireRunner(discoveredRegistry, "receiver-discovered-runner").prepare(
@@ -424,58 +502,13 @@ test("direct and trusted discovery preserve definition receivers for parse, crea
 
   assert.equal(discoveredRun.finalText, "parsed:discovered:7");
   assert.equal(discoveredChecks[0]?.subject, "parsed:discovered:3");
-  assert.equal(discoveredRunnerModule.runner.parseCalls, 1);
+  assert.equal(discoveredRunnerModule.runner.params.parseCalls, 1);
   assert.equal(discoveredRunnerModule.runner.createCalls, 1);
-  assert.equal(discoveredCheckerModule.checker.parseCalls, 1);
+  assert.equal(discoveredCheckerModule.checker.params.parseCalls, 1);
   assert.equal(discoveredCheckerModule.checker.createCalls, 1);
 });
 
-function createReceiverRunnerModule(type: string): string {
-  return `export const runner = {
-  type: ${JSON.stringify(type)},
-  createCalls: 0,
-  parse(params) {
-    return { text: String(params.text), compiled: 7 };
-  },
-  create() {
-    if (this !== runner) throw new Error("create receiver lost");
-    this.createCalls += 1;
-    return {
-      marker: "runner-instance",
-      async run(params) {
-        if (this?.marker !== "runner-instance") throw new Error("run receiver lost");
-        return { finalText: \`parsed:\${params.text}:\${params.compiled}\`, diagnostics: [] };
-      },
-      async stop() {},
-    };
-  },
-};
-`;
-}
-
-function createReceiverCheckerModule(type: string): string {
-  return `export const checker = {
-  type: ${JSON.stringify(type)},
-  createCalls: 0,
-  parse(params) {
-    return { text: String(params.text), compiled: 3 };
-  },
-  create() {
-    if (this !== checker) throw new Error("checker create receiver lost");
-    this.createCalls += 1;
-    return {
-      marker: "checker-instance",
-      async check(params) {
-        if (this?.marker !== "checker-instance") throw new Error("check receiver lost");
-        return [{ checker: "receiver-checker", subject: \`parsed:\${params.text}:\${params.compiled}\`, status: "pass", reason: "ok" }];
-      },
-    };
-  },
-};
-`;
-}
-
-test("trusted discovery preserves create receivers independently of parse style", async (t) => {
+test("trusted discovery preserves create receivers independently of schema style", async (t) => {
   const runnerDir = await makeTempDir(t, "ae-create-receiver-runner-");
   const checkerDir = await makeTempDir(t, "ae-create-receiver-checker-");
   await writeFile(join(runnerDir, "runner.mjs"), createReceiverRunnerModule("create-receiver-runner"));
@@ -484,10 +517,10 @@ test("trusted discovery preserves create receivers independently of parse style"
   const registry = createRegistry();
   await loadTrustedImplementations(registry, { runnerDirs: [runnerDir], checkerDirs: [checkerDir] });
   const runnerModule = (await import(pathToFileURL(join(runnerDir, "runner.mjs")).href)) as {
-    runner: ReceiverExported;
+    runner: { readonly createCalls: number };
   };
   const checkerModule = (await import(pathToFileURL(join(checkerDir, "checker.mjs")).href)) as {
-    checker: ReceiverExported;
+    checker: { readonly createCalls: number };
   };
 
   const runner = await requireRunner(registry, "create-receiver-runner").prepare({ text: "create" }, runnerDir);

@@ -4,20 +4,24 @@
  * typing mechanism; weakening the contracts makes TypeScript report the
  * directive as unused.
  */
+import { z } from "zod";
 import type { ImplementationParams } from "../../src/engine/config.ts";
 import type {
   CheckerContext,
   CheckerDefinition,
   PreparedChecker,
   PreparedRunner,
+  Runner,
   RunnerContext,
   RunnerDefinition,
+  Checker,
 } from "../../src/engine/registry.ts";
 
-interface ExampleParams {
-  readonly value: string;
-  readonly compiled: number;
-}
+const exampleParamsSchema = z.strictObject({
+  value: z.string(),
+  compiled: z.number(),
+});
+type ExampleParams = z.output<typeof exampleParamsSchema>;
 
 const runnerContext: RunnerContext = {
   workspaceDir: "/run/workspace",
@@ -43,10 +47,7 @@ const checkerContext: CheckerContext = {
 
 const exampleRunner: RunnerDefinition<ExampleParams> = {
   type: "example",
-  parse: (params) => ({
-    value: String(params.value),
-    compiled: 1,
-  }),
+  params: exampleParamsSchema,
   create: () => ({
     run: async (params) => ({ finalText: params.value, diagnostics: [] }),
     stop: async () => {},
@@ -55,10 +56,7 @@ const exampleRunner: RunnerDefinition<ExampleParams> = {
 
 const exampleChecker: CheckerDefinition<ExampleParams> = {
   type: "example",
-  parse: (params) => ({
-    value: String(params.value),
-    compiled: 1,
-  }),
+  params: exampleParamsSchema,
   create: () => ({
     check: async (params) => [
       { checker: "example", subject: params.value, status: "pass", reason: String(params.compiled) },
@@ -66,8 +64,8 @@ const exampleChecker: CheckerDefinition<ExampleParams> = {
   }),
 };
 
-const runner = exampleRunner.create();
-const checker = exampleChecker.create();
+const runner = await exampleRunner.create({ value: "typed", compiled: 1 }, "/authoring");
+const checker = await exampleChecker.create({ value: "typed", compiled: 1 }, "/authoring");
 
 void runner.run({ value: "typed", compiled: 1 }, runnerContext);
 void checker.check({ value: "typed", compiled: 1 }, checkerContext);
@@ -83,11 +81,23 @@ void checker.check({ value: "raw", compiled: 1 } as ImplementationParams, checke
 // @ts-expect-error missing parsed field
 void checker.check({ value: "typed" }, checkerContext);
 
+const _defaultedSchema = z.strictObject({
+  value: z.string(),
+  count: z.number().default(1),
+  flags: z.array(z.string()).default([]),
+});
+type Defaulted = z.output<typeof _defaultedSchema>;
+const defaulted: Defaulted = { value: "typed", count: 1, flags: [] };
+// @ts-expect-error defaulted fields are present in the schema output
+const missingDefaults: Defaulted = { value: "typed" };
+void defaulted;
+void missingDefaults;
+
 const mismatchedRunner: RunnerDefinition<ExampleParams> = {
   type: "mismatched",
-  parse: () => ({ value: "typed", compiled: 1 }),
+  params: exampleParamsSchema,
   create: () => ({
-    // @ts-expect-error parse output and created runner must share P
+    // @ts-expect-error schema output and created runner must share P
     run: async (params: number) => ({ finalText: String(params), diagnostics: [] }),
     stop: async () => {},
   }),
@@ -95,17 +105,28 @@ const mismatchedRunner: RunnerDefinition<ExampleParams> = {
 
 const mismatchedChecker: CheckerDefinition<ExampleParams> = {
   type: "mismatched",
-  parse: () => ({ value: "typed", compiled: 1 }),
+  params: exampleParamsSchema,
   create: () => ({
-    // @ts-expect-error parse output and created checker must share P
+    // @ts-expect-error schema output and created checker must share P
     check: async (_params: number) => [],
   }),
+};
+
+const mismatchedSchema: RunnerDefinition<ExampleParams> = {
+  type: "mismatched-schema",
+  // @ts-expect-error schema output must match the instance parameter type
+  params: z.strictObject({ value: z.string() }),
+  create: () => runner,
 };
 
 // @ts-expect-error typed definitions cannot be widened to an unknown-parameter definition
 const widenedRunner: RunnerDefinition<unknown> = exampleRunner;
 // @ts-expect-error typed definitions cannot be widened to an unknown-parameter definition
 const widenedChecker: CheckerDefinition<unknown> = exampleChecker;
+// @ts-expect-error runner instances stay parameter-contravariant
+const widenedRunnerInstance: Runner<unknown> = runner;
+// @ts-expect-error checker instances stay parameter-contravariant
+const widenedCheckerInstance: Checker<unknown> = checker;
 
 const preparedRunner = null as unknown as PreparedRunner;
 const preparedChecker = null as unknown as PreparedChecker;
@@ -118,5 +139,8 @@ void preparedChecker.check({ value: "typed", compiled: 1 }, checkerContext);
 
 void mismatchedRunner;
 void mismatchedChecker;
+void mismatchedSchema;
 void widenedRunner;
 void widenedChecker;
+void widenedRunnerInstance;
+void widenedCheckerInstance;

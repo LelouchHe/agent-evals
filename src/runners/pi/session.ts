@@ -65,18 +65,6 @@ export async function resolvePiExecutable(executable: string): Promise<string> {
   }
 }
 
-/** Validate that every forwarded environment variable is present. */
-export function validateEnvPassthrough(names: readonly string[]): void {
-  for (const name of names) {
-    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) {
-      throw new ConfigError(`envPassthrough contains an invalid variable name: ${name}`);
-    }
-    if (process.env[name] === undefined) {
-      throw new ConfigError(`envPassthrough requires ${name} to be set in the invoking environment`);
-    }
-  }
-}
-
 /**
  * Run one isolated Pi RPC invocation. The Pi process and its descendants are
  * always stopped before this function returns or throws.

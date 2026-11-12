@@ -1,25 +1,67 @@
-import { ConfigError, errorMessage, type ImplementationParams } from "../../engine/config.ts";
+import { z } from "zod";
+import { errorMessage } from "../../engine/config.ts";
 import type { CheckResult, Checker, CheckerContext, CheckerDefinition } from "../../engine/registry.ts";
 import { isMissing, readRunFile, runFileExists, type RunRoot } from "../../engine/workspace.ts";
 import { evaluateRegexes } from "./regex.ts";
 
-const FILE_CHECK_KEYS = new Set(["path", "exists", "matches", "unchanged"]);
 const MAX_PATTERNS = 100;
 
-interface FileCheckParams {
-  readonly path: string;
-  readonly exists?: boolean;
-  readonly matches?: readonly RegExp[];
-  readonly patterns: readonly string[];
-  readonly unchanged?: boolean;
-}
+const runRelativePath = z
+  .string()
+  .min(1, "must be a non-empty run-relative path")
+  .refine((value) => !value.startsWith("/") && !value.split(/[\\/]+/).includes(".."), {
+    message: "must be relative to the run workspace without '..' segments",
+  });
+
+const patternSchema = z
+  .string()
+  .min(1, "must not be empty")
+  .superRefine((pattern, context) => {
+    try {
+      new RegExp(pattern);
+    } catch (error) {
+      context.addIssue({
+        code: "custom",
+        message: `is not a valid regular expression: ${errorMessage(error)}`,
+      });
+    }
+  });
+
+const fileCheckParamsSchema = z
+  .strictObject({
+    path: runRelativePath,
+    exists: z.boolean().optional(),
+    matches: z.union([patternSchema, z.array(patternSchema).max(MAX_PATTERNS)]).optional(),
+    unchanged: z.literal(true).optional(),
+  })
+  .superRefine((params, context) => {
+    const patternCount =
+      params.matches === undefined ? 0 : typeof params.matches === "string" ? 1 : params.matches.length;
+    if (params.exists === undefined && params.unchanged === undefined && patternCount === 0) {
+      context.addIssue({
+        code: "custom",
+        message: "needs at least one of exists, matches, or unchanged",
+      });
+    }
+  })
+  .transform((params) => {
+    const patterns =
+      params.matches === undefined ? [] : typeof params.matches === "string" ? [params.matches] : params.matches;
+    return {
+      path: params.path,
+      ...(params.exists === undefined ? {} : { exists: params.exists }),
+      ...(params.unchanged === undefined ? {} : { unchanged: params.unchanged }),
+      patterns,
+      matches: patterns.map((pattern) => new RegExp(pattern)),
+    };
+  });
+
+type FileCheckParams = z.output<typeof fileCheckParamsSchema>;
 
 /** Declarative workspace file assertions: exists, regex search, unchanged. */
 export const fileChecker: CheckerDefinition<FileCheckParams> = {
   type: "file",
-  parse(params: ImplementationParams): FileCheckParams {
-    return parseParams(params);
-  },
+  params: fileCheckParamsSchema,
   create() {
     return new FileChecker();
   },
@@ -102,70 +144,6 @@ class FileChecker implements Checker<FileCheckParams> {
     }
 
     return results;
-  };
-}
-
-function parseParams(params: ImplementationParams): FileCheckParams {
-  const unknown = Object.keys(params).filter((key) => !FILE_CHECK_KEYS.has(key));
-  if (unknown.length > 0) {
-    throw new ConfigError(
-      `file checker has unknown parameter${unknown.length === 1 ? "" : "s"}: ${unknown.join(", ")}`,
-    );
-  }
-
-  const path = params.path;
-  if (typeof path !== "string" || path.length === 0) {
-    throw new ConfigError("file checker parameter path must be a non-empty string");
-  }
-  if (path.startsWith("/") || path.split(/[\\/]+/).includes("..")) {
-    throw new ConfigError(`file checker path must be relative to the run workspace: ${path}`);
-  }
-
-  const exists = params.exists;
-  if (exists !== undefined && typeof exists !== "boolean") {
-    throw new ConfigError("file checker parameter exists must be a boolean");
-  }
-
-  const unchanged = params.unchanged;
-  if (unchanged !== undefined && unchanged !== true) {
-    throw new ConfigError("file checker parameter unchanged may only be true or omitted; false is not supported");
-  }
-
-  let patterns: string[] = [];
-  if (params.matches !== undefined) {
-    if (typeof params.matches === "string") {
-      patterns = [params.matches];
-    } else if (Array.isArray(params.matches) && params.matches.every((item) => typeof item === "string")) {
-      patterns = params.matches as string[];
-    } else {
-      throw new ConfigError("file checker parameter matches must be a string or a list of strings");
-    }
-    if (patterns.length > MAX_PATTERNS) {
-      throw new ConfigError(`file checker matches supports at most ${MAX_PATTERNS} patterns`);
-    }
-  }
-
-  const matches = patterns.map((pattern, index) => {
-    if (pattern.length === 0) {
-      throw new ConfigError(`file checker matches[${index}] must not be empty`);
-    }
-    try {
-      return new RegExp(pattern);
-    } catch (error) {
-      throw new ConfigError(`file checker matches[${index}] is not a valid regular expression: ${errorMessage(error)}`);
-    }
-  });
-
-  if (exists === undefined && unchanged === undefined && patterns.length === 0) {
-    throw new ConfigError("file checker needs at least one of exists, matches, or unchanged");
-  }
-
-  return {
-    path,
-    ...(exists === undefined ? {} : { exists }),
-    ...(unchanged === undefined ? {} : { unchanged }),
-    patterns,
-    matches,
   };
 }
 

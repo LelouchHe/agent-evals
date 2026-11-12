@@ -3,6 +3,7 @@ import { mkdir, readFile, realpath, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { test } from "node:test";
 import type { RunnerContext, RunnerOutcome } from "../../engine/registry.ts";
+import { parseImplementationParams } from "../../engine/params.ts";
 import { ConfigError, type ImplementationParams } from "../../engine/config.ts";
 import { createFakePi, makeTempDir } from "../../../tests/helpers/fake-pi-control.ts";
 import { piRunner } from "./runner.ts";
@@ -36,23 +37,28 @@ function context(
   };
 }
 
-async function runParsed(
-  runner: ReturnType<typeof piRunner.create>,
+async function parsePi(raw: ImplementationParams) {
+  return parseImplementationParams(piRunner.params, raw, 'runner "pi"');
+}
+
+async function runPrepared(
   raw: ImplementationParams,
   dirs: Awaited<ReturnType<typeof setup>>,
   timeoutMs: number,
 ): Promise<RunnerOutcome> {
-  return runner.run(await piRunner.parse(raw, dirs.root), context(dirs, timeoutMs));
+  const params = await parsePi(raw);
+  const runner = await piRunner.create(params, dirs.root);
+  try {
+    return await runner.run(params, context(dirs, timeoutMs));
+  } finally {
+    await runner.stop();
+  }
 }
 
 test("pi runner completes an RPC run and reports assistant text", async (t) => {
   const dirs = await setup(t);
   const fake = await createFakePi(t, "success");
-  const runner = piRunner.create();
-  t.after(() => runner.stop());
-
-  const outcome = await runParsed(
-    runner,
+  const outcome = await runPrepared(
     { model: "test/model", thinking: "low", executable: fake.executable },
     dirs,
     10_000,
@@ -70,10 +76,7 @@ test("pi runner passes explicit model, tools, and isolated environment", async (
   const dirs = await setup(t);
   const record = join(dirs.workspaceDir, "args.json");
   const fake = await createFakePi(t, "record-args", record);
-  const runner = piRunner.create();
-  t.after(() => runner.stop());
-
-  await runParsed(runner, { model: "test/model", thinking: "high", executable: fake.executable }, dirs, 10_000);
+  await runPrepared({ model: "test/model", thinking: "high", executable: fake.executable }, dirs, 10_000);
 
   const recorded = JSON.parse(await readFile(record, "utf8")) as {
     args: string[];
@@ -100,9 +103,6 @@ test("pi runner passes explicit model, tools, and isolated environment", async (
 test("pi runner forwards only explicitly named environment variables", async (t) => {
   const dirs = await setup(t);
   const fake = await createFakePi(t, "env");
-  const runner = piRunner.create();
-  t.after(() => runner.stop());
-
   const previous = process.env.FAKE_TOKEN;
   process.env.FAKE_TOKEN = "synthetic-token";
   t.after(() => {
@@ -113,59 +113,71 @@ test("pi runner forwards only explicitly named environment variables", async (t)
     }
   });
 
-  await runParsed(
-    runner,
-    { model: "test/model", executable: fake.executable, envPassthrough: ["FAKE_TOKEN"] },
-    dirs,
-    10_000,
-  );
+  await runPrepared({ model: "test/model", executable: fake.executable, envPassthrough: ["FAKE_TOKEN"] }, dirs, 10_000);
   assert.equal(await readFile(join(dirs.workspaceDir, "env.txt"), "utf8"), "synthetic-token");
 });
 
 test("pi runner stages declared skills inside isolated config", async (t) => {
   const dirs = await setup(t);
   const fake = await createFakePi(t, "success");
-  const runner = piRunner.create();
-  t.after(() => runner.stop());
-
   await mkdir(join(dirs.root, "skill"));
   await writeFile(
     join(dirs.root, "skill", "SKILL.md"),
     "---\nname: tiny\ndescription: Tiny test skill.\n---\n\nWrite the file.\n",
   );
 
-  await runParsed(runner, { model: "test/model", executable: fake.executable, skills: ["skill"] }, dirs, 10_000);
+  await runPrepared({ model: "test/model", executable: fake.executable, skills: ["skill"] }, dirs, 10_000);
   const staged = await readFile(join(dirs.configDir, "skills", "skill", "SKILL.md"), "utf8");
   assert.match(staged, /name: tiny/);
 });
 
-test("pi runner rejects invalid parameters and missing skills before launch", async (t) => {
+test("pi runner rejects invalid parameters and missing prerequisites before launch", async (t) => {
   const dirs = await setup(t);
   const fake = await createFakePi(t, "success");
 
-  await assert.rejects(async () => piRunner.parse({ model: "", executable: fake.executable }, dirs.root), ConfigError);
+  await assert.rejects(() => parsePi({ model: "", executable: fake.executable }), ConfigError);
   await assert.rejects(
-    async () => piRunner.parse({ model: "test/model", executable: fake.executable, thinking: "turbo" }, dirs.root),
+    () => parsePi({ model: "test/model", executable: fake.executable, thinking: "turbo" }),
     ConfigError,
   );
-  await assert.rejects(
-    async () => piRunner.parse({ model: "test/model", executable: fake.executable, skills: ["missing"] }, dirs.root),
-    ConfigError,
-  );
-  await assert.rejects(
-    async () => piRunner.parse({ model: "test/model", executable: fake.executable, extra: true }, dirs.root),
-    ConfigError,
-  );
+  await assert.rejects(() => parsePi({ model: "test/model", executable: fake.executable, extra: true }), ConfigError);
+  await assert.rejects(async () => {
+    const params = await parsePi({ model: "test/model", executable: fake.executable, skills: ["missing"] });
+    await piRunner.create(params, dirs.root);
+  }, ConfigError);
+  await assert.rejects(async () => {
+    const params = await parsePi({ model: "test/model", executable: "missing-pi-executable" });
+    await piRunner.create(params, dirs.root);
+  }, ConfigError);
+  const previous = process.env.AE_MISSING_CREDENTIAL;
+  delete process.env.AE_MISSING_CREDENTIAL;
+  t.after(() => {
+    if (previous === undefined) {
+      delete process.env.AE_MISSING_CREDENTIAL;
+    } else {
+      process.env.AE_MISSING_CREDENTIAL = previous;
+    }
+  });
+  await assert.rejects(async () => {
+    const params = await parsePi({
+      model: "test/model",
+      executable: fake.executable,
+      envPassthrough: ["AE_MISSING_CREDENTIAL"],
+    });
+    await piRunner.create(params, dirs.root);
+  }, ConfigError);
+
+  const defaults = await parsePi({ model: "test/model", executable: fake.executable });
+  assert.equal(defaults.thinking, "medium");
+  assert.deepEqual(defaults.skills, []);
+  assert.deepEqual(defaults.envPassthrough, []);
 });
 
 test("pi runner reports invalid protocol output as an execution error", async (t) => {
   const dirs = await setup(t);
   const fake = await createFakePi(t, "bad-json");
-  const runner = piRunner.create();
-  t.after(() => runner.stop());
-
   await assert.rejects(
-    () => runParsed(runner, { model: "test/model", executable: fake.executable }, dirs, 5_000),
+    () => runPrepared({ model: "test/model", executable: fake.executable }, dirs, 5_000),
     (error: unknown) => error instanceof PiSessionError && /invalid JSON/.test(error.message),
   );
 });
@@ -173,11 +185,8 @@ test("pi runner reports invalid protocol output as an execution error", async (t
 test("pi runner reports an unexpected exit as an execution error", async (t) => {
   const dirs = await setup(t);
   const fake = await createFakePi(t, "crash");
-  const runner = piRunner.create();
-  t.after(() => runner.stop());
-
   await assert.rejects(
-    () => runParsed(runner, { model: "test/model", executable: fake.executable }, dirs, 5_000),
+    () => runPrepared({ model: "test/model", executable: fake.executable }, dirs, 5_000),
     PiSessionError,
   );
 });
@@ -185,11 +194,8 @@ test("pi runner reports an unexpected exit as an execution error", async (t) => 
 test("pi runner classifies a final native provider error as execution failure", async (t) => {
   const dirs = await setup(t);
   const fake = await createFakePi(t, "provider-error");
-  const runner = piRunner.create();
-  t.after(() => runner.stop());
-
   await assert.rejects(
-    () => runParsed(runner, { model: "test/model", executable: fake.executable }, dirs, 5_000),
+    () => runPrepared({ model: "test/model", executable: fake.executable }, dirs, 5_000),
     (error: unknown) => error instanceof PiSessionError && /401|provider request failed/.test(error.message),
   );
 });
@@ -197,20 +203,15 @@ test("pi runner classifies a final native provider error as execution failure", 
 test("pi runner ignores a recoverable earlier provider error when the final run succeeds", async (t) => {
   const dirs = await setup(t);
   const fake = await createFakePi(t, "retry-then-success");
-  const runner = piRunner.create();
-  t.after(() => runner.stop());
-
-  const outcome = await runParsed(runner, { model: "test/model", executable: fake.executable }, dirs, 5_000);
+  const outcome = await runPrepared({ model: "test/model", executable: fake.executable }, dirs, 5_000);
   assert.equal(outcome.finalText, "Recovered after a retry.");
 });
 
 test("pi runner reports a startup failure without an unhandled rejection", async (t) => {
   const dirs = await setup(t);
   const fake = await createFakePi(t, "startup-crash");
-  const runner = piRunner.create();
-
   await assert.rejects(
-    () => runParsed(runner, { model: "test/model", executable: fake.executable }, dirs, 5_000),
+    () => runPrepared({ model: "test/model", executable: fake.executable }, dirs, 5_000),
     PiSessionError,
   );
 });
@@ -218,14 +219,11 @@ test("pi runner reports a startup failure without an unhandled rejection", async
 test("pi runner times out a hung run and stops the process", async (t) => {
   const dirs = await setup(t);
   const fake = await createFakePi(t, "hang");
-  const runner = piRunner.create();
-
   const started = performance.now();
   await assert.rejects(
-    () => runParsed(runner, { model: "test/model", executable: fake.executable }, dirs, 500),
+    () => runPrepared({ model: "test/model", executable: fake.executable }, dirs, 500),
     PiSessionError,
   );
-  await runner.stop();
   assert.ok(performance.now() - started < 10_000);
 });
 
@@ -233,13 +231,10 @@ test("pi runner terminates an owned child process on timeout", async (t) => {
   const dirs = await setup(t);
   const pidFile = join(dirs.workspaceDir, "child.pid");
   const fake = await createFakePi(t, "child-hang", pidFile);
-  const runner = piRunner.create();
-
   await assert.rejects(
-    () => runParsed(runner, { model: "test/model", executable: fake.executable }, dirs, 500),
+    () => runPrepared({ model: "test/model", executable: fake.executable }, dirs, 500),
     PiSessionError,
   );
-  await runner.stop();
 
   const pid = Number(await readFile(pidFile, "utf8"));
   assert.ok(pid > 0);

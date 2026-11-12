@@ -3,6 +3,7 @@ import { readdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { test } from "node:test";
 import { stringify } from "yaml";
+import { z } from "zod";
 import { loadCase } from "../src/engine/authoring.ts";
 import {
   addChecker,
@@ -34,13 +35,14 @@ test("engine preparation passes each parsed implementation shape to its bound in
   let runnerReceived: RunnerParsed | undefined;
   let runnerContext: RunnerContext | undefined;
 
+  const runnerSchema = z.strictObject({ marker: z.string() }).transform((params): RunnerParsed => {
+    runnerParseCalls += 1;
+    runnerRawParams = [...runnerRawParams, params];
+    return { label: `parsed:${params.marker}`, compiled: 42 };
+  });
   const runnerDefinition: RunnerDefinition<RunnerParsed> = {
     type: "record-runner",
-    parse: (params) => {
-      runnerParseCalls += 1;
-      runnerRawParams = [...runnerRawParams, params];
-      return { label: `parsed:${String(params.marker)}`, compiled: 42 };
-    },
+    params: runnerSchema,
     create: () => {
       runnerCreateCalls += 1;
       return {
@@ -61,13 +63,13 @@ test("engine preparation passes each parsed implementation shape to its bound in
   let checkerCheckCalls = 0;
   let checkerReceived: CheckerParsed | undefined;
   let checkerContext: CheckerContext | undefined;
+  const checkerSchema = z.strictObject({ marker: z.string() }).transform((params): CheckerParsed => {
+    checkerParseCalls += 1;
+    return { label: `checker:${params.marker}`, compiled: 7 };
+  });
   const checkerDefinition: CheckerDefinition<CheckerParsed> = {
     type: "record-checker",
-    parse: (params) => {
-      checkerParseCalls += 1;
-      assert.equal(params.$type, undefined);
-      return { label: `checker:${String(params.marker)}`, compiled: 7 };
-    },
+    params: checkerSchema,
     create: () => {
       checkerCreateCalls += 1;
       return {
