@@ -1,6 +1,6 @@
 # M1: Filesystem Evaluation
 
-Status: implemented; prior ranges were independently reviewed and the remaining-cleanup batch review is pending. Both single-file example cases passed approved real-model smoke at code `8fd2778`; the later judge-validator cleanup is model-free verified only. The separate tarball installation remains model-free verified.
+Status: implemented and independently reviewed, including the remaining-cleanup batch. Both single-file example cases passed approved real-model smoke at code `8fd2778`; the later judge-validator cleanup is model-free verified only. The separate tarball installation remains model-free verified.
 
 ## Goal
 
@@ -153,6 +153,7 @@ Remaining-cleanup batch `59a804d` passed the complete gate with 117 tests. Parse
 - Independent parent verification of the fixed `8ed4a2a` artifact used an external clean checkout: `npm ci` and `npm run check` passed with 120 tests, no failures or skips, followed by a real tarball and production-only disposable installation. Both `yaml` and `zod` resolved inside that installation. The installed built-in fake-runtime path passed all eight file/worker/judge checks; npm/bin help and view remained identical.
 - A separate installed external runner/checker probe used an independently copied Zod module. Ordinary and named YAML cases both preserved zero, false, and empty arrays; applied defaults only to execution output; validated each definition once; and preserved schema/factory/instance receivers. Quoted-boolean, explicit-null, and unknown-field inputs failed before instance creation or run-resource allocation. Declared `resolvedConfig` stayed unchanged, runtime directories were removed, and no model or credential was used.
 - Parent review of `c4b5202..a321704` found no material introduced defect in the context-only simplification. The authorized test pruning removed obsolete wrapper/type guards while preserving runtime regressions. An external clean checkout passed all 114 tests; its production-only tarball install passed eight built-in fake-runtime checks and an independent external extension using a separate Zod copy, asynchronous schema conversion, captured factory parameters/paths, and context-only execution. Receivers, raw result configuration, credential-free view, and cleanup remained correct; no model was called.
+- Parent review of `f56ba53..cf4b3e9` found no material introduced defect in the remaining cleanup. A fixed external checkout passed all 117 tests, then its tarball passed installed built-in and external-extension runs with cleanup. Installed probes also confirmed unknown-tag errors, literal-tag acceptance, and escaped control-character labels. Protected workspace/process/timeout logic was unchanged; no model was called.
 - This closes the reviewed concrete mechanisms, not universal containment of arbitrary child processes. The successful historical real-model smoke below does not remove the documented capability limits.
 
 ### Single-File Revision Verification

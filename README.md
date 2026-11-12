@@ -25,7 +25,7 @@ Create an isolated run directory
 
 [M1](docs/m1-plan.md) is implemented: one local filesystem evaluation with a Pi RPC runner, direct macOS Seatbelt enforcement, and `file` and `judge` checkers. The [single-file authoring revision](docs/configuration.md) is also implemented: one YAML file resolves either an ordinary case or common fields plus one selected named case, using disjoint top-level composition and source-annotated `view`. A run retains its resolved non-sensitive configuration together with the source path and optional case name.
 
-The checked-in example selects OpenCode Go's DeepSeek Flash for both runner and judge and requires an explicit `OPENCODE_API_KEY` environment variable. Independent review and real-model smoke are complete: both current single-file cases passed through `npm run eval` and its shared built CLI entry point. The separate disposable tarball installation has model-free verification; no live-model run was performed from that installation. Routine tests never call a model.
+The checked-in example selects OpenCode Go's DeepSeek Flash for both runner and judge and requires an explicit `OPENCODE_API_KEY` environment variable. Independent review is complete. Both single-file cases passed real-model smoke at `8fd2778` through `npm run eval` and its shared built CLI entry point. Subsequent cleanup, including the Zod judge-verdict validator, has model-free verification only. The separate disposable tarball installation was also verified without live-model calls. Routine tests never call a model.
 
 Requirements: macOS with `sandbox-exec`, Node.js 24 or newer, and the `pi` CLI on `PATH` for runner and judge invocations. `view` does not need `pi`, a model, or provider credentials.
 
