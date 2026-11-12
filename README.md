@@ -55,7 +55,9 @@ OPENCODE_API_KEY=replace-with-your-local-key
 
 The file is parsed in memory with Node's dotenv parser, not sourced as shell code. Only requested entries are resolved; an unused command does not run. Each requested key is cached once per run and shared by runner/judge as needed. Only that provider's credential reaches its isolated process, not all `.env` values or the operator environment. `envPassthrough` is not a Case parameter.
 
-Lookup commands execute as trusted host operator code from the invocation directory, with the operator environment. They have bounded time/output; failure, empty output, timeout, excessive output or cancellation fails closed without retry. Trimmed stdout becomes the key; command output is not printed. `view` never reads `.env` or executes a lookup.
+Lookup commands execute as trusted host operator code from the invocation directory, with the operator environment. Node `execFile` limits the direct shell/command to five seconds and 64 KiB of output; timeout or abort terminates that direct process with SIGKILL. Use synchronous lookup commands that manage their own descendants: background jobs and daemons are operator-owned and are not tracked or promised cleaned by this toolkit. This does not change the separate Pi agent-process cleanup.
+
+Failure, empty output, timeout, excessive output or cancellation fails closed without retry. Trimmed stdout becomes the key. Errors report the credential name and failure category/exit code, not the command, stdout or stderr, which may contain secrets. `view` never reads `.env` or executes a lookup.
 
 Treat `.env` as sensitive executable configuration. Do not generate it from an evaluated workspace, commit real values, or assume someone else's commands are safe. Keys are not written to run/config/auth files or retained results. `.env` files are Git-ignored; `.env.example` contains no secret.
 
