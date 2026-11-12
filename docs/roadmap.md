@@ -41,7 +41,7 @@ Develop a coherent observation/tracer responsibility rather than accumulating un
 - Selected retained evidence can enable later inspection or regrading. Do not equate this with always retaining a whole environment.
 - Add behavior, usage, cost and latency measurements when the observations support them. Repetition and comparison should build on ordinary case runs, not skill-specific pipelines.
 
-No tracer plugin lifecycle, evidence layout, `$msg`/`$env`, JSON Pointer language, or general interpolation mechanism is approved. M1's small result/configuration record cannot reconstruct the removed workspace or its earlier resource contents.
+No tracer plugin lifecycle, evidence layout, observation-reference language, JSON Pointer language or general interpolation mechanism is approved. The narrow `.env` parameter reference is separate from evidence collection. M1's small result/configuration record cannot reconstruct the removed workspace or its earlier resource contents.
 
 ## Host Platforms
 
@@ -53,8 +53,8 @@ The intended coverage is macOS, Linux and Windows, beginning with macOS and then
 
 The following product-design questions are **pending**, not implementation requirements or approved syntax. Session progress and agent coordination do not belong in this document.
 
-- **General value sources and bindings.** How should a value's source be declared independently of an extension's parameter names and schema? Distinguish shared `.env` lookup from automatically filling an arbitrary `apiKey`, model or other parameter. Source-to-target aliases, lookup/conversion/validation order and additional sources are undecided. `$ref`, `!env`, `.env:...` and interpolation were discussed but none was selected; the current contract is the simple credential-name list only.
-- **Retaining effective values.** If external references later supply ordinary configuration, how should actual non-sensitive resolved/defaulted values be recorded without retaining secrets? References alone would not identify which value an earlier run used. No second effective-config record or resource snapshot is approved now.
+- **Additional value sources.** Fixed `.env` parameter references are implemented. Whether other sources, field-to-field references or interpolation are needed remains undecided; no general resolver framework is planned without a concrete case.
+- **Retaining effective configuration.** Which effective/defaulted values, if any, should be recorded beyond declarations and implementation outputs? References alone do not identify their earlier contents. No second config record, resource snapshot or framework-level sensitivity classification is approved.
 - **Credential-command unlock UX.** The current direct lookup budget is five seconds. A longer budget for Touch ID/secret-manager authorization was suggested but not measured or approved. Raw command stdout/stderr must remain private.
 - **ACP permissions and capabilities.** Define the permission-answering policy and supported session/capability coverage without assuming every harness exposes identical operations.
 - **Collaborator substitutes.** Settle case ownership versus harness assembly, declaration/injection/lifecycle interfaces, and how to assess fidelity and drift for substituted skills/tools/services.

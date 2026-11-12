@@ -1,6 +1,6 @@
 # M1: Filesystem Evaluation
 
-Status: the filesystem runtime, single-file authoring, typed factories, installable CLI and invocation-`.env` credentials are implemented and parent-reviewed. The combined tree passed model-free clean-checkout and installed-package verification. No new live-model invocation is authorized by this record.
+Status: the filesystem runtime, single-file authoring, typed factories, installable CLI and invocation-`.env` credentials are implemented and parent-reviewed. The latest `$env` source passed model-free gates and installed-package verification; earlier checkpoints also have clean-checkout evidence. No new live-model invocation is authorized by this record.
 
 ## Delivered Scope
 
@@ -8,36 +8,36 @@ Complete one local evaluation: prepare independent files and harness state, let 
 
 - TypeScript/Node.js 24+, native Pi RPC, direct macOS Seatbelt.
 - One YAML case or common fields plus one explicitly selected named case; top-level collisions are errors, with no inheritance/overrides.
-- Zod schemas validated by the engine; factories capture typed parameters and return context-only runner/checker instances.
+- Engine-only, quote-aware `$env` value lookup before declared Zod validation; factories capture ordinary typed fields and return context-only instances. Business logic and output visibility belong to implementations.
 - `view` uses the run resolver for declared configuration/source annotations, without harnesses, implementation readiness or credential resolution.
 - File existence/regex/unchanged assertions and independent tool-free Pi judging over one evidence file.
 - One built CLI entry for npm and the installed command, Node `parseArgs` flag parsing, and workers/supervisor/shell assets included in the private tarball. Retained reports default to `.agent-evals/`; extension module directories are repeatable options.
-- Small result records preserve declared configuration, source/case identity, judgments, diagnostics and cleanup—not resource snapshots or hashes.
+- Small result records preserve declarations/reference metadata, source/case identity, judgments, diagnostics and cleanup—not expanded config snapshots, resource snapshots or hashes.
 
 [Architecture](architecture.md) owns composition/lifecycle; [Configuration Reference](configuration.md) owns exact formats and parameters; [Roadmap](roadmap.md) owns unimplemented capabilities. Historical intermediate implementation plans and debugging details are recoverable from Git rather than repeated here.
 
 ## Acceptance
 
 - [x] Parse real YAML, enforce Case composition/selection, and show correct top-level origins.
-- [x] Reject invalid parameters before evaluated runtime creation; preserve declared rather than normalized configuration in results.
+- [x] Reject invalid declared-schema values before evaluated runtime creation; preserve declared rather than normalized configuration in results.
 - [x] Exercise real Seatbelt allow/deny and local Pi RPC skill/process paths without model calls.
 - [x] Distinguish failed assertions from execution, observation and checker errors; enforce deadlines/cancellation and cleanup.
 - [x] Build/pack/install outside repository module-resolution ancestry and verify runtime dependency/asset independence.
 - [x] Complete bounded independent reviews and close introduced blockers through the remaining-cleanup range.
 - [x] Run both single-file example cases once with approved live models at `8fd2778`.
-- [x] Verify and independently review the invocation-`.env` source, lazy command values, per-run caching, declaration-scoped injection and secret-free results, with direct-command termination and test-child cancellation covered.
+- [x] Verify and independently review the invocation-`.env` source, lazy command values, per-run caching, parameter-value lookup and unexpanded configuration records, with direct-command termination and test-child cancellation covered.
 
-Credentials must not reintroduce ambient operator authentication or Case-level `envPassthrough`. The agreed behavior is specified once in [Credentials](../README.md#credentials). Credential lookup commands are trusted operator code, managed as direct commands rather than a process-group workload. Their descendants are operator-owned; evaluated Pi process cleanup remains a separate guarantee.
+`$env` reads only the invocation `.env`, without ambient fallback. It supplies ordinary parameter values, not a framework-level secrecy annotation. The agreed behavior is specified once in [Credentials](../README.md#credentials). Credential lookup commands are trusted operator code, managed as direct commands rather than a process-group workload. Their descendants are operator-owned; evaluated Pi process cleanup remains a separate guarantee.
 
 ## Verification
 
-| Evidence                                                  | What it establishes                                                                                                                                                                                                                                                                                                 |
-| --------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| CLI and explicit-override checkpoint `0dbc207`            | After `npm ci` in a clean external checkout, the lint/format/type/build gate passed 131 model-free tests with no failures/skips. The separate installed-package test also passed.                                                                                                                                   |
-| Repeatable `npm run test:package`                         | Real tarball and production-only external install passed. Dependencies resolved inside that install; executable help and installed/built view matched; file/regex/judge checks passed with one shared synthetic credential command and cleanup.                                                                     |
-| External context-only extensions with a separate Zod copy | Schema/factory/instance receivers, one validation, captured typed values, unchanged declared results, and ordinary/named-case execution.                                                                                                                                                                            |
-| Targeted failure probes                                   | Replaced-root/symlink containment, FIFO rejection, regex-worker termination, native provider-error classification, process/signal cleanup and test-child cancellation.                                                                                                                                              |
-| Credential source and command lifecycle                   | Explicit names, no provider inference, default-cwd lookup, no ambient fallback, lazy/shared resolution and isolated injection verified with synthetic keys. Node handles direct-command timeout/abort and buffered output; credential-command descendants are not managed. Test-child cancellation remains covered. |
+| Evidence                                                  | What it establishes                                                                                                                                                                                                                                                                        |
+| --------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Quote-aware parameter references `60b6f57`                | The actual pre-push lint/format/type/build gate passed 137 model-free tests with no failures/skips. The standalone installed-package test passed. Independent review found no blockers; output visibility is by design, and adapter-specific failures remain implementation-owned.         |
+| Repeatable `npm run test:package`                         | Real tarball and production-only external install passed. Dependencies resolved inside that install; executable help and installed/built view matched; file/regex/judge checks passed with one shared synthetic credential command and cleanup.                                            |
+| External context-only extensions with a separate Zod copy | Schema/factory/instance receivers, one validation, captured typed values, unchanged declared results, and ordinary/named-case execution.                                                                                                                                                   |
+| Targeted failure probes                                   | Replaced-root/symlink containment, FIFO rejection, regex-worker termination, native provider-error classification, process/signal cleanup and test-child cancellation.                                                                                                                     |
+| Credential source and command lifecycle                   | Default-cwd lookup, no ambient fallback, lazy/shared reference resolution and declaration metadata verified with synthetic values. Node handles direct-command timeout/abort and buffered output; credential-command descendants are not managed. Test-child cancellation remains covered. |
 
 Independent review of the persistent verification entry points at `6eb97e4` found no material findings. They are reproducible through the repository commands rather than retained ad hoc scripts.
 
@@ -70,6 +70,6 @@ This proves that revision's integration, not skill effectiveness, later credenti
 - Fixture symlinks are not a supported sharing mechanism; checks reject unsafe escapes. File evidence is regular and size-bounded.
 - Evaluated Pi process cleanup covers tracked shell groups, not deliberate new-session/group escape or forced supervisor death. Agent-written registry data never authorizes host signals.
 - Staged supervisor modules rely on Node module-syntax detection; unusual CommonJS-scoped temporary roots remain unverified/unsupported.
-- Outbound model networking was live-tested only with the example's OpenCode Go endpoint. Credential names are declared by each instance and must match the harness's authentication interface; no provider/key mapping or arbitrary parameter binding is supplied.
+- Live networking was tested only with the earlier OpenCode Go example. Current `apiKey` transport requires `provider/model` and a compatible Pi build; provider availability, key validity and business failures are handled by the adapter/harness, not framework schema policy.
 - Dynamic extensions are trusted code. Runtime capability checks do not statically prove an external module's schema/factory consistency.
 - Checkout build concurrency is restricted as documented in [Development](../README.md#development).

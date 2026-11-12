@@ -34,34 +34,30 @@ Then use that command as `agent-evals run case.yml --case name` or `agent-evals 
 
 ## Credentials
 
-Keep credential values out of YAML; declare only their names. On `run`, the only default source is `.env` in the invocation working directory; for `npm run eval`, normal npm working-directory semantics apply. There is no upward, case-directory, package-directory, HOME, personal Pi-auth or ambient API-key fallback. Start from [`.env.example`](.env.example).
-
-Each Pi runner or judge record explicitly lists the names it needs:
+Reference local values from runner/checker parameters:
 
 ```yaml
 runner:
   $type: pi
   model: opencode-go/deepseek-v4.1-flash
-  credentials: [OPENCODE_API_KEY]
+  apiKey: $env:OPENCODE_API_KEY
 ```
 
-Each name is read from `.env` and injected under the same environment-variable name. The list defaults to empty: no key is inferred from a provider/model, and missing declared entries fail before model start. Choose names recognized by the harness. There is no provider/key mapping, aliasing or arbitrary parameter binding; future binding questions are tracked in [Open Questions](docs/roadmap.md#open-questions). Declarations are trusted operator configuration: explicitly injecting names such as `HOME`, `PATH` or `NODE_OPTIONS` can change the harness setup or behavior. Choose those overrides deliberately; there is no name/prefix blacklist.
+Only an unquoted, complete `$env:NAME` reads from `.env` in the invocation working directory; quoted or block strings stay literal. There is no host-environment fallback. See [value rules](docs/configuration.md#values-from-env) for scope and quoting.
 
-Use a plain value, or a parsed value starting with `!` to fetch an existing secret:
+Start from [`.env.example`](.env.example). Values can be plain strings or explicit trusted lookup commands:
 
 ```dotenv
 OPENCODE_API_KEY=replace-with-your-local-key
-# Alternatively, replace that value with an explicit lookup command:
+# Alternatively:
 # OPENCODE_API_KEY="!security find-generic-password -w -s opencode-api-key"
 ```
 
-The file is parsed in memory with Node's dotenv parser, not sourced as shell code. Only requested entries are resolved; an unused command does not run. Each requested key is cached once per run and shared by runner/judge as needed. Only each instance's declared credentials reach its isolated process, not all `.env` values or the operator environment. `envPassthrough` is not a Case parameter.
+The engine reads requested entries lazily and caches each name once per run. It resolves values before schema validation; implementations receive their normal fields and do not read `.env`. `view` never resolves values or runs lookups.
 
-Lookup commands execute as trusted host operator code from the invocation directory, with the operator environment. Node `execFile` limits the direct shell/command to five seconds and 64 KiB of output; timeout or abort terminates that direct process with SIGKILL. Use synchronous lookup commands that manage their own descendants: background jobs and daemons are operator-owned and are not tracked or promised cleaned by this toolkit. This does not change the separate Pi agent-process cleanup.
+Lookup commands run as trusted operator code from that directory, with the operator environment. Node `execFile` applies a five-second timeout, 64 KiB output limit and direct-process cancellation; descendants are operator-owned. Failures report names/status, not raw command output, and are not retried.
 
-Failure, empty output, timeout, excessive output or cancellation fails closed without retry. Trimmed stdout becomes the key. Errors report the credential name and failure category/exit code, not the command, stdout or stderr, which may contain secrets. `view` never reads `.env` or executes a lookup.
-
-Treat `.env` as sensitive executable configuration. Do not generate it from an evaluated workspace, commit real values, or assume someone else's commands are safe. Keys are not written to run/config/auth files or retained results. `.env` files are Git-ignored; `.env.example` contains no secret.
+`$env` is a value source, not a secrecy flag. Implementations own their outputs; the engine does not redact by field name or source. Use references rather than literal real keys in YAML, because declared literals are retained in results. Keep `.env` private and out of Git; do not execute someone else's lookup commands without trusting them.
 
 ## Development
 
