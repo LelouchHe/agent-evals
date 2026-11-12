@@ -1,6 +1,6 @@
 # M1: Filesystem Evaluation
 
-Status: implemented and independently reviewed. Both current single-file example cases passed approved real-model smoke through the shared built CLI; the separate tarball installation remains model-free verified.
+Status: implemented; prior ranges were independently reviewed and the remaining-cleanup batch review is pending. Both single-file example cases passed approved real-model smoke at code `8fd2778`; the later judge-validator cleanup is model-free verified only. The separate tarball installation remains model-free verified.
 
 ## Goal
 
@@ -50,7 +50,7 @@ These completed checks cover the original runtime. The authoring revision has it
 
 ## Single-File Authoring Revision
 
-Status: implemented. [Case Configuration](configuration.md) is the authoritative behavior specification. The real-model smoke below covers the current single-file example and retains the original two-file run as historical evidence.
+Status: implemented. [Case Configuration](configuration.md) is the authoritative behavior specification. The real-model smoke below covers the single-file example at `8fd2778`; later cleanup changes are model-free verified. The original two-file run remains historical evidence.
 
 Acceptance:
 
@@ -160,7 +160,7 @@ Remaining-cleanup batch `59a804d` passed the complete gate with 117 tests. Parse
 - The model-free suite exercised the real installed `yaml` parser, source positions, duplicate-key errors, and forbidden anchor/alias/`<<` structures at root and nested locations.
 - Real macOS Seatbelt probes and installed-Pi RPC bash/skill probes passed without prompts, model calls, network, or credentials. Deterministic fake RPC executables covered `run` integration, `view`/`run` payload equality, credential-free `view`, harness-canary non-invocation, and retained resolved-configuration values.
 - The packaged `agent-evals` bin and `npm run eval` produced identical help and view output. The clean local tarball installed without dev dependencies or Git metadata; its installed run verified the generated supervisor, safe-process-group, shell wrapper, regex worker, file checks, and independent fake judge.
-- Independent review and parent-focused closure are recorded above. The current single-file example also passed the real-model smoke below through the shared built CLI entry; the isolated tarball installation itself has model-free verification.
+- Independent review and parent-focused closure are recorded above. The single-file example passed the real-model smoke below at `8fd2778` through the shared built CLI entry; the later cleanup changes and isolated tarball installation have model-free verification.
 
 ### Real-Model Smoke
 
@@ -178,7 +178,7 @@ npm run eval -- run examples/write-file/case.yml --case without-skill
 
 Both used `opencode-go/deepseek-v4.1-flash` for the runner and independent judge, default thinking `medium`, and the example's 120-second invocation budget. File existence, regex content, and judge checks passed; both result records report `cleanup: removed` and empty diagnostics. No sandbox permissions or implementation code changed. Results are Git-ignored; credentials were not copied into the run configuration.
 
-This exercised the current loader, schemas, context-only instances, and shared built `dist/cli.js` through the development npm entry. It was not a live-model run from a separately installed tarball. The original two-file smoke also passed on 2026-11-11; its record remains `.eval-results/2026-11-11T15-06-44-228Z-898d5cc9/result.json`.
+This exercised the loader, schemas, context-only instances, and shared built `dist/cli.js` at `8fd2778` through the development npm entry. It predates the remaining-cleanup judge-validator change and is not live evidence for that validator. It was not a live-model run from a separately installed tarball. The original two-file smoke also passed on 2026-11-11; its record remains `.eval-results/2026-11-11T15-06-44-228Z-898d5cc9/result.json`.
 
 These runs prove integration, not skill improvement or support for other provider endpoints. Token usage and monetary cost were not measured. Routine test gates remain model-free.
 
