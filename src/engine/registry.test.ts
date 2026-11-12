@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 import { test } from "node:test";
 import { makeTempDir } from "../../tests/helpers/fake-pi-control.ts";
 import { ConfigError, type ImplementationParams } from "./config.ts";
@@ -281,4 +282,222 @@ test("parse failures stop preparation before an instance is created or run", asy
     /parse rejected raw params/,
   );
   assert.equal(createCalls, 0);
+});
+
+function receiverRunnerModule(type: string): string {
+  return `export const runner = {
+  type: ${JSON.stringify(type)},
+  parseCalls: 0,
+  createCalls: 0,
+  async parse(params) {
+    if (this !== runner) throw new Error("parse receiver lost");
+    this.parseCalls += 1;
+    return { text: String(params.text), compiled: 7 };
+  },
+  create() {
+    if (this !== runner) throw new Error("create receiver lost");
+    this.createCalls += 1;
+    return {
+      marker: "runner-instance",
+      async run(params) {
+        if (this?.marker !== "runner-instance") throw new Error("run receiver lost");
+        return { finalText: \`parsed:\${params.text}:\${params.compiled}\`, diagnostics: [] };
+      },
+      async stop() {
+        if (this?.marker !== "runner-instance") throw new Error("stop receiver lost");
+        this.stopped = true;
+      },
+    };
+  },
+};
+`;
+}
+
+function receiverCheckerModule(type: string): string {
+  return `export const checker = {
+  type: ${JSON.stringify(type)},
+  parseCalls: 0,
+  createCalls: 0,
+  parse(params) {
+    if (this !== checker) throw new Error("checker parse receiver lost");
+    this.parseCalls += 1;
+    return { text: String(params.text), compiled: 3 };
+  },
+  create() {
+    if (this !== checker) throw new Error("checker create receiver lost");
+    this.createCalls += 1;
+    return {
+      marker: "checker-instance",
+      async check(params) {
+        if (this?.marker !== "checker-instance") throw new Error("check receiver lost");
+        return [{ checker: "receiver-checker", subject: \`parsed:\${params.text}:\${params.compiled}\`, status: "pass", reason: "ok" }];
+      },
+    };
+  },
+};
+`;
+}
+
+interface ReceiverParams {
+  readonly text: string;
+  readonly compiled: number;
+}
+interface ReceiverExported {
+  readonly parseCalls: number;
+  readonly createCalls: number;
+}
+
+const runnerContext: RunnerContext = {
+  workspaceDir: "/run/workspace",
+  homeDir: "/run/home",
+  configDir: "/run/config",
+  scratchDir: "/run/scratch",
+  runRootDir: "/run",
+  input: "task",
+  authoringDir: "/authoring",
+  timeoutMs: 1_000,
+  signal: new AbortController().signal,
+};
+
+test("direct and trusted discovery preserve definition receivers for parse, create, and instance methods", async (t) => {
+  const directRunnerDir = await makeTempDir(t, "ae-receiver-direct-runner-");
+  const directCheckerDir = await makeTempDir(t, "ae-receiver-direct-checker-");
+  const discoveredRunnerDir = await makeTempDir(t, "ae-receiver-discovered-runner-");
+  const discoveredCheckerDir = await makeTempDir(t, "ae-receiver-discovered-checker-");
+  await writeFile(join(directRunnerDir, "runner.mjs"), receiverRunnerModule("receiver-direct-runner"));
+  await writeFile(join(directCheckerDir, "checker.mjs"), receiverCheckerModule("receiver-direct-checker"));
+  await writeFile(join(discoveredRunnerDir, "runner.mjs"), receiverRunnerModule("receiver-discovered-runner"));
+  await writeFile(join(discoveredCheckerDir, "checker.mjs"), receiverCheckerModule("receiver-discovered-checker"));
+
+  const directRunnerModule = (await import(pathToFileURL(join(directRunnerDir, "runner.mjs")).href)) as {
+    runner: RunnerDefinition<ReceiverParams> & ReceiverExported;
+  };
+  const directCheckerModule = (await import(pathToFileURL(join(directCheckerDir, "checker.mjs")).href)) as {
+    checker: CheckerDefinition<ReceiverParams> & ReceiverExported;
+  };
+  const directRegistry = createRegistry();
+  addRunner(directRegistry, directRunnerModule.runner, "direct");
+  addChecker(directRegistry, directCheckerModule.checker, "direct");
+
+  const directRunner = await requireRunner(directRegistry, "receiver-direct-runner").prepare(
+    { text: "direct" },
+    directRunnerDir,
+  );
+  const directRun = await directRunner.run(runnerContext);
+  await directRunner.stop();
+  const directChecker = await requireChecker(directRegistry, "receiver-direct-checker").prepare(
+    { text: "direct" },
+    directCheckerDir,
+  );
+  const directChecks = await directChecker.check({} as CheckerContext);
+
+  assert.equal(directRun.finalText, "parsed:direct:7");
+  assert.equal(directChecks[0]?.subject, "parsed:direct:3");
+  assert.equal(directRunnerModule.runner.parseCalls, 1);
+  assert.equal(directRunnerModule.runner.createCalls, 1);
+  assert.equal(directCheckerModule.checker.parseCalls, 1);
+  assert.equal(directCheckerModule.checker.createCalls, 1);
+
+  const discoveredRegistry = createRegistry();
+  await loadTrustedImplementations(discoveredRegistry, {
+    runnerDirs: [discoveredRunnerDir],
+    checkerDirs: [discoveredCheckerDir],
+  });
+  const discoveredRunnerModule = (await import(pathToFileURL(join(discoveredRunnerDir, "runner.mjs")).href)) as {
+    runner: ReceiverExported;
+  };
+  const discoveredCheckerModule = (await import(pathToFileURL(join(discoveredCheckerDir, "checker.mjs")).href)) as {
+    checker: ReceiverExported;
+  };
+
+  const discoveredRunner = await requireRunner(discoveredRegistry, "receiver-discovered-runner").prepare(
+    { text: "discovered" },
+    discoveredRunnerDir,
+  );
+  const discoveredRun = await discoveredRunner.run(runnerContext);
+  await discoveredRunner.stop();
+  const discoveredChecker = await requireChecker(discoveredRegistry, "receiver-discovered-checker").prepare(
+    { text: "discovered" },
+    discoveredCheckerDir,
+  );
+  const discoveredChecks = await discoveredChecker.check({} as CheckerContext);
+
+  assert.equal(discoveredRun.finalText, "parsed:discovered:7");
+  assert.equal(discoveredChecks[0]?.subject, "parsed:discovered:3");
+  assert.equal(discoveredRunnerModule.runner.parseCalls, 1);
+  assert.equal(discoveredRunnerModule.runner.createCalls, 1);
+  assert.equal(discoveredCheckerModule.checker.parseCalls, 1);
+  assert.equal(discoveredCheckerModule.checker.createCalls, 1);
+});
+
+function createReceiverRunnerModule(type: string): string {
+  return `export const runner = {
+  type: ${JSON.stringify(type)},
+  createCalls: 0,
+  parse(params) {
+    return { text: String(params.text), compiled: 7 };
+  },
+  create() {
+    if (this !== runner) throw new Error("create receiver lost");
+    this.createCalls += 1;
+    return {
+      marker: "runner-instance",
+      async run(params) {
+        if (this?.marker !== "runner-instance") throw new Error("run receiver lost");
+        return { finalText: \`parsed:\${params.text}:\${params.compiled}\`, diagnostics: [] };
+      },
+      async stop() {},
+    };
+  },
+};
+`;
+}
+
+function createReceiverCheckerModule(type: string): string {
+  return `export const checker = {
+  type: ${JSON.stringify(type)},
+  createCalls: 0,
+  parse(params) {
+    return { text: String(params.text), compiled: 3 };
+  },
+  create() {
+    if (this !== checker) throw new Error("checker create receiver lost");
+    this.createCalls += 1;
+    return {
+      marker: "checker-instance",
+      async check(params) {
+        if (this?.marker !== "checker-instance") throw new Error("check receiver lost");
+        return [{ checker: "receiver-checker", subject: \`parsed:\${params.text}:\${params.compiled}\`, status: "pass", reason: "ok" }];
+      },
+    };
+  },
+};
+`;
+}
+
+test("trusted discovery preserves create receivers independently of parse style", async (t) => {
+  const runnerDir = await makeTempDir(t, "ae-create-receiver-runner-");
+  const checkerDir = await makeTempDir(t, "ae-create-receiver-checker-");
+  await writeFile(join(runnerDir, "runner.mjs"), createReceiverRunnerModule("create-receiver-runner"));
+  await writeFile(join(checkerDir, "checker.mjs"), createReceiverCheckerModule("create-receiver-checker"));
+
+  const registry = createRegistry();
+  await loadTrustedImplementations(registry, { runnerDirs: [runnerDir], checkerDirs: [checkerDir] });
+  const runnerModule = (await import(pathToFileURL(join(runnerDir, "runner.mjs")).href)) as {
+    runner: ReceiverExported;
+  };
+  const checkerModule = (await import(pathToFileURL(join(checkerDir, "checker.mjs")).href)) as {
+    checker: ReceiverExported;
+  };
+
+  const runner = await requireRunner(registry, "create-receiver-runner").prepare({ text: "create" }, runnerDir);
+  const outcome = await runner.run(runnerContext);
+  await runner.stop();
+  const checker = await requireChecker(registry, "create-receiver-checker").prepare({ text: "create" }, checkerDir);
+  const checks = await checker.check({} as CheckerContext);
+
+  assert.equal(outcome.finalText, "parsed:create:7");
+  assert.equal(checks[0]?.subject, "parsed:create:3");
+  assert.equal(runnerModule.runner.createCalls, 1);
+  assert.equal(checkerModule.checker.createCalls, 1);
 });

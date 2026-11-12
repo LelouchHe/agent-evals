@@ -84,6 +84,7 @@ Status: implemented as an interface and preparation refactor. Raw YAML records r
 - [x] Preparation errors still occur before runtime resources. `view` remains independent of implementation parsing and readiness.
 - [x] Result records retain the declared resolved YAML configuration, not parsed values or compiled artifacts.
 - [x] Compile-time contract fixtures, parse-once runtime tests, built-in parser tests, and mutation sensitivity proofs cover raw-record rejection, mismatched parse/instance shapes, and compiled-parameter flow.
+- [x] Direct and trusted-discovery definitions invoke `parse`/`create` with the exported definition as receiver, and instance `run`/`check`/`stop` methods retain their instance receiver.
 - [ ] Cumulative independent review of this interface refactor remains pending.
 
 ## Delivered

@@ -231,20 +231,25 @@ function registerChecker(registry: Registry, definition: RegisteredCheckerDefini
  * establishes the fields; this is the single localized erasure boundary for
  * each external implementation kind.
  */
+interface ExternalDefinition {
+  readonly type: string;
+  readonly parse: (params: ImplementationParams, authoringDir: string) => unknown | Promise<unknown>;
+  readonly create: () => unknown;
+}
+
 function adaptExternalRunner(definition: Record<string, unknown>): RegisteredRunnerDefinition {
-  const type = definition.type as string;
-  const parse = definition.parse as (params: ImplementationParams, authoringDir: string) => unknown | Promise<unknown>;
-  const create = definition.create as () => unknown;
+  const external = definition as unknown as ExternalDefinition;
   return {
-    type,
+    type: external.type,
     async prepare(params, authoringDir) {
-      const parsed = await parse(params, authoringDir);
-      const instance = create() as {
+      // Method calls intentionally preserve the exported definition as receiver.
+      const parsed = await external.parse(params, authoringDir);
+      const instance = external.create() as {
         readonly run: (params: unknown, context: RunnerContext) => Promise<RunnerOutcome>;
         readonly stop: () => Promise<void>;
       };
       return {
-        type,
+        type: external.type,
         run: (context) => instance.run(parsed, context),
         stop: () => instance.stop(),
       };
@@ -253,18 +258,17 @@ function adaptExternalRunner(definition: Record<string, unknown>): RegisteredRun
 }
 
 function adaptExternalChecker(definition: Record<string, unknown>): RegisteredCheckerDefinition {
-  const type = definition.type as string;
-  const parse = definition.parse as (params: ImplementationParams, authoringDir: string) => unknown | Promise<unknown>;
-  const create = definition.create as () => unknown;
+  const external = definition as unknown as ExternalDefinition;
   return {
-    type,
+    type: external.type,
     async prepare(params, authoringDir) {
-      const parsed = await parse(params, authoringDir);
-      const instance = create() as {
+      // Method calls intentionally preserve the exported definition as receiver.
+      const parsed = await external.parse(params, authoringDir);
+      const instance = external.create() as {
         readonly check: (params: unknown, context: CheckerContext) => Promise<readonly CheckResult[]>;
       };
       return {
-        type,
+        type: external.type,
         check: (context) => instance.check(parsed, context),
       };
     },
