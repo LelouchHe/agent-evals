@@ -5,6 +5,7 @@ import { test } from "node:test";
 import { stringify } from "yaml";
 import { z } from "zod";
 import { loadCase } from "../src/engine/authoring.ts";
+import { createCredentialSource } from "../src/engine/credentials.ts";
 import {
   addChecker,
   addRunner,
@@ -106,6 +107,7 @@ test("engine preparation passes each parsed implementation shape to its bound in
     registry,
     resultsDir,
     tempParent,
+    credentials: createCredentialSource(directory),
   });
 
   assert.equal(record.status, "pass", record.error);
@@ -189,6 +191,7 @@ export const checker = {
     registry,
     resultsDir,
     tempParent,
+    credentials: createCredentialSource(directory),
   });
 
   assert.equal(record.status, "pass", record.error);

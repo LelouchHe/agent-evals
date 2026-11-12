@@ -25,7 +25,7 @@ Create an isolated run directory
 
 [M1](docs/m1-plan.md) is implemented: one local filesystem evaluation with a Pi RPC runner, direct macOS Seatbelt enforcement, and `file` and `judge` checkers. The [single-file authoring revision](docs/configuration.md) is also implemented: one YAML file resolves either an ordinary case or common fields plus one selected named case, using disjoint top-level composition and source-annotated `view`. A run retains its resolved non-sensitive configuration together with the source path and optional case name.
 
-The checked-in example selects OpenCode Go's DeepSeek Flash for both runner and judge and requires an explicit `OPENCODE_API_KEY` environment variable. Independent review is complete. Both single-file cases passed real-model smoke at `8fd2778` through `npm run eval` and its shared built CLI entry point. Subsequent cleanup, including the Zod judge-verdict validator, has model-free verification only. The separate disposable tarball installation was also verified without live-model calls. Routine tests never call a model.
+The checked-in example selects OpenCode Go's DeepSeek Flash for both runner and judge. Provider credentials come from a `.env` file in the directory where the command is invoked. Independent review is complete. Both single-file cases passed real-model smoke at `8fd2778` through `npm run eval` and its shared built CLI entry point; that revision predates the current `.env` credential handling and the Zod judge-verdict validator, which have model-free verification only. The separate disposable tarball installation was also verified without live-model calls. Routine tests never call a model.
 
 Requirements: macOS with `sandbox-exec`, Node.js 24 or newer, and the `pi` CLI on `PATH` for runner and judge invocations. `view` does not need `pi`, a model, or provider credentials.
 
@@ -40,7 +40,7 @@ npm ci
 npm run check
 ```
 
-Run one selected case through the development command:
+Create `.env` in the directory where you invoke the command (start from [`.env.example`](.env.example)) and provide the selected provider key. Then run one selected case through the development command:
 
 ```sh
 npm run eval -- run examples/write-file/case.yml --case with-skill
@@ -54,9 +54,34 @@ npm run eval -- view examples/write-file/case.yml --case with-skill
 
 `npm run eval` rebuilds `dist/` first and then runs the same entry point as the installed `agent-evals` command.
 
-Before running the command, make `OPENCODE_API_KEY` available in the invoking process using your normal secret-management method; never put its value in example files. The example uses `opencode-go/deepseek-v4.1-flash` for both runner and judge, with thinking omitted to use their default (`medium`) and a 120-second execution budget per invocation. It prompts the agent to create `hello.txt`, checks its existence and content, and asks an independent judge whether the task was completed. The example defines `with-skill` and `without-skill` cases that differ only in their explicit runner records; its names have no built-in A/B meaning and no comparison is performed.
+The example uses `opencode-go/deepseek-v4.1-flash` for both runner and judge, with thinking omitted to use their default (`medium`) and a 120-second execution budget per invocation. It prompts the agent to create `hello.txt`, checks its existence and content, and asks an independent judge whether the task was completed. The example defines `with-skill` and `without-skill` cases that differ only in their explicit runner records; its names have no built-in A/B meaning and no comparison is performed.
 
-`envPassthrough` forwards only the named variables; it does not inherit the operator environment. Results are written to `.eval-results/<run-id>/result.json` by default (`--results-dir` overrides this). Each result retains the resolved non-sensitive configuration actually used, plus the source path and optional case name, so later edits to the YAML do not erase an old run's declared parameters. Case names are metadata only and never determine result paths. Exit codes are `0` for a passing run, `1` for failing checks, and `2` for configuration, execution, timeout, cancellation, or checker errors.
+Results are written to `.eval-results/<run-id>/result.json` by default (`--results-dir` overrides this). Each result retains the resolved non-sensitive configuration actually used, plus the source path and optional case name, so later edits to the YAML do not erase an old run's declared parameters. Case names are metadata only and never determine result paths. Exit codes are `0` for a passing run, `1` for failing checks, and `2` for configuration, execution, timeout, cancellation, or checker errors.
+
+## Credentials
+
+Credential resolution is a run-time concern, not case data. Do not put credentials in YAML and do not export them for the harness. The only default source is `.env` in the directory where `agent-evals` (or `npm run eval`) is invoked. It is not searched in parent directories, `HOME`, the case directory, the installed package, or personal Pi configuration. For `npm run eval`, normal npm working-directory semantics apply.
+
+The file is parsed into memory with Node's dotenv parser. It is read lazily only when a runner or judge requests a key; entries that are not needed are not resolved, and command-valued entries that are not needed are not executed. Values are cached per run, so a runner and judge using the same key share one resolution. Only the mapped provider credential is injected into that isolated harness environment; the rest of the operator environment and other `.env` entries are not forwarded. Credentials are never written to result records, diagnostics, configuration, or auth files.
+
+Current explicit provider mapping:
+
+| Provider selector          | Credential variable |
+| -------------------------- | ------------------- |
+| `opencode-go` / `opencode` | `OPENCODE_API_KEY`  |
+| `deepseek`                 | `DEEPSEEK_API_KEY`  |
+
+Other providers receive no automatically injected credential in this revision; do not assume universal provider support. A missing required key is a configuration error before the model starts.
+
+A plain value is used directly. A parsed value beginning with `!` is an explicit trusted local operator command; for example:
+
+```dotenv
+OPENCODE_API_KEY="!security find-generic-password -w -s opencode-api-key"
+```
+
+The command runs once per requested key from the same invocation directory in a bounded subprocess. It receives the operator environment, not the `.env` values or case files. Its trimmed standard output is the credential; failures, empty output, timeout, oversized output, and cancellation are actionable errors without retrying. Command output and credentials are not printed. The command is trusted operator code: do not generate it from the evaluated workspace or case. `view` never reads `.env` or executes these commands.
+
+`.env` is ignored by Git; `.env.example` contains only variable names and commented examples. Never commit real credentials.
 
 ## Installable CLI
 
@@ -69,7 +94,7 @@ npm install --prefix /tmp/agent-evals-install /tmp/agent-evals-0.0.0.tgz
 /tmp/agent-evals-install/node_modules/.bin/agent-evals --help
 ```
 
-The tarball contains the built runtime under `dist/`, plus README, LICENSE, and package metadata. It does not contain source, tests, docs, generated results, or dev tooling. The installed command and `npm run eval` execute the same built `dist/cli.js`. This is a Node.js CLI, not a self-contained executable or OS installer; it requires Node.js 24+ and, for execution, macOS Seatbelt. Installing the tarball does not require TypeScript, Husky, Git metadata, or the repository checkout.
+The tarball contains the built runtime under `dist/`, plus README, LICENSE, package metadata, and the safe `.env.example` template. Actual `.env` files are never packed. It does not contain source, tests, docs, generated results, or dev tooling. The installed command and `npm run eval` execute the same built `dist/cli.js`. This is a Node.js CLI, not a self-contained executable or OS installer; it requires Node.js 24+ and, for execution, macOS Seatbelt. Installing the tarball does not require TypeScript, Husky, Git metadata, or the repository checkout.
 
 ## Development
 

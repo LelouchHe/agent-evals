@@ -27,7 +27,6 @@ timeoutMs: 120000
 runner:
   $type: pi
   model: opencode-go/deepseek-v4.1-flash
-  envPassthrough: [OPENCODE_API_KEY]
 
 checks:
   - $type: file
@@ -36,13 +35,13 @@ checks:
     matches: '^Hello, world!\n?$'
 ```
 
-Without `cases`, the document resolves to one ordinary case. Without `fixture`, it starts from an empty workspace. The credential value comes from the invoking environment, not YAML.
+Without `cases`, the document resolves to one ordinary case. Without `fixture`, it starts from an empty workspace. Provider credentials come from the run invocation `.env`, not YAML; see [Credentials](../README.md#credentials). `view` does not read or resolve them.
 
 ## Common Fields and Named Cases
 
 Use `cases` when several tests share top-level fields:
 
-```yaml
+````yaml
 input: Create hello.txt with exactly the content "Hello, world!".
 timeoutMs: 120000
 
@@ -58,15 +57,13 @@ cases:
       $type: pi
       model: opencode-go/deepseek-v4.1-flash
       skills: [skill]
-      envPassthrough: [OPENCODE_API_KEY]
 
   without-skill:
     runner:
       $type: pi
       model: opencode-go/deepseek-v4.1-flash
       skills: []
-      envPassthrough: [OPENCODE_API_KEY]
-```
+    ```
 
 Each named entry provides a complete `runner` because that top-level field varies. Repeating the otherwise identical runner parameters is intentional for this revision; finer-grained runner reuse is not part of this design.
 
@@ -120,7 +117,7 @@ Provide a `view` operation that displays the resolved case with the top-level so
 
 Use the same composition function and resolved values for inspection and execution. Inspection can report parse, structural, and top-level collision errors without runtime preparation. It does not establish that runtime prerequisites such as provider credentials or the harness executable are available; execution performs the full implementation/runtime validation before launching anything.
 
-Do not call implementation parameter schemas or `create` from `view`: schema validation is the run-path parameter boundary, and `create` also performs readiness checks such as executable, platform, and credential-variable presence. `view` therefore performs YAML, structural, and top-level collision validation only. It does not validate implementation parameters or establish runtime readiness.
+Do not call implementation parameter schemas or `create` from `view`: schema validation is the run-path parameter boundary, and `create` also performs readiness checks such as executable/platform availability and required provider-credential resolution. `view` therefore performs YAML, structural, and top-level collision validation only. It does not validate implementation parameters or establish runtime readiness.
 
 The implemented commands are:
 
@@ -128,7 +125,7 @@ The implemented commands are:
 agent-evals view <config.yml> [--case <name>]
 agent-evals run <config.yml> [--case <name>] [--results-dir <path>] \
   [--runner-dir <path>] [--checker-dir <path>]
-```
+````
 
 The installed `agent-evals` command and the development `npm run eval -- <command>` form execute the same built `dist/cli.js`. `view` prints the resolved configuration followed by one `field: origin` line per top-level field, where the origin is `common` or `case <JSON-string>`, and includes the source file and 1-based declaration line. Case labels are JSON-escaped so newline and control characters cannot inject additional output structure. `run` prints the run status and writes the result record.
 
@@ -138,7 +135,7 @@ Retain the actual resolved, non-sensitive configuration passed to execution, tog
 
 Resource-directory or fixture hashing, content/version identifiers, and resource snapshots are outside this revision's acceptance. An unchanged path does not prove unchanged content: the retained configuration alone cannot recover the earlier skill or fixture contents and does not guarantee complete reproduction. Do not imply those stronger guarantees in results or documentation.
 
-Do not retain secret values. For environment-provided credentials, retain only their declared variable names. This small configuration record is not a commitment to a generic tracer or offline regrading of all checks.
+Do not retain secret values or credential values. Credentials are not part of the declared case configuration. This small configuration record is not a commitment to a generic tracer or offline regrading of all checks.
 
 The single-file format, `view`, top-level source annotations, and resolved-configuration retention are implemented. A result record stores the source path, optional case name, and the non-sensitive resolved configuration under `resolvedConfig`; it does not include environment values or provide resource snapshots.
 

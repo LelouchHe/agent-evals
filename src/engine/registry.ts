@@ -3,6 +3,7 @@ import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import type { ZodType } from "zod";
 import { ConfigError, errorMessage } from "./config.ts";
+import type { CredentialSource } from "./credentials.ts";
 import type { RunRoot } from "./workspace.ts";
 
 export interface RunnerContext {
@@ -30,19 +31,24 @@ export interface Runner {
   readonly stop: () => Promise<void>;
 }
 
+export interface ImplementationContext {
+  readonly authoringDir: string;
+  readonly credentials: CredentialSource;
+}
+
 export interface RunnerDefinition<P> {
   readonly type: string;
   /** Declarative Zod parameter schema; the engine validates raw data once. */
   readonly params: ZodType<P>;
   /** Validate operational readiness for parsed params, then create the instance. */
-  readonly create: (params: P, authoringDir: string) => Runner | Promise<Runner>;
+  readonly create: (params: P, context: ImplementationContext) => Runner | Promise<Runner>;
 }
 
 /** Type-erased definition as stored by the registry. */
 export interface RegisteredRunnerDefinition {
   readonly type: string;
   readonly params: ZodType<unknown>;
-  readonly create: (params: unknown, authoringDir: string) => Runner | Promise<Runner>;
+  readonly create: (params: unknown, context: ImplementationContext) => Runner | Promise<Runner>;
 }
 
 export interface CheckerContext {
@@ -75,14 +81,14 @@ export interface CheckerDefinition<P> {
   /** Declarative Zod parameter schema; the engine validates raw data once. */
   readonly params: ZodType<P>;
   /** Validate operational readiness for parsed params, then create the instance. */
-  readonly create: (params: P, authoringDir: string) => Checker | Promise<Checker>;
+  readonly create: (params: P, context: ImplementationContext) => Checker | Promise<Checker>;
 }
 
 /** Type-erased definition as stored by the registry. */
 export interface RegisteredCheckerDefinition {
   readonly type: string;
   readonly params: ZodType<unknown>;
-  readonly create: (params: unknown, authoringDir: string) => Checker | Promise<Checker>;
+  readonly create: (params: unknown, context: ImplementationContext) => Checker | Promise<Checker>;
 }
 
 export interface Registry {

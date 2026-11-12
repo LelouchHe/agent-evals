@@ -6,6 +6,7 @@ import { ConfigError, type ImplementationParams } from "../../engine/config.ts";
 import { parseImplementationParams } from "../../engine/params.ts";
 import type { CheckerContext } from "../../engine/registry.ts";
 import { makeTempDir } from "../../../tests/helpers/fake-pi-control.ts";
+import { implementationContext } from "../../../tests/helpers/implementation-context.ts";
 import { openRunRoot } from "../../engine/workspace.ts";
 import { fileChecker } from "./checker.ts";
 
@@ -34,7 +35,7 @@ async function checkRaw(
   contextValue: CheckerContext,
 ): Promise<readonly import("../../engine/registry.ts").CheckResult[]> {
   const params = await parseImplementationParams(fileChecker.params, raw, 'checker "file"');
-  const checker = await fileChecker.create(params, process.cwd());
+  const checker = await fileChecker.create(params, implementationContext(process.cwd()));
   return checker.check(contextValue);
 }
 

@@ -7,13 +7,9 @@ import { truncate } from "../../engine/truncate.ts";
 import type { CheckResult, Checker, CheckerContext, CheckerDefinition } from "../../engine/registry.ts";
 import { isMissing, readRunFile } from "../../engine/workspace.ts";
 import { assertSeatbeltAvailable } from "../../platform/macos/policy.ts";
+import { resolveModelCredentialEnv } from "../../runners/pi/credentials.ts";
 import { invokePi, resolvePiExecutable, type PiSessionError } from "../../runners/pi/session.ts";
-import {
-  assertEnvPassthroughAvailable,
-  envPassthroughSchema,
-  nonEmptyTrimmedString,
-  thinkingSchema,
-} from "../../runners/pi/params.ts";
+import { nonEmptyTrimmedString, thinkingSchema } from "../../runners/pi/params.ts";
 import { buildJudgePrompt } from "./prompt.ts";
 
 const judgeParamsSchema = z.strictObject({
@@ -22,7 +18,6 @@ const judgeParamsSchema = z.strictObject({
   rubric: z.array(nonEmptyTrimmedString).min(1, "must contain at least one statement"),
   file: runRelativePathSchema,
   executable: nonEmptyTrimmedString.default("pi"),
-  envPassthrough: envPassthroughSchema,
 });
 
 type JudgeParams = z.output<typeof judgeParamsSchema>;
@@ -47,19 +42,21 @@ export class JudgeError extends Error {
 export const judgeChecker: CheckerDefinition<JudgeParams> = {
   type: "judge",
   params: judgeParamsSchema,
-  async create(params) {
+  async create(params, context) {
     await resolvePiExecutable(params.executable);
-    assertEnvPassthroughAvailable(params.envPassthrough);
     assertSeatbeltAvailable();
-    return new JudgeChecker(params);
+    const credentialEnv = await resolveModelCredentialEnv(context.credentials, params.model);
+    return new JudgeChecker(params, credentialEnv);
   },
 };
 
 class JudgeChecker implements Checker {
   readonly #params: JudgeParams;
+  readonly #credentialEnv: Readonly<Record<string, string>>;
 
-  constructor(params: JudgeParams) {
+  constructor(params: JudgeParams, credentialEnv: Readonly<Record<string, string>>) {
     this.#params = params;
+    this.#credentialEnv = credentialEnv;
   }
 
   readonly check = async (context: CheckerContext): Promise<readonly CheckResult[]> => {
@@ -93,7 +90,7 @@ class JudgeChecker implements Checker {
           },
           skills: [],
           tools: null,
-          envPassthrough: parsed.envPassthrough,
+          credentialEnv: this.#credentialEnv,
           allowNetwork: true,
         },
         buildJudgePrompt({

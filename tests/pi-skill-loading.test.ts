@@ -34,7 +34,7 @@ test(
       dirs: { workspaceDir, homeDir, configDir, scratchDir },
       skills: [join(configDir, "skills", "write-file")],
       tools: ["read", "write"],
-      envPassthrough: [],
+      credentialEnv: {},
       allowNetwork: false,
     });
     t.after(() => process.stop());
@@ -77,7 +77,7 @@ test("real Pi rejects malformed skill frontmatter", { skip: process.platform !==
     dirs: { workspaceDir, homeDir, configDir, scratchDir },
     skills: [join(configDir, "skills", "broken")],
     tools: ["read"],
-    envPassthrough: [],
+    credentialEnv: {},
     allowNetwork: false,
   });
   t.after(() => process.stop());

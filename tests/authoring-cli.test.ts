@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { chmod, readFile, readdir, writeFile } from "node:fs/promises";
+import { access, chmod, readFile, readdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { test } from "node:test";
 import { parse, stringify } from "yaml";
@@ -68,18 +68,18 @@ test("view succeeds without Pi or credentials and annotates common versus select
     "      $type: pi",
     "      model: test/model",
     `      executable: ${canary}`,
-    "      envPassthrough: [AE_VIEW_SECRET]",
     "      skills: [skill]",
     "  without-skill:",
     "    runner:",
     "      $type: pi",
     "      model: test/model",
     `      executable: ${canary}`,
-    "      envPassthrough: [AE_VIEW_SECRET]",
     "      skills: []",
   ];
   await writeFile(configPath, lines.join("\n") + "\n");
   const cwd = await makeTempDir(t, "ae-view-cwd-");
+  const credentialMarker = join(cwd, "credential-command-ran");
+  await writeFile(join(cwd, ".env"), `OPENCODE_API_KEY="!touch ${credentialMarker}"\n`);
   const emptyPath = await makeTempDir(t, "ae-empty-path-");
   const result = await runCli(t, ["view", configPath, "--case", "with-skill"], {
     cwd,
@@ -95,6 +95,7 @@ test("view succeeds without Pi or credentials and annotates common versus select
   assert.match(result.stdout, new RegExp(`^  runner: case "with-skill" ${escapeRegExp(configPath)}:9$`, "m"));
   assert.doesNotMatch(result.stdout, /view-secret-value/);
   assert.doesNotMatch(result.stdout, /CANARY-LAUNCHED/);
+  await assert.rejects(() => access(credentialMarker), /ENOENT/);
 });
 
 test("view escapes control characters in selected case labels", async (t) => {
@@ -174,10 +175,9 @@ test("a run records the resolved configuration, source, and metadata-only case n
     '  "../retained-name":',
     "    runner:",
     "      $type: pi",
-    "      model: test/original-model",
+    "      model: opencode-go/original-model",
     "      thinking: low",
     `      executable: ${fake.executable}`,
-    "      envPassthrough: [AE_RUN_SECRET]",
     "    checks:",
     "      - $type: file",
     "        path: hello.txt",
@@ -188,21 +188,12 @@ test("a run records the resolved configuration, source, and metadata-only case n
   const tempParent = await makeTempDir(t, "ae-retain-runs-");
   const resultsDir = await makeTempDir(t, "ae-retain-results-");
 
-  const previous = process.env.AE_RUN_SECRET;
-  process.env.AE_RUN_SECRET = "value-that-must-not-be-retained";
-  try {
-    const result = await runCli(t, ["run", configPath, "--case", "../retained-name", "--results-dir", resultsDir], {
-      cwd,
-      TMPDIR: tempParent,
-    });
-    assert.equal(result.code, 0, result.stderr);
-  } finally {
-    if (previous === undefined) {
-      delete process.env.AE_RUN_SECRET;
-    } else {
-      process.env.AE_RUN_SECRET = previous;
-    }
-  }
+  await writeFile(join(cwd, ".env"), "OPENCODE_API_KEY=value-that-must-not-be-retained\n");
+  const result = await runCli(t, ["run", configPath, "--case", "../retained-name", "--results-dir", resultsDir], {
+    cwd,
+    TMPDIR: tempParent,
+  });
+  assert.equal(result.code, 0, result.stderr);
 
   const runDirectories = await readdir(resultsDir);
   assert.equal(runDirectories.length, 1);
@@ -215,8 +206,7 @@ test("a run records the resolved configuration, source, and metadata-only case n
   assert.equal(record.case.path, configPath);
   assert.equal(record.case.name, "../retained-name");
   assert.equal(record.resolvedConfig.input, original[0]?.replace("input: ", ""));
-  assert.equal(record.resolvedConfig.runner.model, "test/original-model");
-  assert.match(resultText, /AE_RUN_SECRET/);
+  assert.equal(record.resolvedConfig.runner.model, "opencode-go/original-model");
   assert.doesNotMatch(resultText, /value-that-must-not-be-retained/);
 
   // Editing the authoring file later must not rewrite the retained run parameters.
@@ -228,7 +218,7 @@ test("a run records the resolved configuration, source, and metadata-only case n
       .replace("Create hello.txt", "Do something else") + "\n",
   );
   const saved = JSON.parse(await readFile(resultPath, "utf8")) as EvaluationRecord;
-  assert.equal(saved.resolvedConfig.runner.model, "test/original-model");
+  assert.equal(saved.resolvedConfig.runner.model, "opencode-go/original-model");
   assert.match(saved.resolvedConfig.input, /Create hello\.txt/);
   assert.deepEqual(await readdir(tempParent), []);
 });

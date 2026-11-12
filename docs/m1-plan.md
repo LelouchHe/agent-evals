@@ -1,6 +1,6 @@
 # M1: Filesystem Evaluation
 
-Status: implemented and independently reviewed, including the remaining-cleanup batch. Both single-file example cases passed approved real-model smoke at code `8fd2778`; the later judge-validator cleanup is model-free verified only. The separate tarball installation remains model-free verified.
+Status: implemented; prior ranges were independently reviewed. Both single-file example cases passed approved real-model smoke at code `8fd2778`; the later judge-validator cleanup and `.env` credential feature are model-free verified only. Independent review of the credential feature is pending. The separate tarball installation remains model-free verified.
 
 ## Goal
 
@@ -71,7 +71,7 @@ Status: implemented as a private local npm package from the same CLI source; not
 
 - [x] `src/cli.ts` is the sole parser and command implementation. `npm run build` emits `dist/cli.js`; `npm run eval` and the installed `agent-evals` bin both execute that built entry point.
 - [x] The build includes runtime assets that are executed separately from the main module: the regex worker, sandbox-resident supervisor, safe process-group helper, and shell wrapper.
-- [x] The tarball allowlist contains only built runtime files, README, LICENSE, and package metadata; source, tests, docs, results, dev tooling, and generated logs are excluded.
+- [x] The tarball allowlist contains only built runtime files, README, LICENSE, package metadata, and the safe `.env.example` template; source, tests, docs, results, dev tooling, real `.env` files, and generated logs are excluded.
 - [x] A clean external checkout built and packed the tarball, and a disposable `npm install --prefix` succeeded without repository metadata, TypeScript, Husky, or global install; runtime dependencies resolved inside that install.
 - [x] Complete cumulative independent review of the authoring and packaged-CLI revisions, with focused parent verification of the test-cleanup repair.
 
@@ -79,10 +79,10 @@ Status: implemented as a private local npm package from the same CLI source; not
 
 Status: implemented with declarative Zod schemas and context-only instances. Raw YAML records remain unknown at the engine boundary; definitions declare schemas, the engine validates once, and factories capture validated parameters and authoring paths.
 
-- [x] Runner and checker definitions declare a Zod `params` schema and `create(params, authoringDir)` over the schema output type. The factory captures validated parameters and returns instances whose `run`/`check` take only runtime context.
+- [x] Runner and checker definitions declare a Zod `params` schema and `create(params, context)` over the schema output type. The factory context carries the authoring directory and run-scoped credential access; instances capture validated parameters and shared state and expose `run`/`check` taking only runtime context.
 - [x] The registry stores type-erased definitions; preparation validates once and calls the same `create` factory for direct and discovered definitions. Schema issues become configuration errors with implementation/field paths. No prepared execution wrapper or parameter-binding closure remains.
 - [x] Built-in schemas are strict objects with explicit defaults and constraints. YAML typed scalars remain typed; no blanket coercion or stringify-all behavior. Quoted numbers/booleans and YAML 1.2 on/off/yes/no do not become booleans/numbers; explicit null is distinct from missing.
-- [x] Operational readiness remains separate from schema conversion: `create` performs executable/platform/environment-presence/skill-access checks before runtime resources. `view` remains independent of schemas and readiness.
+- [x] Operational readiness remains separate from schema conversion: `create` performs executable/platform and provider-credential readiness plus skill-access checks before runtime resources. `view` remains independent of schemas and readiness.
 - [x] Result records retain the declared resolved YAML configuration, not schema defaults, compiled regexes, or other parsed output.
 - [x] Compile-time fixtures prove schema-output inference, defaults, wrong factory arguments, and schema-output mismatches. Runtime tests prove validate/create once, context-only instance execution, pre-instance failure, raw declaration retention, external receiver semantics, and YAML/Zod compatibility.
 - [x] Direct and trusted-discovery definitions invoke schema methods and `create` with the exported definition/schema as receiver, and instance `run`/`check`/`stop` methods retain their instance receiver.
@@ -103,8 +103,8 @@ Status: implemented with declarative Zod schemas and context-only instances. Raw
 - `src/checkers/judge` runs an independent, tool-free Pi invocation over the task and one regular file and preserves one result per rubric statement.
 - The Pi runner classifies a final assistant `stopReason: error` as an execution failure, including with pre-satisfied files, while ignoring recoverable intermediate retry errors.
 - Pi bash commands use a generated custom shell wrapper. Ordinary background jobs stay in a tracked shell process group; the wrapper kills them before the command returns. A sandbox-resident Node supervisor wraps Pi, reads the agent-writable tracked-group registry, and terminates groups on timeout, cancellation, early Pi exit, and normal teardown. The supervisor runs inside Seatbelt, so forged registry entries can target only same-sandbox processes; the host never signals groups from registry data.
-- `examples/write-file` is self-contained: an empty workspace, one English task message, one tiny project-owned skill, and one configuration file with `with-skill` and `without-skill` named cases. Both cases supply complete runner records, intentionally repeating the shared parameters, so neither depends on the common part for `runner`. Both model invocations select `opencode-go/deepseek-v4.1-flash`, omit thinking to use the default `medium`, and explicitly forward only `OPENCODE_API_KEY` as the provider credential.
-- The `pi` runner and `judge` checker accept an optional `envPassthrough` allowlist so an operator can supply narrowly scoped credentials without inheriting the invoking environment.
+- `examples/write-file` is self-contained: an empty workspace, one English task message, one tiny project-owned skill, and one configuration file with `with-skill` and `without-skill` named cases. Both cases supply complete runner records, intentionally repeating the shared parameters, so neither depends on the common part for `runner`. Both model invocations select `opencode-go/deepseek-v4.1-flash` and omit thinking to use the default `medium`. Provider credentials come from the invocation `.env`; see [Credentials](../README.md#credentials).
+- Credentials are resolved per run from `.env` in the invocation working directory, lazily and only for the selected provider. Plain values are used directly; values beginning with `!` run as bounded trusted operator commands. Only the mapped provider credential enters the isolated harness environment; runner and judge share the run cache, and `view` never reads or resolves credentials.
 
 Run records are written to `.eval-results/<run-id>/result.json` by default, with bounded diagnostics beside them. The runtime directory is removed after success, failed start, timeout, cancellation, and checker failure; only the initial baseline needed by `unchanged` exists during the run.
 
@@ -179,7 +179,7 @@ npm run eval -- run examples/write-file/case.yml --case without-skill
 
 Both used `opencode-go/deepseek-v4.1-flash` for the runner and independent judge, default thinking `medium`, and the example's 120-second invocation budget. File existence, regex content, and judge checks passed; both result records report `cleanup: removed` and empty diagnostics. No sandbox permissions or implementation code changed. Results are Git-ignored; credentials were not copied into the run configuration.
 
-This exercised the loader, schemas, context-only instances, and shared built `dist/cli.js` at `8fd2778` through the development npm entry. It predates the remaining-cleanup judge-validator change and is not live evidence for that validator. It was not a live-model run from a separately installed tarball. The original two-file smoke also passed on 2026-11-11; its record remains `.eval-results/2026-11-11T15-06-44-228Z-898d5cc9/result.json`.
+This exercised the loader, schemas, context-only instances, and shared built `dist/cli.js` at `8fd2778` through the development npm entry. That revision used `envPassthrough`; current runs use invocation `.env`. It predates the remaining-cleanup judge-validator change and the `.env` credential feature, and is not live evidence for either. It was not a live-model run from a separately installed tarball. The original two-file smoke also passed on 2026-11-11; its record remains `.eval-results/2026-11-11T15-06-44-228Z-898d5cc9/result.json`.
 
 These runs prove integration, not skill improvement or support for other provider endpoints. Token usage and monetary cost were not measured. Routine test gates remain model-free.
 
@@ -201,6 +201,7 @@ The suite includes:
 - Real YAML-to-Zod compatibility tests cover ordinary and named cases, numbers/booleans/strings/arrays/nested maps, quoted scalars and YAML 1.2 on/off/yes/no, false/zero/empty arrays, missing versus explicit null, nullable fields, enum/default/unknown fields, nested paths, and `.nan`/`.inf` finite rejection.
 - The new authoring/package CLI tests share a bounded child-runner helper with creation-time cleanup, test-signal cancellation, a local deadline, and SIGTERM-then-SIGKILL reaping. A real synthetic child kept alive until the deadline verifies both timeout and cancellation cleanup without leaving the suite pinned.
 - File-checker and judge-checker unit tests for their complete parameter and result behavior.
+- Credential tests use real `.env` parsing and synthetic commands: plain and quoted command values, lazy per-key caching shared by runner/judge, unused commands not executed, missing keys before model/runtime resources, failing/empty/oversized/hanging commands, cancellation and owned-child reaping, different provider keys isolated to their processes, ambient host keys not used, and `.env` HOME/PATH not forwarded. View tests include a `.env` command canary that must not run.
 - Real Git/Husky hook tests with isolated local bare remotes: valid commit/push, lint and formatting rejection without rewriting files, type and runtime-test failure rejection, and safeguards against validating a dirty worktree or a different outgoing commit.
 
 ## Known Limitations

@@ -25,6 +25,7 @@ import {
   type RunStatus,
   type RunnerStatus,
 } from "./results.ts";
+import { createCredentialSource, type CredentialSource } from "./credentials.ts";
 import { parseImplementationParams } from "./params.ts";
 import { truncate, truncateNullable } from "./truncate.ts";
 import { openRunRoot, type RunRoot } from "./workspace.ts";
@@ -40,6 +41,8 @@ export interface RunRequest {
   readonly signal?: AbortSignal;
   /** Parent directory for the temporary run root. Tests use this to inspect cleanup. */
   readonly tempParent?: string;
+  /** Credential source override for tests; defaults to `.env` in the invocation cwd. */
+  readonly credentials?: CredentialSource;
 }
 
 /** Validate configuration, execute one runner, run all checks, and clean up. */
@@ -47,8 +50,6 @@ export async function runEvaluation(request: RunRequest): Promise<EvaluationReco
   const timeoutMs = request.case.config.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const runId = newRunId();
   const startedAt = new Date().toISOString();
-  const registered = await prepareImplementations(request);
-  await validateFixture(request.case);
 
   const abort = new AbortController();
   let cancelled = request.signal?.aborted ?? false;
@@ -60,6 +61,16 @@ export async function runEvaluation(request: RunRequest): Promise<EvaluationReco
     abort.abort();
   }
   request.signal?.addEventListener("abort", onAbort, { once: true });
+
+  let registered: Awaited<ReturnType<typeof prepareImplementations>>;
+  try {
+    const credentials = request.credentials ?? createCredentialSource(process.cwd(), abort.signal);
+    registered = await prepareImplementations(request, credentials);
+    await validateFixture(request.case);
+  } catch (error) {
+    request.signal?.removeEventListener("abort", onAbort);
+    throw error;
+  }
 
   const root = await mkdtemp(join(request.tempParent ?? tmpdir(), "run-"));
   const workspaceDir = join(root, "workspace");
@@ -234,24 +245,28 @@ export async function runEvaluation(request: RunRequest): Promise<EvaluationReco
   return record;
 }
 
-async function prepareImplementations(request: RunRequest): Promise<{
+async function prepareImplementations(
+  request: RunRequest,
+  credentials: CredentialSource,
+): Promise<{
   runnerType: string;
   runner: Runner;
   checks: readonly { readonly type: string; readonly checker: Checker }[];
 }> {
+  const context = { authoringDir: request.case.dir, credentials };
   const runnerDefinition = requireRunner(request.registry, request.case.config.runner.$type);
   const runnerParams = await parseImplementationParams(
     runnerDefinition.params,
     paramsOf(request.case.config.runner),
     `runner "${runnerDefinition.type}"`,
   );
-  const runner = await runnerDefinition.create(runnerParams, request.case.dir);
+  const runner = await runnerDefinition.create(runnerParams, context);
 
   const checks: { type: string; checker: Checker }[] = [];
   for (const record of request.case.config.checks) {
     const definition = requireChecker(request.registry, record.$type);
     const params = await parseImplementationParams(definition.params, paramsOf(record), `checker "${definition.type}"`);
-    checks.push({ type: definition.type, checker: await definition.create(params, request.case.dir) });
+    checks.push({ type: definition.type, checker: await definition.create(params, context) });
   }
 
   return { runnerType: runnerDefinition.type, runner, checks };

@@ -33,7 +33,7 @@ test(
       dirs,
       skills: [],
       tools: ["bash"],
-      envPassthrough: [],
+      credentialEnv: {},
       allowNetwork: false,
     });
     t.after(() => pi.stop());
@@ -73,7 +73,7 @@ test(
       dirs: { workspaceDir, homeDir, configDir, scratchDir },
       skills: [],
       tools: ["bash"],
-      envPassthrough: [],
+      credentialEnv: {},
       allowNetwork: false,
     });
 
@@ -146,7 +146,7 @@ test(
       dirs: { workspaceDir, homeDir, configDir, scratchDir },
       skills: [],
       tools: ["bash"],
-      envPassthrough: [],
+      credentialEnv: {},
       allowNetwork: false,
     };
     const pi = await createPiProcess(config);
@@ -226,7 +226,7 @@ test(
       dirs: { workspaceDir, homeDir, configDir, scratchDir },
       skills: [],
       tools: ["bash"],
-      envPassthrough: [],
+      credentialEnv: {},
       allowNetwork: false,
     };
     const pi = await createPiProcess(config);

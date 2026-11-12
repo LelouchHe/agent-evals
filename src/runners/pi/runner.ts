@@ -4,12 +4,8 @@ import { z } from "zod";
 import { ConfigError, errorMessage, resolveAuthoringAsset } from "../../engine/config.ts";
 import { assertSeatbeltAvailable } from "../../platform/macos/policy.ts";
 import type { Runner, RunnerContext, RunnerDefinition, RunnerOutcome } from "../../engine/registry.ts";
-import {
-  assertEnvPassthroughAvailable,
-  envPassthroughSchema,
-  nonEmptyTrimmedString,
-  thinkingSchema,
-} from "./params.ts";
+import { resolveModelCredentialEnv } from "./credentials.ts";
+import { nonEmptyTrimmedString, thinkingSchema } from "./params.ts";
 import { invokePi, resolvePiExecutable } from "./session.ts";
 
 const piRunnerParamsSchema = z.strictObject({
@@ -17,7 +13,6 @@ const piRunnerParamsSchema = z.strictObject({
   thinking: thinkingSchema.default("medium"),
   skills: z.array(z.string().min(1, "must be a non-empty relative path")).default([]),
   executable: nonEmptyTrimmedString.default("pi"),
-  envPassthrough: envPassthroughSchema,
 });
 
 type PiRunnerParams = z.output<typeof piRunnerParamsSchema>;
@@ -26,23 +21,25 @@ type PiRunnerParams = z.output<typeof piRunnerParamsSchema>;
 export const piRunner: RunnerDefinition<PiRunnerParams> = {
   type: "pi",
   params: piRunnerParamsSchema,
-  async create(params, authoringDir) {
+  async create(params, context) {
     await resolvePiExecutable(params.executable);
-    await assertSkillsAvailable(params.skills, authoringDir);
-    assertEnvPassthroughAvailable(params.envPassthrough);
+    await assertSkillsAvailable(params.skills, context.authoringDir);
     assertSeatbeltAvailable();
-    return new PiRunner(params, authoringDir);
+    const credentialEnv = await resolveModelCredentialEnv(context.credentials, params.model);
+    return new PiRunner(params, context.authoringDir, credentialEnv);
   },
 };
 
 class PiRunner implements Runner {
   readonly #params: PiRunnerParams;
   readonly #authoringDir: string;
+  readonly #credentialEnv: Readonly<Record<string, string>>;
   #stop: (() => Promise<void>) | undefined;
 
-  constructor(params: PiRunnerParams, authoringDir: string) {
+  constructor(params: PiRunnerParams, authoringDir: string, credentialEnv: Readonly<Record<string, string>>) {
     this.#params = params;
     this.#authoringDir = authoringDir;
+    this.#credentialEnv = credentialEnv;
   }
 
   readonly run = async (context: RunnerContext): Promise<RunnerOutcome> => {
@@ -62,7 +59,7 @@ class PiRunner implements Runner {
         },
         skills,
         tools: ["read", "write", "edit", "bash"],
-        envPassthrough: params.envPassthrough,
+        credentialEnv: this.#credentialEnv,
         allowNetwork: true,
       },
       context.input,

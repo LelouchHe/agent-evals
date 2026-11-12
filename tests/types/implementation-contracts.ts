@@ -5,7 +5,13 @@
  * directive as unused.
  */
 import { z } from "zod";
-import type { CheckerContext, CheckerDefinition, RunnerContext, RunnerDefinition } from "../../src/engine/registry.ts";
+import type {
+  CheckerContext,
+  CheckerDefinition,
+  ImplementationContext,
+  RunnerContext,
+  RunnerDefinition,
+} from "../../src/engine/registry.ts";
 
 const exampleParamsSchema = z.strictObject({
   value: z.string(),
@@ -33,6 +39,11 @@ const checkerContext: CheckerContext = {
   signal: new AbortController().signal,
 };
 
+const implementationContext: ImplementationContext = {
+  authoringDir: "/authoring",
+  credentials: { require: async () => "test-secret" },
+};
+
 const exampleRunner: RunnerDefinition<ExampleParams> = {
   type: "example",
   params: exampleParamsSchema,
@@ -50,8 +61,8 @@ const exampleChecker: CheckerDefinition<ExampleParams> = {
   }),
 };
 
-const runner = await exampleRunner.create({ value: "typed", compiled: 1 }, "/authoring");
-const checker = await exampleChecker.create({ value: "typed", compiled: 1 }, "/authoring");
+const runner = await exampleRunner.create({ value: "typed", compiled: 1 }, implementationContext);
+const checker = await exampleChecker.create({ value: "typed", compiled: 1 }, implementationContext);
 
 void runner.run(runnerContext);
 void checker.check(checkerContext);
@@ -76,6 +87,6 @@ const mismatchedSchema: RunnerDefinition<ExampleParams> = {
 };
 
 // @ts-expect-error factory parameters are inferred from the schema output
-void exampleRunner.create({ value: "typed" }, "/authoring");
+void exampleRunner.create({ value: "typed" }, implementationContext);
 
 void mismatchedSchema;

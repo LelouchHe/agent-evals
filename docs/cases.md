@@ -109,7 +109,6 @@ runner:
   model: provider/model
   thinking: medium
   skills: [skill] # optional, resolved relative to this file
-  envPassthrough: [API_KEY] # optional allowlist; values are not recorded
 ```
 
 Use common fields plus named `cases` when several tests share inputs and checks. Each selected entry supplies the fields the common part omits:
@@ -127,13 +126,11 @@ cases:
       $type: pi
       model: provider/model
       skills: [skill]
-      envPassthrough: [API_KEY]
   without-skill:
     runner:
       $type: pi
       model: provider/model
       skills: []
-      envPassthrough: [API_KEY]
 ```
 
 Select a named case explicitly, even when only one exists:
@@ -145,17 +142,16 @@ node src/cli.ts view case.yml --case with-skill
 
 A top-level field repeated between the common part and the selected entry is an error, even when both values are identical. Sibling entries may repeat each other's fields because they are resolved independently. Case names are metadata only and never become filesystem paths or result-directory names. See [Case Configuration](configuration.md) for the complete composition and rejection rules.
 
-Within a runner or checker record, all fields except `$type` belong to the selected implementation. Unknown fields, unknown implementations, invalid regular expressions, and missing authoring assets are configuration errors reported before any runtime resource is created.
+Within a runner or checker record, all fields except `$type` belong to the selected implementation. Unknown fields, unknown implementations, invalid regular expressions, and missing authoring assets are configuration errors reported before any runtime resource is created. Provider credentials are runtime inputs from the invocation `.env`, not implementation parameters; see [Credentials](../README.md#credentials).
 
 ### `pi` Runner Parameters
 
-| Parameter        | Meaning                                                                                                                                                                 |
-| ---------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `model`          | Pi model selector, normally `provider/model`. Required.                                                                                                                 |
-| `thinking`       | `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, or `max`. Defaults to `medium`.                                                                                     |
-| `skills`         | Relative skill files or directories loaded explicitly. Discovered skills, extensions, MCP servers, sessions, context files, prompt templates, and themes stay disabled. |
-| `executable`     | Pi executable name or path. Defaults to `pi`.                                                                                                                           |
-| `envPassthrough` | Environment variable names copied from the invoking process. Use this for narrowly scoped credentials; other variables are not inherited.                               |
+| Parameter    | Meaning                                                                                                                                                                 |
+| ------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `model`      | Pi model selector, normally `provider/model`. Required.                                                                                                                 |
+| `thinking`   | `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, or `max`. Defaults to `medium`.                                                                                     |
+| `skills`     | Relative skill files or directories loaded explicitly. Discovered skills, extensions, MCP servers, sessions, context files, prompt templates, and themes stay disabled. |
+| `executable` | Pi executable name or path. Defaults to `pi`.                                                                                                                           |
 
 The runner starts Pi in an empty or fixture-backed workspace, sends the case input as one user message, and lets Pi complete autonomous tool turns. Pi bash invocations run through a generated custom shell that keeps ordinary background jobs in a tracked process group and terminates them before the command returns. The engine also stops Pi and every tracked shell group before checks run, including after timeout, cancellation, and an early Pi exit. A child that deliberately starts a new session or process group is outside this cleanup contract.
 
@@ -178,14 +174,14 @@ The example's `matches` pattern tolerates one optional final newline. The checke
 
 ### `judge` Checker Parameters
 
-| Parameter                      | Meaning                                                                              |
-| ------------------------------ | ------------------------------------------------------------------------------------ |
-| `model`, `thinking`            | Independent judge model selection.                                                   |
-| `rubric`                       | Non-empty list of statements. Each statement produces its own result.                |
-| `file`                         | One run-relative evidence file. Missing evidence is stated explicitly in the prompt. |
-| `executable`, `envPassthrough` | Same meaning as for the runner.                                                      |
+| Parameter           | Meaning                                                                              |
+| ------------------- | ------------------------------------------------------------------------------------ |
+| `model`, `thinking` | Independent judge model selection.                                                   |
+| `rubric`            | Non-empty list of statements. Each statement produces its own result.                |
+| `file`              | One run-relative evidence file. Missing evidence is stated explicitly in the prompt. |
+| `executable`        | Same meaning as for the runner.                                                      |
 
-The judge is a separate isolated Pi invocation with tools disabled. It receives the case input and selected file content, not the evaluated workspace or its own process environment besides the explicit allowlist. Evidence must be a regular file. The verdict is structurally validated with Zod: a JSON object with one boolean `pass` and a non-empty reason per rubric statement, and exactly one criterion per rubric statement. Extra fields and criterion labels are ignored rather than requiring a stricter model output format. A valid failing verdict is a failed check; a malformed, wrong-count, or missing verdict is a checker error.
+The judge is a separate isolated Pi invocation with tools disabled. It receives the case input and selected file content, not the evaluated workspace or its own process environment; only the mapped provider credential is injected. Evidence must be a regular file. The verdict is structurally validated with Zod: a JSON object with one boolean `pass` and a non-empty reason per rubric statement, and exactly one criterion per rubric statement. Extra fields and criterion labels are ignored rather than requiring a stricter model output format. A valid failing verdict is a failed check; a malformed, wrong-count, or missing verdict is a checker error.
 
 ### Trusted Implementation Directories
 
@@ -196,7 +192,7 @@ node src/cli.ts run case.yml --case with-skill \
   --runner-dir ./trusted/runners --checker-dir ./trusted/checkers
 ```
 
-A runner module exports `runner`; a checker module exports `checker`. Each has a non-empty `type`, a Zod `params` schema, and `create(params, authoringDir)`. The engine validates the raw record once through `params`, then calls `create`. The factory captures the validated parameters and authoring directory and returns an instance whose `run` or `check` takes runtime context only; those values are not passed again. `create` also performs any necessary operational readiness checks before an instance is used. `view` does not load implementations, validate implementation params, or perform readiness. External modules are dynamically imported, runtime-checked for a Zod `params` schema via `safeParseAsync` (including another installed Zod copy) and `create`, and responsible for keeping the schema output and factory parameter type consistent. Dynamic and direct registration invoke both the schema method and `create` with their correct receivers, so methods may use `this`; instance `run`/`check`/`stop` methods retain their instance receiver. This intentionally replaces the earlier `validate` and callback-`parse` contracts: an external module must declare a Zod schema and `create`; there is no legacy adapter. Implementation modules are loaded only from these trusted paths, never from an evaluated workspace.
+A runner module exports `runner`; a checker module exports `checker`. Each has a non-empty `type`, a Zod `params` schema, and `create(params, context)`. The factory context carries the authoring directory and run-scoped credential access; the engine validates the raw record once through `params`, then calls `create`. The factory captures validated parameters and shared state and returns an instance whose `run` or `check` takes runtime context only; those values are not passed again. `create` also performs any necessary operational readiness checks before an instance is used. `view` does not load implementations, validate implementation params, or perform readiness. External modules are dynamically imported, runtime-checked for a Zod `params` schema via `safeParseAsync` (including another installed Zod copy) and `create`, and responsible for keeping the schema output and factory parameter type consistent. Dynamic and direct registration invoke both the schema method and `create` with their correct receivers, so methods may use `this`; instance `run`/`check`/`stop` methods retain their instance receiver. This intentionally replaces the earlier `validate` and callback-`parse` contracts: an external module must declare a Zod schema and `create`; there is no legacy adapter. Implementation modules are loaded only from these trusted paths, never from an evaluated workspace.
 
 ## Express Checks, Not Evaluation Categories
 

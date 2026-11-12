@@ -6,6 +6,7 @@ import type { RunnerContext, RunnerOutcome } from "../../engine/registry.ts";
 import { parseImplementationParams } from "../../engine/params.ts";
 import { ConfigError, type ImplementationParams } from "../../engine/config.ts";
 import { createFakePi, makeTempDir } from "../../../tests/helpers/fake-pi-control.ts";
+import { implementationContext } from "../../../tests/helpers/implementation-context.ts";
 import { piRunner } from "./runner.ts";
 import { PiSessionError } from "./session.ts";
 
@@ -46,7 +47,7 @@ async function runPrepared(
   timeoutMs: number,
 ): Promise<RunnerOutcome> {
   const params = await parsePi(raw);
-  const runner = await piRunner.create(params, dirs.root);
+  const runner = await piRunner.create(params, implementationContext(dirs.root));
   try {
     return await runner.run(context(dirs, timeoutMs));
   } finally {
@@ -99,21 +100,42 @@ test("pi runner passes explicit model, tools, and isolated environment", async (
   assert.doesNotMatch(recorded.env.PATH ?? "", /\/Users\/lelouch\/mine/);
 });
 
-test("pi runner forwards only explicitly named environment variables", async (t) => {
+test("pi runner injects only the resolved provider credential into its isolated environment", async (t) => {
   const dirs = await setup(t);
   const fake = await createFakePi(t, "env");
-  const previous = process.env.FAKE_TOKEN;
-  process.env.FAKE_TOKEN = "synthetic-token";
+  await writeFile(
+    join(dirs.root, ".env"),
+    [
+      "OPENCODE_API_KEY=synthetic-credential",
+      "HOST_SECRET=dotenv-secret",
+      "PATH=/dotenv/path",
+      "HOME=/dotenv/home",
+    ].join("\n") + "\n",
+  );
+  const previousKey = process.env.OPENCODE_API_KEY;
+  const previousHost = process.env.HOST_SECRET;
+  process.env.OPENCODE_API_KEY = "host-secret";
+  process.env.HOST_SECRET = "host-only";
   t.after(() => {
-    if (previous === undefined) {
-      delete process.env.FAKE_TOKEN;
-    } else {
-      process.env.FAKE_TOKEN = previous;
-    }
+    if (previousKey === undefined) delete process.env.OPENCODE_API_KEY;
+    else process.env.OPENCODE_API_KEY = previousKey;
+    if (previousHost === undefined) delete process.env.HOST_SECRET;
+    else process.env.HOST_SECRET = previousHost;
   });
 
-  await runPrepared({ model: "test/model", executable: fake.executable, envPassthrough: ["FAKE_TOKEN"] }, dirs, 10_000);
-  assert.equal(await readFile(join(dirs.workspaceDir, "env.txt"), "utf8"), "synthetic-token");
+  await runPrepared({ model: "opencode-go/test-model", executable: fake.executable, skills: [] }, dirs, 10_000);
+  const env = JSON.parse(await readFile(join(dirs.workspaceDir, "env.json"), "utf8")) as {
+    credential: string | null;
+    fake: string | null;
+    host: string | null;
+    home: string;
+    path: string;
+  };
+  assert.equal(env.credential, "synthetic-credential");
+  assert.equal(env.fake, null);
+  assert.equal(env.host, null);
+  assert.equal(env.home, dirs.homeDir);
+  assert.doesNotMatch(env.path, /dotenv/);
 });
 
 test("pi runner stages declared skills inside isolated config", async (t) => {
@@ -140,41 +162,31 @@ test("pi runner rejects invalid parameters and missing prerequisites before laun
     ConfigError,
   );
   await assert.rejects(() => parsePi({ model: "test/model", executable: fake.executable, extra: true }), ConfigError);
+  await assert.rejects(
+    () => parsePi({ model: "test/model", executable: fake.executable, envPassthrough: ["OPENCODE_API_KEY"] }),
+    ConfigError,
+  );
   await assert.rejects(async () => {
     const params = await parsePi({ model: "test/model", executable: fake.executable, skills: ["missing"] });
-    await piRunner.create(params, dirs.root);
+    await piRunner.create(params, implementationContext(dirs.root));
   }, ConfigError);
   await mkdir(join(dirs.root, "dir-without-skill"));
   await assert.rejects(async () => {
     const params = await parsePi({ model: "test/model", executable: fake.executable, skills: ["dir-without-skill"] });
-    await piRunner.create(params, dirs.root);
+    await piRunner.create(params, implementationContext(dirs.root));
   }, ConfigError);
   await assert.rejects(async () => {
     const params = await parsePi({ model: "test/model", executable: "missing-pi-executable" });
-    await piRunner.create(params, dirs.root);
+    await piRunner.create(params, implementationContext(dirs.root));
   }, ConfigError);
-  const previous = process.env.AE_MISSING_CREDENTIAL;
-  delete process.env.AE_MISSING_CREDENTIAL;
-  t.after(() => {
-    if (previous === undefined) {
-      delete process.env.AE_MISSING_CREDENTIAL;
-    } else {
-      process.env.AE_MISSING_CREDENTIAL = previous;
-    }
-  });
   await assert.rejects(async () => {
-    const params = await parsePi({
-      model: "test/model",
-      executable: fake.executable,
-      envPassthrough: ["AE_MISSING_CREDENTIAL"],
-    });
-    await piRunner.create(params, dirs.root);
+    const params = await parsePi({ model: "opencode-go/test-model", executable: fake.executable });
+    await piRunner.create(params, implementationContext(dirs.root));
   }, ConfigError);
 
   const defaults = await parsePi({ model: "test/model", executable: fake.executable });
   assert.equal(defaults.thinking, "medium");
   assert.deepEqual(defaults.skills, []);
-  assert.deepEqual(defaults.envPassthrough, []);
 });
 
 test("pi runner reports invalid protocol output as an execution error", async (t) => {

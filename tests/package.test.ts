@@ -36,7 +36,7 @@ test("package metadata and built runtime assets point at the sole CLI implementa
   };
   assert.equal(pkg.bin?.["agent-evals"], "dist/cli.js");
   assert.equal(pkg.scripts?.eval, "node dist/cli.js");
-  assert.deepEqual(pkg.files, ["dist"]);
+  assert.deepEqual(pkg.files, ["dist", ".env.example"]);
 
   const cli = await readFile(distEntry, "utf8");
   assert.ok(cli.startsWith("#!/usr/bin/env node\n"), "dist/cli.js must keep its executable shebang");

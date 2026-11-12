@@ -12,7 +12,8 @@
     "agent-evals": "dist/cli.js"
   },
   "files": [
-    "dist"
+    "dist",
+    ".env.example"
   ],
   "scripts": {
     "build": "node scripts/build.mjs",

@@ -31,7 +31,8 @@ export interface PiSessionConfig {
   readonly skills: readonly string[];
   /** Built-in tools exposed to Pi, or null to disable every tool. */
   readonly tools: readonly string[] | null;
-  readonly envPassthrough: readonly string[];
+  /** Explicit provider credentials injected into the isolated environment. */
+  readonly credentialEnv: Readonly<Record<string, string>>;
   readonly allowNetwork: boolean;
 }
 
@@ -251,11 +252,8 @@ function buildEnvironment(config: PiSessionConfig): NodeJS.ProcessEnv {
     LANG: "en_US.UTF-8",
     ...(config.tools === null ? {} : { AGENT_EVALS_SHELL_STATE_DIR: shellStateDirectory(config) }),
   };
-  for (const name of config.envPassthrough) {
-    const value = process.env[name];
-    if (value !== undefined) {
-      env[name] = value;
-    }
+  for (const [name, value] of Object.entries(config.credentialEnv)) {
+    env[name] = value;
   }
   return env;
 }

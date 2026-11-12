@@ -65,7 +65,7 @@ test(
       dirs: { workspaceDir, homeDir, configDir, scratchDir },
       skills: [],
       tools: ["bash"],
-      envPassthrough: [],
+      credentialEnv: {},
       allowNetwork: false,
     };
     const pi = await createPiProcess(config);

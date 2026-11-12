@@ -100,8 +100,27 @@ function handlePrompt(command) {
       settle("Created hello.txt.");
       break;
     case "env":
-      writeFileSync(join(process.cwd(), "env.txt"), String(process.env.FAKE_TOKEN ?? "missing"));
+      writeFileSync(
+        join(process.cwd(), "env.json"),
+        JSON.stringify({
+          credential: process.env.OPENCODE_API_KEY ?? null,
+          fake: process.env.FAKE_TOKEN ?? null,
+          host: process.env.HOST_SECRET ?? null,
+          home: process.env.HOME,
+          path: process.env.PATH,
+        }),
+      );
       settle("Environment checked.");
+      break;
+    case "runner-credential":
+      settle(process.env.OPENCODE_API_KEY === "synthetic-runner-key" ? "credential-present" : "credential-missing");
+      break;
+    case "runner-credential-split":
+      settle(
+        `opencode-${process.env.OPENCODE_API_KEY === "synthetic-opencode-key"}-deepseek-${
+          process.env.DEEPSEEK_API_KEY === undefined ? "absent" : "present"
+        }`,
+      );
       break;
     case "judge-valid":
       settle(
@@ -111,6 +130,30 @@ function handlePrompt(command) {
         }),
       );
       break;
+    case "judge-credential": {
+      const present = process.env.OPENCODE_API_KEY === "synthetic-runner-key";
+      settle(
+        JSON.stringify({
+          criteria: [{ pass: present, reason: present ? "credential-present" : "credential-missing" }],
+        }),
+      );
+      break;
+    }
+    case "judge-credential-split": {
+      const deepseek = process.env.DEEPSEEK_API_KEY === "synthetic-deepseek-key";
+      const opencode = process.env.OPENCODE_API_KEY === undefined;
+      settle(
+        JSON.stringify({
+          criteria: [
+            {
+              pass: deepseek && opencode,
+              reason: `deepseek-${deepseek ? "present" : "missing"}-opencode-${opencode ? "absent" : "present"}`,
+            },
+          ],
+        }),
+      );
+      break;
+    }
     case "judge-fail":
       settle(JSON.stringify({ criteria: [{ criterion: "copied", pass: false, reason: "content differs" }] }));
       break;
