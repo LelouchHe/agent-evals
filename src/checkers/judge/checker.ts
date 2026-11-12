@@ -22,6 +22,7 @@ interface JudgeParams {
   readonly rubric: readonly string[];
   readonly file: string;
   readonly executable: string;
+  readonly resolvedExecutable: string;
   readonly envPassthrough: readonly string[];
 }
 
@@ -33,21 +34,20 @@ export class JudgeError extends Error {
 }
 
 /** Independent Pi invocation that evaluates task and file evidence against a rubric. */
-export const judgeChecker: CheckerDefinition = {
+export const judgeChecker: CheckerDefinition<JudgeParams> = {
   type: "judge",
-  async validate(params: ImplementationParams): Promise<void> {
-    await parseParams(params);
+  async parse(params: ImplementationParams): Promise<JudgeParams> {
+    const parsed = await parseParams(params);
     assertSeatbeltAvailable();
+    return parsed;
   },
-  create(): Checker {
+  create() {
     return new JudgeChecker();
   },
 };
 
-class JudgeChecker implements Checker {
-  async check(params: ImplementationParams, context: CheckerContext): Promise<readonly CheckResult[]> {
-    const parsed = await parseParams(params);
-
+class JudgeChecker implements Checker<JudgeParams> {
+  readonly check = async (parsed: JudgeParams, context: CheckerContext): Promise<readonly CheckResult[]> => {
     let fileContent: string | null;
     try {
       fileContent = (await readRunFile(context.workspace, parsed.file)).toString("utf8");
@@ -65,7 +65,7 @@ class JudgeChecker implements Checker {
       await mkdir(workspaceDir, { recursive: true, mode: 0o700 });
       const result = await invokePi(
         {
-          executable: parsed.executable,
+          executable: parsed.resolvedExecutable,
           runRootDir: judgeDir,
           model: parsed.model,
           thinking: parsed.thinking,
@@ -101,7 +101,7 @@ class JudgeChecker implements Checker {
         // The engine removes the containing run root and records any failure there.
       }
     }
-  }
+  };
 }
 
 async function parseParams(params: ImplementationParams): Promise<JudgeParams> {
@@ -143,7 +143,7 @@ async function parseParams(params: ImplementationParams): Promise<JudgeParams> {
   if (typeof executable !== "string" || executable.trim().length === 0) {
     throw new ConfigError("judge checker parameter executable must be a non-empty string");
   }
-  await resolvePiExecutable(executable);
+  const resolvedExecutable = await resolvePiExecutable(executable);
 
   const rawEnv = params.envPassthrough ?? [];
   if (!Array.isArray(rawEnv) || rawEnv.some((name) => typeof name !== "string")) {
@@ -158,6 +158,7 @@ async function parseParams(params: ImplementationParams): Promise<JudgeParams> {
     rubric: rubric as string[],
     file,
     executable,
+    resolvedExecutable,
     envPassthrough,
   };
 }

@@ -15,19 +15,18 @@ interface FileCheckParams {
 }
 
 /** Declarative workspace file assertions: exists, regex search, unchanged. */
-export const fileChecker: CheckerDefinition = {
+export const fileChecker: CheckerDefinition<FileCheckParams> = {
   type: "file",
-  validate(params: ImplementationParams): void {
-    parseParams(params);
+  parse(params: ImplementationParams): FileCheckParams {
+    return parseParams(params);
   },
-  create(): Checker {
+  create() {
     return new FileChecker();
   },
 };
 
-class FileChecker implements Checker {
-  async check(params: ImplementationParams, context: CheckerContext): Promise<readonly CheckResult[]> {
-    const parsed = parseParams(params);
+class FileChecker implements Checker<FileCheckParams> {
+  readonly check = async (parsed: FileCheckParams, context: CheckerContext): Promise<readonly CheckResult[]> => {
     const results: CheckResult[] = [];
 
     if (parsed.exists !== undefined) {
@@ -103,7 +102,7 @@ class FileChecker implements Checker {
     }
 
     return results;
-  }
+  };
 }
 
 function parseParams(params: ImplementationParams): FileCheckParams {

@@ -18,34 +18,34 @@ interface PiRunnerParams {
   readonly thinking: ThinkingLevel;
   readonly skills: readonly string[];
   readonly executable: string;
+  readonly resolvedExecutable: string;
   readonly envPassthrough: readonly string[];
 }
 
 /** Pi native RPC runner: one user message, autonomous tool turns, Seatbelt isolation. */
-export const piRunner: RunnerDefinition = {
+export const piRunner: RunnerDefinition<PiRunnerParams> = {
   type: "pi",
-  async validate(params: ImplementationParams, authoringDir: string): Promise<void> {
-    rejectUnknownParams(params);
-    await parseParams(params, authoringDir);
+  async parse(params: ImplementationParams, authoringDir: string): Promise<PiRunnerParams> {
+    const parsed = await parseParams(params, authoringDir);
     assertSeatbeltAvailable();
+    return parsed;
   },
-  create(): Runner {
+  create() {
     return new PiRunner();
   },
 };
 
-class PiRunner implements Runner {
+class PiRunner implements Runner<PiRunnerParams> {
   #stop: (() => Promise<void>) | undefined;
 
-  async run(params: ImplementationParams, context: RunnerContext): Promise<RunnerOutcome> {
-    const parsed = await parseParams(params, context.authoringDir);
-    const skills = await stageSkills(parsed.skills, context.authoringDir, join(context.configDir, "skills"));
+  readonly run = async (params: PiRunnerParams, context: RunnerContext): Promise<RunnerOutcome> => {
+    const skills = await stageSkills(params.skills, context.authoringDir, join(context.configDir, "skills"));
     const result = await invokePi(
       {
-        executable: parsed.executable,
+        executable: params.resolvedExecutable,
         runRootDir: context.runRootDir,
-        model: parsed.model,
-        thinking: parsed.thinking,
+        model: params.model,
+        thinking: params.thinking,
         dirs: {
           workspaceDir: context.workspaceDir,
           homeDir: context.homeDir,
@@ -54,7 +54,7 @@ class PiRunner implements Runner {
         },
         skills,
         tools: ["read", "write", "edit", "bash"],
-        envPassthrough: parsed.envPassthrough,
+        envPassthrough: params.envPassthrough,
         allowNetwork: true,
       },
       context.input,
@@ -67,14 +67,15 @@ class PiRunner implements Runner {
       },
     );
     return { finalText: result.finalText, diagnostics: result.diagnostics };
-  }
+  };
 
-  async stop(): Promise<void> {
+  readonly stop = async (): Promise<void> => {
     await this.#stop?.();
-  }
+  };
 }
 
 async function parseParams(params: ImplementationParams, authoringDir: string): Promise<PiRunnerParams> {
+  rejectUnknownParams(params);
   const model = params.model;
   if (typeof model !== "string" || model.trim().length === 0) {
     throw new ConfigError("pi runner parameter model must be a non-empty string");
@@ -89,7 +90,7 @@ async function parseParams(params: ImplementationParams, authoringDir: string): 
   if (typeof executable !== "string" || executable.trim().length === 0) {
     throw new ConfigError("pi runner parameter executable must be a non-empty string");
   }
-  await resolvePiExecutable(executable);
+  const resolvedExecutable = await resolvePiExecutable(executable);
 
   const rawSkills = params.skills ?? [];
   if (!Array.isArray(rawSkills) || rawSkills.some((skill) => typeof skill !== "string" || skill.length === 0)) {
@@ -122,7 +123,7 @@ async function parseParams(params: ImplementationParams, authoringDir: string): 
   const envPassthrough = rawEnv as string[];
   validateEnvPassthrough(envPassthrough);
 
-  return { model, thinking, skills, executable, envPassthrough };
+  return { model, thinking, skills, executable, resolvedExecutable, envPassthrough };
 }
 
 function rejectUnknownParams(params: ImplementationParams): void {

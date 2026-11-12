@@ -75,6 +75,8 @@ checks:
 - Only `$type` has agreed engine-defined semantics in these records. `$ref`, `$env`, and arbitrary string interpolation are not implicit YAML capabilities.
 - Shared configuration should reuse the same implementation configuration shape rather than introduce judge-specific core sections.
 
+A runner or checker definition is generic over its parsed parameter type. `parse(declaredParams, authoringDir)` validates the raw YAML record and returns an implementation-owned typed value (synchronously or as a promise). `create()` returns an instance whose `run` or `check` accepts exactly that type. Preparation awaits `parse` once, binds its result to the instance, and execution never receives the raw record or reparses it. The engine treats the parsed value as opaque and adds no implementation-specific fields. Parsed values may include compiled or normalized implementation-owned fields, such as regular expressions; result records retain the declared YAML configuration instead.
+
 These fragments establish selection and parameter ownership. [Case Configuration](configuration.md) owns the composition and inspection rules.
 
 ## Implemented Records
@@ -190,7 +192,7 @@ node src/cli.ts run case.yml --case with-skill \
   --runner-dir ./trusted/runners --checker-dir ./trusted/checkers
 ```
 
-A runner module exports `runner`; a checker module exports `checker`. Each has a non-empty `type`, `validate(params, authoringDir)`, and `create()`. Implementation modules are loaded only from these trusted paths, never from an evaluated workspace.
+A runner module exports `runner`; a checker module exports `checker`. Each has a non-empty `type`, `parse(params, authoringDir)`, and `create()`. `parse` returns the implementation's typed parameter object or a promise for it; `create()` returns an instance whose `run` or `check` accepts that same type. The engine calls `parse` once during preparation and passes the result to the instance. Implementations retain their existing validation and run-path readiness checks inside `parse`; `view` still does not load or call implementations. External modules are dynamically imported and are responsible for keeping their `parse` and `create` types consistent. Implementation modules are loaded only from these trusted paths, never from an evaluated workspace.
 
 ## Express Checks, Not Evaluation Categories
 

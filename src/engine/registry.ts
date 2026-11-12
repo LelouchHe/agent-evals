@@ -24,16 +24,35 @@ export interface RunnerOutcome {
   readonly diagnostics: readonly string[];
 }
 
-export interface Runner {
-  run(params: ImplementationParams, context: RunnerContext): Promise<RunnerOutcome>;
+/**
+ * Implementation instance bound to its parsed parameter type.
+ * Function properties keep P contravariant, so parse/create pairs cannot be
+ * mismatched to satisfy a wider parameter type.
+ */
+export interface Runner<P> {
+  readonly run: (params: P, context: RunnerContext) => Promise<RunnerOutcome>;
   /** Stop the harness and its owned processes. Must be idempotent. */
-  stop(): Promise<void>;
+  readonly stop: () => Promise<void>;
 }
 
-export interface RunnerDefinition {
+export interface RunnerDefinition<P> {
   readonly type: string;
-  validate(params: ImplementationParams, authoringDir: string): void | Promise<void>;
-  create(): Runner;
+  /** Parse and validate raw declared parameters, including run-path readiness checks. */
+  readonly parse: (params: ImplementationParams, authoringDir: string) => P | Promise<P>;
+  readonly create: () => Runner<P>;
+}
+
+/** A runner with its parsed parameters already bound to its instance. */
+export interface PreparedRunner {
+  readonly type: string;
+  readonly run: (context: RunnerContext) => Promise<RunnerOutcome>;
+  readonly stop: () => Promise<void>;
+}
+
+/** Erased definition stored by the registry; prepare() preserves the P association. */
+export interface RegisteredRunnerDefinition {
+  readonly type: string;
+  readonly prepare: (params: ImplementationParams, authoringDir: string) => Promise<PreparedRunner>;
 }
 
 export interface CheckerContext {
@@ -58,42 +77,49 @@ export interface CheckResult {
   readonly reason: string;
 }
 
-export interface Checker {
-  check(params: ImplementationParams, context: CheckerContext): Promise<readonly CheckResult[]>;
+/** Implementation instance bound to its parsed parameter type. */
+export interface Checker<P> {
+  readonly check: (params: P, context: CheckerContext) => Promise<readonly CheckResult[]>;
 }
 
-export interface CheckerDefinition {
+export interface CheckerDefinition<P> {
   readonly type: string;
-  validate(params: ImplementationParams, authoringDir: string): void | Promise<void>;
-  create(): Checker;
+  /** Parse and validate raw declared parameters, including run-path readiness checks. */
+  readonly parse: (params: ImplementationParams, authoringDir: string) => P | Promise<P>;
+  readonly create: () => Checker<P>;
+}
+
+/** A checker with its parsed parameters already bound to its instance. */
+export interface PreparedChecker {
+  readonly type: string;
+  readonly check: (context: CheckerContext) => Promise<readonly CheckResult[]>;
+}
+
+export interface RegisteredCheckerDefinition {
+  readonly type: string;
+  readonly prepare: (params: ImplementationParams, authoringDir: string) => Promise<PreparedChecker>;
 }
 
 export interface Registry {
-  readonly runners: Map<string, RunnerDefinition>;
-  readonly checkers: Map<string, CheckerDefinition>;
+  readonly runners: Map<string, RegisteredRunnerDefinition>;
+  readonly checkers: Map<string, RegisteredCheckerDefinition>;
 }
 
 export function createRegistry(): Registry {
   return { runners: new Map(), checkers: new Map() };
 }
 
-export function addRunner(registry: Registry, definition: RunnerDefinition, source: string): void {
+export function addRunner<P>(registry: Registry, definition: RunnerDefinition<P>, source: string): void {
   assertDefinition(definition, "runner");
-  if (registry.runners.has(definition.type)) {
-    throw new ConfigError(`duplicate runner implementation type "${definition.type}" from ${source}`);
-  }
-  registry.runners.set(definition.type, definition);
+  registerRunner(registry, registerRunnerDefinition(definition), source);
 }
 
-export function addChecker(registry: Registry, definition: CheckerDefinition, source: string): void {
+export function addChecker<P>(registry: Registry, definition: CheckerDefinition<P>, source: string): void {
   assertDefinition(definition, "checker");
-  if (registry.checkers.has(definition.type)) {
-    throw new ConfigError(`duplicate checker implementation type "${definition.type}" from ${source}`);
-  }
-  registry.checkers.set(definition.type, definition);
+  registerChecker(registry, registerCheckerDefinition(definition), source);
 }
 
-export function requireRunner(registry: Registry, type: string): RunnerDefinition {
+export function requireRunner(registry: Registry, type: string): RegisteredRunnerDefinition {
   const definition = registry.runners.get(type);
   if (definition === undefined) {
     throw new ConfigError(`unknown runner implementation "${type}" (available: ${list(registry.runners.keys())})`);
@@ -101,7 +127,7 @@ export function requireRunner(registry: Registry, type: string): RunnerDefinitio
   return definition;
 }
 
-export function requireChecker(registry: Registry, type: string): CheckerDefinition {
+export function requireChecker(registry: Registry, type: string): RegisteredCheckerDefinition {
   const definition = registry.checkers.get(type);
   if (definition === undefined) {
     throw new ConfigError(`unknown checker implementation "${type}" (available: ${list(registry.checkers.keys())})`);
@@ -148,15 +174,104 @@ async function loadDirectory(registry: Registry, directory: string, kind: "runne
     if (exported === undefined) {
       throw new ConfigError(`${file} must export a named "${kind}" implementation`);
     }
+    const definition = assertDefinition(exported, kind);
     if (kind === "runner") {
-      addRunner(registry, exported as RunnerDefinition, file);
+      registerRunner(registry, adaptExternalRunner(definition), file);
     } else {
-      addChecker(registry, exported as CheckerDefinition, file);
+      registerChecker(registry, adaptExternalChecker(definition), file);
     }
   }
 }
 
-function assertDefinition(definition: unknown, kind: "runner" | "checker"): void {
+function registerRunnerDefinition<P>(definition: RunnerDefinition<P>): RegisteredRunnerDefinition {
+  return {
+    type: definition.type,
+    async prepare(params, authoringDir) {
+      const parsed = await definition.parse(params, authoringDir);
+      const instance = definition.create();
+      return {
+        type: definition.type,
+        run: (context) => instance.run(parsed, context),
+        stop: () => instance.stop(),
+      };
+    },
+  };
+}
+
+function registerCheckerDefinition<P>(definition: CheckerDefinition<P>): RegisteredCheckerDefinition {
+  return {
+    type: definition.type,
+    async prepare(params, authoringDir) {
+      const parsed = await definition.parse(params, authoringDir);
+      const instance = definition.create();
+      return {
+        type: definition.type,
+        check: (context) => instance.check(parsed, context),
+      };
+    },
+  };
+}
+
+function registerRunner(registry: Registry, definition: RegisteredRunnerDefinition, source: string): void {
+  if (registry.runners.has(definition.type)) {
+    throw new ConfigError(`duplicate runner implementation type "${definition.type}" from ${source}`);
+  }
+  registry.runners.set(definition.type, definition);
+}
+
+function registerChecker(registry: Registry, definition: RegisteredCheckerDefinition, source: string): void {
+  if (registry.checkers.has(definition.type)) {
+    throw new ConfigError(`duplicate checker implementation type "${definition.type}" from ${source}`);
+  }
+  registry.checkers.set(definition.type, definition);
+}
+
+/**
+ * Dynamic modules are untyped at import time. Runtime shape validation above
+ * establishes the fields; this is the single localized erasure boundary for
+ * each external implementation kind.
+ */
+function adaptExternalRunner(definition: Record<string, unknown>): RegisteredRunnerDefinition {
+  const type = definition.type as string;
+  const parse = definition.parse as (params: ImplementationParams, authoringDir: string) => unknown | Promise<unknown>;
+  const create = definition.create as () => unknown;
+  return {
+    type,
+    async prepare(params, authoringDir) {
+      const parsed = await parse(params, authoringDir);
+      const instance = create() as {
+        readonly run: (params: unknown, context: RunnerContext) => Promise<RunnerOutcome>;
+        readonly stop: () => Promise<void>;
+      };
+      return {
+        type,
+        run: (context) => instance.run(parsed, context),
+        stop: () => instance.stop(),
+      };
+    },
+  };
+}
+
+function adaptExternalChecker(definition: Record<string, unknown>): RegisteredCheckerDefinition {
+  const type = definition.type as string;
+  const parse = definition.parse as (params: ImplementationParams, authoringDir: string) => unknown | Promise<unknown>;
+  const create = definition.create as () => unknown;
+  return {
+    type,
+    async prepare(params, authoringDir) {
+      const parsed = await parse(params, authoringDir);
+      const instance = create() as {
+        readonly check: (params: unknown, context: CheckerContext) => Promise<readonly CheckResult[]>;
+      };
+      return {
+        type,
+        check: (context) => instance.check(parsed, context),
+      };
+    },
+  };
+}
+
+function assertDefinition(definition: unknown, kind: "runner" | "checker"): Record<string, unknown> {
   if (typeof definition !== "object" || definition === null) {
     throw new ConfigError(`${kind} implementation must be an object`);
   }
@@ -164,9 +279,10 @@ function assertDefinition(definition: unknown, kind: "runner" | "checker"): void
   if (typeof candidate.type !== "string" || candidate.type.length === 0) {
     throw new ConfigError(`${kind} implementation must declare a non-empty string type`);
   }
-  if (typeof candidate.validate !== "function" || typeof candidate.create !== "function") {
-    throw new ConfigError(`${kind} implementation "${candidate.type}" must provide validate() and create()`);
+  if (typeof candidate.parse !== "function" || typeof candidate.create !== "function") {
+    throw new ConfigError(`${kind} implementation "${candidate.type}" must provide parse() and create()`);
   }
+  return candidate;
 }
 
 function list(keys: Iterable<string>): string {

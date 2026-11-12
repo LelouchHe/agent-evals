@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { mkdir, writeFile, symlink, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { test } from "node:test";
-import { ConfigError } from "../../engine/config.ts";
+import { ConfigError, type ImplementationParams } from "../../engine/config.ts";
 import type { CheckerContext } from "../../engine/registry.ts";
 import { makeTempDir } from "../../../tests/helpers/fake-pi-control.ts";
 import { openRunRoot } from "../../engine/workspace.ts";
@@ -29,12 +29,21 @@ async function context(root: string, workspace: string, baseline: string): Promi
   };
 }
 
+async function checkRaw(
+  checker: ReturnType<typeof fileChecker.create>,
+  raw: ImplementationParams,
+  contextValue: CheckerContext,
+): Promise<readonly import("../../engine/registry.ts").CheckResult[]> {
+  return checker.check(await fileChecker.parse(raw, contextValue.authoringDir), contextValue);
+}
+
 test("file checker passes existence and regex-search conditions", async (t) => {
   const dirs = await setup(t);
   await writeFile(join(dirs.workspace, "hello.txt"), "Hello, world!\n");
   const checker = fileChecker.create();
 
-  const results = await checker.check(
+  const results = await checkRaw(
+    checker,
     { path: "hello.txt", exists: true, matches: ["world", "^Hello, world!\\n?$"] },
     await context(dirs.root, dirs.workspace, dirs.baseline),
   );
@@ -53,7 +62,8 @@ test("regex search is not an implicit full-file match", async (t) => {
   await writeFile(join(dirs.workspace, "hello.txt"), "prefix Hello, world! suffix\n");
   const checker = fileChecker.create();
 
-  const results = await checker.check(
+  const results = await checkRaw(
+    checker,
     { path: "hello.txt", matches: ["Hello, world!", "^Hello, world!$"] },
     await context(dirs.root, dirs.workspace, dirs.baseline),
   );
@@ -67,7 +77,8 @@ test("file checker reports absent files as failed checks", async (t) => {
   const dirs = await setup(t);
   const checker = fileChecker.create();
 
-  const results = await checker.check(
+  const results = await checkRaw(
+    checker,
     { path: "missing.txt", exists: true, matches: "anything" },
     await context(dirs.root, dirs.workspace, dirs.baseline),
   );
@@ -83,11 +94,11 @@ test("exists false passes for an absent file and fails for a present one", async
   const checker = fileChecker.create();
   const contextValue = await context(dirs.root, dirs.workspace, dirs.baseline);
 
-  const absent = await checker.check({ path: "nope.txt", exists: false }, contextValue);
+  const absent = await checkRaw(checker, { path: "nope.txt", exists: false }, contextValue);
   assert.equal(absent[0]?.status, "pass");
 
   await writeFile(join(dirs.workspace, "present.txt"), "x");
-  const present = await checker.check({ path: "present.txt", exists: false }, contextValue);
+  const present = await checkRaw(checker, { path: "present.txt", exists: false }, contextValue);
   assert.equal(present[0]?.status, "fail");
 });
 
@@ -98,11 +109,11 @@ test("unchanged compares the run file with the initial baseline", async (t) => {
   const checker = fileChecker.create();
   const contextValue = await context(dirs.root, dirs.workspace, dirs.baseline);
 
-  const same = await checker.check({ path: "keep.txt", unchanged: true }, contextValue);
+  const same = await checkRaw(checker, { path: "keep.txt", unchanged: true }, contextValue);
   assert.equal(same[0]?.status, "pass");
 
   await writeFile(join(dirs.workspace, "keep.txt"), "changed\n");
-  const changed = await checker.check({ path: "keep.txt", unchanged: true }, contextValue);
+  const changed = await checkRaw(checker, { path: "keep.txt", unchanged: true }, contextValue);
   assert.equal(changed[0]?.status, "fail");
   assert.match(changed[0]?.reason ?? "", /changed/);
 });
@@ -113,22 +124,22 @@ test("unchanged distinguishes created and deleted files", async (t) => {
   const contextValue = await context(dirs.root, dirs.workspace, dirs.baseline);
 
   await writeFile(join(dirs.workspace, "created.txt"), "new\n");
-  const created = await checker.check({ path: "created.txt", unchanged: true }, contextValue);
+  const created = await checkRaw(checker, { path: "created.txt", unchanged: true }, contextValue);
   assert.equal(created[0]?.status, "fail");
   assert.match(created[0]?.reason ?? "", /created/);
 
   await rm(join(dirs.workspace, "created.txt"));
-  const bothAbsent = await checker.check({ path: "created.txt", unchanged: true }, contextValue);
+  const bothAbsent = await checkRaw(checker, { path: "created.txt", unchanged: true }, contextValue);
   assert.equal(bothAbsent[0]?.status, "pass");
 
   await writeFile(join(dirs.baseline, "deleted.txt"), "old\n");
-  const deleted = await checker.check({ path: "deleted.txt", unchanged: true }, contextValue);
+  const deleted = await checkRaw(checker, { path: "deleted.txt", unchanged: true }, contextValue);
   assert.equal(deleted[0]?.status, "fail");
   assert.match(deleted[0]?.reason ?? "", /missing/);
 });
 
 test("file checker rejects invalid configuration", () => {
-  const validate = (params: Record<string, unknown>) => fileChecker.validate(params, process.cwd());
+  const validate = (params: ImplementationParams) => fileChecker.parse(params, process.cwd());
   assert.throws(() => validate({ path: "a", matches: "(" }), ConfigError);
   assert.throws(() => validate({ path: "a" }), ConfigError);
   assert.throws(() => validate({ path: "/etc/passwd", exists: true }), ConfigError);
@@ -148,14 +159,14 @@ test("file checker reports symlink escapes as check errors", async (t) => {
   const checker = fileChecker.create();
   const contextValue = await context(dirs.root, dirs.workspace, dirs.baseline);
 
-  const escaped = await checker.check({ path: "escape.txt", exists: true, matches: "secret" }, contextValue);
+  const escaped = await checkRaw(checker, { path: "escape.txt", exists: true, matches: "secret" }, contextValue);
   assert.deepEqual(
     escaped.map((result) => result.status),
     ["error", "error"],
   );
   assert.match(escaped[0]?.reason ?? "", /outside the run workspace/);
 
-  const broken = await checker.check({ path: "broken.txt", exists: true }, contextValue);
+  const broken = await checkRaw(checker, { path: "broken.txt", exists: true }, contextValue);
   assert.equal(broken[0]?.status, "error");
   assert.match(broken[0]?.reason ?? "", /broken symlink/);
 });
@@ -166,7 +177,8 @@ test("file checker allows symlinks that stay inside the workspace", async (t) =>
   await symlink("real.txt", join(dirs.workspace, "link.txt"));
   const checker = fileChecker.create();
 
-  const results = await checker.check(
+  const results = await checkRaw(
+    checker,
     { path: "link.txt", exists: true, matches: "inside" },
     await context(dirs.root, dirs.workspace, dirs.baseline),
   );
@@ -181,7 +193,8 @@ test("file checker refuses to read files over the bounded size", async (t) => {
   await writeFile(join(dirs.workspace, "large.txt"), Buffer.alloc(1024 * 1024 + 1, 0x61));
   const checker = fileChecker.create();
 
-  const results = await checker.check(
+  const results = await checkRaw(
+    checker,
     { path: "large.txt", matches: "a" },
     await context(dirs.root, dirs.workspace, dirs.baseline),
   );

@@ -75,10 +75,22 @@ Status: implemented as a private local npm package from the same CLI source; not
 - [x] A clean external checkout built and packed the tarball, and a disposable `npm install --prefix` succeeded without repository metadata, TypeScript, Husky, or global install; `yaml` resolved inside that install.
 - [x] Complete cumulative independent review of the authoring and packaged-CLI revisions, with focused parent verification of the test-cleanup repair.
 
+## Typed Implementation Parameters
+
+Status: implemented as an interface and preparation refactor. Raw YAML records remain unknown at the engine boundary; runner and checker definitions parse once into an implementation-owned typed value.
+
+- [x] Runner and checker definitions pair `parse(params, authoringDir)` with `create()` over the same generic parameter type. `run` and `check` accept the parsed value, not the raw record.
+- [x] The registry stores an erased definition that awaits `parse` once, creates the matching instance, and binds the parsed value into the instance execution closure. Built-ins use typed definitions; dynamically imported definitions cross one localized shape/erasure boundary.
+- [x] Preparation errors still occur before runtime resources. `view` remains independent of implementation parsing and readiness.
+- [x] Result records retain the declared resolved YAML configuration, not parsed values or compiled artifacts.
+- [x] Compile-time contract fixtures, parse-once runtime tests, built-in parser tests, and mutation sensitivity proofs cover raw-record rejection, mismatched parse/instance shapes, and compiled-parameter flow.
+- [ ] Cumulative independent review of this interface refactor remains pending.
+
 ## Delivered
 
 - A TypeScript CLI resolves and runs or inspects one case. The installed command is `agent-evals run <config.yml> [--case <name>]` or `agent-evals view <config.yml> [--case <name>]`; the development form `npm run eval -- <command>` builds and executes the same `dist/cli.js`.
-- `src/engine/authoring.ts` parses one YAML document with the installed `yaml` library, rejects unsupported reuse syntax and duplicate keys from the parsed structure, composes common and selected fields only when their top-level keys are disjoint, and records each final top-level field's source file, declaration line, and common/selected-case origin. Execution and `view` use this one resolver; `view` does not call run-only implementation validation.
+- `src/engine/authoring.ts` parses one YAML document with the installed `yaml` library, rejects unsupported reuse syntax and duplicate keys from the parsed structure, composes common and selected fields only when their top-level keys are disjoint, and records each final top-level field's source file, declaration line, and common/selected-case origin. Execution and `view` use this one resolver; `view` does not call run-only implementation parsing or validation.
+- `src/engine/registry.ts` defines typed `RunnerDefinition<P>`/`CheckerDefinition<P>` and `Runner<P>`/`Checker<P>` contracts. `addRunner`/`addChecker` erase the type by binding parse output into a prepared instance; external modules cross one documented runtime-shape/erasure boundary. Built-ins expose precise `pi`, `file`, and `judge` parameter types.
 - A run result retains the source path, optional case name, and the non-sensitive resolved configuration under `resolvedConfig`. Case names are metadata only and never escape the result-directory layout. Resource contents and environment values are not retained.
 - `scripts/build.mjs` emits JavaScript under ignored `dist/` with normal TypeScript, copies the shell wrapper, and verifies the built CLI shebang. The package `bin` points at `dist/cli.js`; generated output is not committed.
 - `src/engine` loads and validates YAML, resolves configuration-relative authoring assets, discovers trusted implementations from explicit directories, orchestrates the run, and writes a small result record.
@@ -163,6 +175,7 @@ The suite includes:
 - Authoring parser/resolver tests against real YAML source positions: ordinary and named documents, explicit selection, empty or invalid case maps and names, common/selected collisions including identical values and nested-only differences, sibling independence, forbidden anchors/aliases/`<<` at nested positions, quoted and literal reuse-like text, duplicate keys, malformed shapes, incomplete fragments, and metadata-only names.
 - CLI integration for `view` and fake-runtime `run` from another working directory. `view` succeeds with `pi` unavailable and no provider credential, does not launch a harness canary, does not print an environment secret, and shows expected declaration lines. `view` and `run` are compared through the same resolved payload. A retained result is checked after the YAML is edited, and a path-like case name does not control the result location.
 - Packaged-artifact tests assert the `bin` and `eval` script use the same built entry, source and built help/view output match, and required generated assets include the regex worker, supervisor, safe-group helper, and shell wrapper. A deterministic fake-runtime run through the built CLI exercises those packaged assets, file checks, the regex worker, and an independent fake judge.
+- Typed implementation tests cover compile-time rejection of raw records, missing/wrong parsed fields, mismatched parse/instance types, and accidental widening to `unknown`; runtime tests cover synchronous and asynchronous parsing, parse-once binding, independent runner/checker shapes, parse failure before instance creation, compiled file-checker parameters, and declared configuration retained in results.
 - The new authoring/package CLI tests share a bounded child-runner helper with creation-time cleanup, test-signal cancellation, a local deadline, and SIGTERM-then-SIGKILL reaping. A real synthetic child kept alive until the deadline verifies both timeout and cancellation cleanup without leaving the suite pinned.
 - File-checker and judge-checker unit tests for their complete parameter and result behavior.
 - Real Git/Husky hook tests with isolated local bare remotes: valid commit/push, lint and formatting rejection without rewriting files, type and runtime-test failure rejection, and safeguards against validating a dirty worktree or a different outgoing commit.
@@ -173,6 +186,7 @@ The suite includes:
 - One initial user message and one resolved case per invocation.
 - Checkout development builds replace shared `dist/` non-atomically. Do not overlap checkout-based evaluations with build/test/pack/check/push; use a separate installed package prefix for concurrent runs.
 - The installable CLI is a Node.js package rather than a self-contained executable; it requires Node.js 24+, its declared `yaml` dependency, the packaged `dist/` layout, and macOS Seatbelt for execution.
+- Dynamically imported runner/checker modules are untyped at the engine boundary. Runtime shape checks verify `type`, `parse`, and `create`; the module remains responsible for keeping its parse output and instance parameter type consistent.
 - Checks run after the agent stops but before workspace cleanup; full snapshots are not retained and results cannot be regraded after cleanup.
 - Judge evidence is limited to one file. There is no generic evidence-reference language.
 - Model networking was smoke-tested only with the example's OpenCode Go endpoint; other providers/endpoints remain unverified.

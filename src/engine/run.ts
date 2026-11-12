@@ -12,9 +12,9 @@ import {
   requireChecker,
   requireRunner,
   type CheckResult,
-  type Checker,
+  type PreparedChecker,
+  type PreparedRunner,
   type Registry,
-  type Runner,
   type RunnerOutcome,
 } from "./registry.ts";
 import {
@@ -38,12 +38,6 @@ export interface RunRequest {
   readonly signal?: AbortSignal;
   /** Parent directory for the temporary run root. Tests use this to inspect cleanup. */
   readonly tempParent?: string;
-}
-
-interface PreparedCheck {
-  readonly type: string;
-  readonly params: ImplementationParams;
-  readonly checker: Checker;
 }
 
 /** Validate configuration, execute one runner, run all checks, and clean up. */
@@ -72,7 +66,7 @@ export async function runEvaluation(request: RunRequest): Promise<EvaluationReco
   const scratchDir = join(root, "scratch");
   const baselineDir = join(root, "baseline");
 
-  let runner: Runner | undefined;
+  let runner: PreparedRunner | undefined;
   let cleanup: EvaluationRecord["cleanup"] = { status: "removed" };
   let runnerRecord: EvaluationRecord["runner"] = {
     type: registered.runner.type,
@@ -106,7 +100,7 @@ export async function runEvaluation(request: RunRequest): Promise<EvaluationReco
     const workspaceRoot = await openRunRoot(workspaceDir);
     const baselineRoot = await openRunRoot(baselineDir);
 
-    runner = registered.runner.instance;
+    runner = registered.runner;
     const started = performance.now();
     let outcome: RunnerOutcome | undefined;
 
@@ -117,7 +111,7 @@ export async function runEvaluation(request: RunRequest): Promise<EvaluationReco
     }, timeoutMs);
 
     try {
-      outcome = await runner.run(registered.runner.params, {
+      outcome = await runner.run({
         workspaceDir,
         homeDir,
         configDir,
@@ -242,30 +236,20 @@ export async function runEvaluation(request: RunRequest): Promise<EvaluationReco
 }
 
 function prepareImplementations(request: RunRequest): Promise<{
-  runner: { type: string; params: ImplementationParams; instance: Runner };
-  checks: PreparedCheck[];
+  runner: PreparedRunner;
+  checks: PreparedChecker[];
 }> {
   return (async () => {
     const runnerDefinition = requireRunner(request.registry, request.case.config.runner.$type);
-    const runnerParams = paramsOf(request.case.config.runner);
-    await runnerDefinition.validate(runnerParams, request.case.dir);
+    const runner = await runnerDefinition.prepare(paramsOf(request.case.config.runner), request.case.dir);
 
-    const checks: PreparedCheck[] = [];
+    const checks: PreparedChecker[] = [];
     for (const record of request.case.config.checks) {
       const definition = requireChecker(request.registry, record.$type);
-      const params = paramsOf(record);
-      await definition.validate(params, request.case.dir);
-      checks.push({ type: definition.type, params, checker: definition.create() });
+      checks.push(await definition.prepare(paramsOf(record), request.case.dir));
     }
 
-    return {
-      runner: {
-        type: runnerDefinition.type,
-        params: runnerParams,
-        instance: runnerDefinition.create(),
-      },
-      checks,
-    };
+    return { runner, checks };
   })();
 }
 
@@ -287,7 +271,7 @@ async function validateFixture(loadedCase: ResolvedCase): Promise<void> {
 }
 
 async function runChecks(
-  prepared: readonly PreparedCheck[],
+  prepared: readonly PreparedChecker[],
   request: RunRequest,
   root: string,
   workspaceRoot: RunRoot,
@@ -316,7 +300,7 @@ async function runChecks(
       timedOutCheck = true;
       controller.abort();
     }, timeoutMs);
-    const promise = check.checker.check(check.params, {
+    const promise = check.check({
       workspace: workspaceRoot,
       baseline: baselineRoot,
       runRootDir: root,
