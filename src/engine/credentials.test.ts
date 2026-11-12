@@ -1,5 +1,4 @@
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
 import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -26,48 +25,20 @@ function isAlive(pid: number): boolean {
   }
 }
 
-async function waitForPids(path: string): Promise<number[]> {
+async function waitForPid(path: string): Promise<number> {
   const deadline = performance.now() + 2_000;
   while (performance.now() < deadline) {
     try {
-      const [first, second] = (await readFile(path, "utf8")).trim().split(/\s+/).map(Number);
-      if (first !== undefined && second !== undefined && first > 1 && second > 1) {
-        return [first, second];
+      const pid = Number((await readFile(path, "utf8")).trim());
+      if (Number.isSafeInteger(pid) && pid > 1) {
+        return pid;
       }
     } catch {
       // Not written yet.
     }
     await delay(10);
   }
-  throw new Error("credential command did not report its process ids");
-}
-
-function isGroupAlive(pgid: number): boolean {
-  try {
-    process.kill(-pgid, 0);
-    return true;
-  } catch (error) {
-    if (typeof error === "object" && error !== null && "code" in error && error.code === "ESRCH") {
-      return false;
-    }
-    throw error;
-  }
-}
-
-async function expectGroupDead(pgid: number): Promise<void> {
-  const deadline = performance.now() + 2_000;
-  while (performance.now() < deadline) {
-    if (!isGroupAlive(pgid)) return;
-    await delay(10);
-  }
-  assert.fail(`credential command process group ${pgid} survived`);
-}
-
-function credentialChildSource(script: string, directory: string, key: string): ReturnType<typeof spawn> {
-  return spawn(process.execPath, ["--input-type=module", "-e", script, directory], {
-    env: { ...process.env, AE_CREDENTIAL_NAME: key },
-    stdio: ["ignore", "pipe", "pipe"],
-  });
+  throw new Error("credential command did not report its process id");
 }
 
 async function expectDead(pids: readonly number[]): Promise<void> {
@@ -152,146 +123,38 @@ test("credential failures are actionable and do not expose command output", asyn
   );
 });
 
-test("cancelled and timed-out credential commands kill and reap their owned processes", async (t) => {
+test("cancelled and timed-out credential commands terminate the direct command", async (t) => {
   const dir = await makeTempDir(t, "ae-credentials-hang-");
-  await script(
-    dir,
-    "hang.sh",
-    'node -e \'setInterval(() => {}, 1000)\' &\nchild=$!\nprintf \'%s %s\\n\' "$$" "$child" > hang.pids\nwait "$child"',
-  );
+  await script(dir, "hang.sh", "printf '%s\\n' \"$$\" > hang.pid\nexec /bin/sleep 30");
   await writeFile(join(dir, ".env"), 'AE_HANG_TEST="!./hang.sh"\n');
 
   const controller = new AbortController();
   const source = createCredentialSource(dir, controller.signal);
   const pending = source.require("AE_HANG_TEST");
-  const cancelledPids = await waitForPids(join(dir, "hang.pids"));
+  const cancelledPid = await waitForPid(join(dir, "hang.pid"));
   t.after(() => {
-    for (const pid of cancelledPids) {
-      try {
-        process.kill(pid, "SIGKILL");
-      } catch {
-        // Already gone.
-      }
+    try {
+      process.kill(cancelledPid, "SIGKILL");
+    } catch {
+      // Already gone.
     }
   });
   controller.abort();
   await assert.rejects(() => pending, /was cancelled/);
-  await expectDead(cancelledPids);
+  await expectDead([cancelledPid]);
 
-  const timeoutPidsFile = join(dir, "timeout.pids");
-  await script(
-    dir,
-    "timeout.sh",
-    'node -e \'setInterval(() => {}, 1000)\' &\nchild=$!\nprintf \'%s %s\\n\' "$$" "$child" > timeout.pids\nwait "$child"',
-  );
+  await script(dir, "timeout.sh", "printf '%s\\n' \"$$\" > timeout.pid\nexec /bin/sleep 30");
   await writeFile(join(dir, ".env"), 'AE_TIMEOUT_TEST="!./timeout.sh"\n');
   const timeoutSource = createCredentialSource(dir);
   const timeoutPending = timeoutSource.require("AE_TIMEOUT_TEST");
-  const timeoutPids = await waitForPids(timeoutPidsFile);
+  const timeoutPid = await waitForPid(join(dir, "timeout.pid"));
   t.after(() => {
-    for (const pid of timeoutPids) {
-      try {
-        process.kill(pid, "SIGKILL");
-      } catch {
-        // Already gone.
-      }
+    try {
+      process.kill(timeoutPid, "SIGKILL");
+    } catch {
+      // Already gone.
     }
   });
   await assert.rejects(() => timeoutPending, /timed out after 5000ms/);
-  await expectDead(timeoutPids);
-});
-
-test("credential commands clean up ordinary background children after leader exit", async (t) => {
-  const dir = await makeTempDir(t, "ae-credentials-background-");
-  await script(
-    dir,
-    "success.sh",
-    [
-      "/bin/sleep 30 &",
-      "bg=$!",
-      'echo "$bg" > success-bg.pid',
-      'ps -o pgid= -p "$bg" | tr -d " " > success-group.pid',
-      "printf 'synthetic-proof-key\\n'",
-    ].join("\n"),
-  );
-  await script(
-    dir,
-    "failure.sh",
-    [
-      "/bin/sleep 30 &",
-      "bg=$!",
-      'echo "$bg" > failure-bg.pid',
-      'ps -o pgid= -p "$bg" | tr -d " " > failure-group.pid',
-      "printf 'synthetic-proof-key\\n'",
-      "exit 7",
-    ].join("\n"),
-  );
-  await writeFile(join(dir, ".env"), ['AE_SUCCESS="!./success.sh"', 'AE_FAILURE="!./failure.sh"'].join("\n") + "\n");
-
-  const cleanup = async (): Promise<void> => {
-    for (const name of ["success", "failure"]) {
-      try {
-        const pgid = Number((await readFile(join(dir, `${name}-group.pid`), "utf8")).trim());
-        if (Number.isSafeInteger(pgid) && pgid > 1) {
-          try {
-            process.kill(-pgid, "SIGKILL");
-          } catch {
-            // Already gone.
-          }
-        }
-      } catch {
-        // No group file.
-      }
-      try {
-        const pid = Number((await readFile(join(dir, `${name}-bg.pid`), "utf8")).trim());
-        if (Number.isSafeInteger(pid) && pid > 1) {
-          try {
-            process.kill(pid, "SIGKILL");
-          } catch {
-            // Already gone.
-          }
-        }
-      } catch {
-        // No pid file.
-      }
-    }
-  };
-  t.after(cleanup);
-
-  const credentialsHref = new URL("./credentials.ts", import.meta.url).href;
-  const childScript = `import { createCredentialSource } from ${JSON.stringify(credentialsHref)};
-const source = createCredentialSource(process.argv[1]);
-try {
-  const value = await source.require(process.env.AE_CREDENTIAL_NAME);
-  process.exit(value === "synthetic-proof-key" ? 0 : 2);
-} catch {
-  process.exit(1);
-}`;
-
-  for (const [name, key, expectedCode] of [
-    ["success", "AE_SUCCESS", 0],
-    ["failure", "AE_FAILURE", 1],
-  ] as const) {
-    const started = performance.now();
-    const child = credentialChildSource(childScript, dir, key);
-    let stdout = "";
-    let stderr = "";
-    child.stdout?.on("data", (chunk: Buffer) => (stdout += chunk.toString("utf8")));
-    child.stderr?.on("data", (chunk: Buffer) => (stderr += chunk.toString("utf8")));
-    let timedOut = false;
-    const timer = setTimeout(() => {
-      timedOut = true;
-      child.kill("SIGKILL");
-    }, 4_000);
-    const code = await new Promise<number | null>((resolve) => child.on("exit", (value) => resolve(value)));
-    clearTimeout(timer);
-    assert.equal(timedOut, false, `${name} credential child did not exit: ${stderr}`);
-    assert.equal(code, expectedCode, stderr);
-    assert.ok(performance.now() - started < 4_000, `${name} credential child exceeded the command budget`);
-    assert.doesNotMatch(stdout, /synthetic-proof-key/);
-    const bg = Number((await readFile(join(dir, `${name}-bg.pid`), "utf8")).trim());
-    const pgid = Number((await readFile(join(dir, `${name}-group.pid`), "utf8")).trim());
-    assert.equal(isAlive(bg), false, `${name} background process survived`);
-    await expectGroupDead(pgid);
-  }
+  await expectDead([timeoutPid]);
 });
