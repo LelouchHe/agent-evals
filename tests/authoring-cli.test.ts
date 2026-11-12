@@ -50,7 +50,7 @@ function extractResolvedYaml(stdout: string): unknown {
   return parse(body);
 }
 
-test("view succeeds without Pi or credentials and annotates common versus selected fields", async (t) => {
+test("view succeeds without Pi or environment values and annotates common versus selected fields", async (t) => {
   const fake = await createFakePi(t, "success");
   const canary = await createCanaryPi(fake);
   const directory = await makeTempDir(t, "ae-view-");
@@ -78,8 +78,8 @@ test("view succeeds without Pi or credentials and annotates common versus select
   ];
   await writeFile(configPath, lines.join("\n") + "\n");
   const cwd = await makeTempDir(t, "ae-view-cwd-");
-  const credentialMarker = join(cwd, "credential-command-ran");
-  await writeFile(join(cwd, ".env"), `OPENCODE_API_KEY="!touch ${credentialMarker}"\n`);
+  const lookupMarker = join(cwd, "lookup-command-ran");
+  await writeFile(join(cwd, ".env"), `OPENCODE_API_KEY="!touch ${lookupMarker}"\n`);
   const emptyPath = await makeTempDir(t, "ae-empty-path-");
   const result = await runCli(t, ["view", configPath, "--case", "with-skill"], {
     cwd,
@@ -95,7 +95,39 @@ test("view succeeds without Pi or credentials and annotates common versus select
   assert.match(result.stdout, new RegExp(`^  runner: case "with-skill" ${escapeRegExp(configPath)}:9$`, "m"));
   assert.doesNotMatch(result.stdout, /view-secret-value/);
   assert.doesNotMatch(result.stdout, /CANARY-LAUNCHED/);
-  await assert.rejects(() => access(credentialMarker), /ENOENT/);
+  await assert.rejects(() => access(lookupMarker), /ENOENT/);
+});
+
+test("view distinguishes references from quoted and block literals without reading .env", async (t) => {
+  const cwd = await makeTempDir(t, "ae-view-refs-cwd-");
+  const directory = await makeTempDir(t, "ae-view-refs-");
+  const configPath = join(directory, "case.yml");
+  await writeFile(
+    configPath,
+    [
+      "input: task",
+      "runner:",
+      "  $type: pi",
+      "  model: p/m",
+      "  apiKey: $env:MY_KEY",
+      '  literal: "$env:MY_KEY"',
+      "  block: |",
+      "    $env:MY_KEY",
+      "checks:",
+      "  - $type: file",
+      "    path: hello.txt",
+      "    exists: true",
+    ].join("\n") + "\n",
+  );
+  const marker = join(cwd, "lookup-ran");
+  await writeFile(join(cwd, ".env"), `MY_KEY="!touch ${marker}"\n`);
+
+  const result = await runCli(t, ["view", configPath], { cwd, TMPDIR: cwd });
+  assert.equal(result.code, 0, result.stderr);
+  assert.match(result.stdout, /^ {4}apiKey: \$env:MY_KEY$/m);
+  assert.equal((result.stdout.match(/^ {4}literal: "\$env:MY_KEY"$/gm) ?? []).length, 1);
+  assert.equal((result.stdout.match(/^ {4}block: "\$env:MY_KEY\\n"$/gm) ?? []).length, 1);
+  await assert.rejects(() => access(marker), /ENOENT/);
 });
 
 test("view escapes control characters in selected case labels", async (t) => {
@@ -176,7 +208,7 @@ test("a run records the resolved configuration, source, and metadata-only case n
     "    runner:",
     "      $type: pi",
     "      model: opencode-go/original-model",
-    "      credentials: [OPENCODE_API_KEY]",
+    "      apiKey: $env:MY_KEY",
     "      thinking: low",
     `      executable: ${fake.executable}`,
     "    checks:",
@@ -189,7 +221,7 @@ test("a run records the resolved configuration, source, and metadata-only case n
   const tempParent = await makeTempDir(t, "ae-retain-runs-");
   const resultsDir = await makeTempDir(t, "ae-retain-results-");
 
-  await writeFile(join(cwd, ".env"), "OPENCODE_API_KEY=value-that-must-not-be-retained\n");
+  await writeFile(join(cwd, ".env"), "MY_KEY=value-that-must-not-be-retained\n");
   const result = await runCli(t, ["run", configPath, "--case", "../retained-name", "--results-dir", resultsDir], {
     cwd,
     TMPDIR: tempParent,
@@ -208,6 +240,8 @@ test("a run records the resolved configuration, source, and metadata-only case n
   assert.equal(record.case.name, "../retained-name");
   assert.equal(record.resolvedConfig.input, original[0]?.replace("input: ", ""));
   assert.equal(record.resolvedConfig.runner.model, "opencode-go/original-model");
+  assert.equal(record.resolvedConfig.runner.apiKey, "$env:MY_KEY");
+  assert.deepEqual(record.references, [{ path: ["runner", "apiKey"], name: "MY_KEY" }]);
   assert.doesNotMatch(resultText, /value-that-must-not-be-retained/);
 
   // Editing the authoring file later must not rewrite the retained run parameters.

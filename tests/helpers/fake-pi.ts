@@ -3,7 +3,7 @@
 // Deterministic fake Pi RPC process for tests. Behavior is selected by a
 // "scenario" file beside this script; no model or network is involved.
 import { execFileSync, spawn } from "node:child_process";
-import { readFileSync, readdirSync, rmdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, rmdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
 const here = dirname(process.argv[1] ?? process.cwd());
@@ -103,31 +103,38 @@ function handlePrompt(command) {
       writeFileSync(
         join(process.cwd(), "env.json"),
         JSON.stringify({
-          credential: process.env.OPENCODE_API_KEY ?? null,
           fake: process.env.FAKE_TOKEN ?? null,
           host: process.env.HOST_SECRET ?? null,
+          apiKey: process.env.AGENT_EVALS_PI_API_KEY ?? null,
           home: process.env.HOME,
           path: process.env.PATH,
         }),
       );
       settle("Environment checked.");
       break;
-    case "runner-credential":
-      settle(process.env.OPENCODE_API_KEY === "synthetic-runner-key" ? "credential-present" : "credential-missing");
+    case "runner-api-key":
+      settle(process.env.AGENT_EVALS_PI_API_KEY === "synthetic-runner-key" ? "api-key-present" : "api-key-missing");
       break;
-    case "runner-custom-credential":
+    case "runner-api-key-details": {
+      writeFileSync(join(process.cwd(), "hello.txt"), "Hello, world!\n");
+      const modelsPath = join(process.env.PI_CODING_AGENT_DIR ?? "", "models.json");
       settle(
-        `custom:${process.env.AE_CUSTOM_RUNNER_KEY === "synthetic-custom-runner"}-other:${
-          process.env.AE_CUSTOM_JUDGE_KEY === undefined ? "absent" : "present"
-        }`,
+        JSON.stringify({
+          apiKeyPresent: process.env.AGENT_EVALS_PI_API_KEY === "synthetic-runner-key",
+          models: existsSync(modelsPath) ? readFileSync(modelsPath, "utf8") : null,
+        }),
       );
       break;
-    case "runner-credential-split":
-      settle(
-        `opencode-${process.env.OPENCODE_API_KEY === "synthetic-opencode-key"}-deepseek-${
-          process.env.DEEPSEEK_API_KEY === undefined ? "absent" : "present"
-        }`,
-      );
+    }
+    case "runner-custom-api-key":
+      settle(`custom:${process.env.AGENT_EVALS_PI_API_KEY === "synthetic-custom-runner"}`);
+      break;
+    case "runner-api-key-split":
+      settle(`runner:${process.env.AGENT_EVALS_PI_API_KEY === "synthetic-runner-key"}`);
+      break;
+    case "runner-echo-api-key":
+      writeFileSync(join(process.cwd(), "hello.txt"), "Hello, world!\n");
+      settle(process.env.AGENT_EVALS_PI_API_KEY ?? "missing");
       break;
     case "judge-valid":
       settle(
@@ -137,34 +144,23 @@ function handlePrompt(command) {
         }),
       );
       break;
-    case "judge-credential": {
-      const present = process.env.OPENCODE_API_KEY === "synthetic-runner-key";
+    case "judge-api-key": {
+      const present = process.env.AGENT_EVALS_PI_API_KEY === "synthetic-runner-key";
       settle(
         JSON.stringify({
-          criteria: [{ pass: present, reason: present ? "credential-present" : "credential-missing" }],
+          criteria: [{ pass: present, reason: present ? "api-key-present" : "api-key-missing" }],
         }),
       );
       break;
     }
-    case "judge-custom-credential": {
-      const custom = process.env.AE_CUSTOM_JUDGE_KEY === "synthetic-custom-judge";
-      const other = process.env.AE_CUSTOM_RUNNER_KEY === undefined;
-      settle(JSON.stringify({ criteria: [{ pass: custom && other, reason: `custom:${custom}-other:${other}` }] }));
+    case "judge-custom-api-key": {
+      const custom = process.env.AGENT_EVALS_PI_API_KEY === "synthetic-custom-judge";
+      settle(JSON.stringify({ criteria: [{ pass: custom, reason: `custom:${custom}` }] }));
       break;
     }
-    case "judge-credential-split": {
-      const deepseek = process.env.DEEPSEEK_API_KEY === "synthetic-deepseek-key";
-      const opencode = process.env.OPENCODE_API_KEY === undefined;
-      settle(
-        JSON.stringify({
-          criteria: [
-            {
-              pass: deepseek && opencode,
-              reason: `deepseek-${deepseek ? "present" : "missing"}-opencode-${opencode ? "absent" : "present"}`,
-            },
-          ],
-        }),
-      );
+    case "judge-api-key-split": {
+      const present = process.env.AGENT_EVALS_PI_API_KEY === "synthetic-judge-key";
+      settle(JSON.stringify({ criteria: [{ pass: present, reason: `judge:${present}` }] }));
       break;
     }
     case "judge-fail":
@@ -227,7 +223,12 @@ function handlePrompt(command) {
               TMPDIR: process.env.TMPDIR,
               PI_CODING_AGENT_DIR: process.env.PI_CODING_AGENT_DIR,
               PATH: process.env.PATH,
+              AGENT_EVALS_PI_API_KEY: process.env.AGENT_EVALS_PI_API_KEY ?? null,
             },
+            models: (() => {
+              const path = join(process.env.PI_CODING_AGENT_DIR ?? "", "models.json");
+              return existsSync(path) ? readFileSync(path, "utf8") : null;
+            })(),
           }),
         );
       }

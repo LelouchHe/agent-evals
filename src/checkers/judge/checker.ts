@@ -7,9 +7,8 @@ import { truncate } from "../../engine/truncate.ts";
 import type { CheckResult, Checker, CheckerContext, CheckerDefinition } from "../../engine/registry.ts";
 import { isMissing, readRunFile } from "../../engine/workspace.ts";
 import { assertSeatbeltAvailable } from "../../platform/macos/policy.ts";
-import { resolveCredentialEnv } from "../../runners/pi/credentials.ts";
 import { invokePi, resolvePiExecutable, type PiSessionError } from "../../runners/pi/session.ts";
-import { credentialNamesSchema, nonEmptyTrimmedString, thinkingSchema } from "../../runners/pi/params.ts";
+import { nonEmptyTrimmedString, thinkingSchema } from "../../runners/pi/params.ts";
 import { buildJudgePrompt } from "./prompt.ts";
 
 const judgeParamsSchema = z.strictObject({
@@ -18,7 +17,7 @@ const judgeParamsSchema = z.strictObject({
   rubric: z.array(nonEmptyTrimmedString).min(1, "must contain at least one statement"),
   file: runRelativePathSchema,
   executable: nonEmptyTrimmedString.default("pi"),
-  credentials: credentialNamesSchema,
+  apiKey: nonEmptyTrimmedString.optional(),
 });
 
 type JudgeParams = z.output<typeof judgeParamsSchema>;
@@ -43,21 +42,18 @@ export class JudgeError extends Error {
 export const judgeChecker: CheckerDefinition<JudgeParams> = {
   type: "judge",
   params: judgeParamsSchema,
-  async create(params, context) {
+  async create(params) {
     await resolvePiExecutable(params.executable);
     assertSeatbeltAvailable();
-    const credentialEnv = await resolveCredentialEnv(context.credentials, params.credentials);
-    return new JudgeChecker(params, credentialEnv);
+    return new JudgeChecker(params);
   },
 };
 
 class JudgeChecker implements Checker {
   readonly #params: JudgeParams;
-  readonly #credentialEnv: Readonly<Record<string, string>>;
 
-  constructor(params: JudgeParams, credentialEnv: Readonly<Record<string, string>>) {
+  constructor(params: JudgeParams) {
     this.#params = params;
-    this.#credentialEnv = credentialEnv;
   }
 
   readonly check = async (context: CheckerContext): Promise<readonly CheckResult[]> => {
@@ -91,7 +87,7 @@ class JudgeChecker implements Checker {
           },
           skills: [],
           tools: null,
-          credentialEnv: this.#credentialEnv,
+          ...(parsed.apiKey === undefined ? {} : { apiKey: parsed.apiKey }),
           allowNetwork: true,
         },
         buildJudgePrompt({

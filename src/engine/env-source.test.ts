@@ -3,7 +3,7 @@ import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { test } from "node:test";
 import { makeTempDir } from "../../tests/helpers/fake-pi-control.ts";
-import { createCredentialSource } from "./credentials.ts";
+import { createEnvSource } from "./env-source.ts";
 import { ConfigError } from "./config.ts";
 
 async function script(dir: string, name: string, body: string): Promise<void> {
@@ -38,7 +38,7 @@ async function waitForPid(path: string): Promise<number> {
     }
     await delay(10);
   }
-  throw new Error("credential command did not report its process id");
+  throw new Error("environment command did not report its process id");
 }
 
 async function expectDead(pids: readonly number[]): Promise<void> {
@@ -49,10 +49,10 @@ async function expectDead(pids: readonly number[]): Promise<void> {
     }
     await delay(10);
   }
-  assert.fail(`credential command process survived: ${pids.filter(isAlive).join(", ")}`);
+  assert.fail(`environment command process survived: ${pids.filter(isAlive).join(", ")}`);
 }
 
-test("plain and command credentials are lazy, cached per key, and unused commands do not run", async (t) => {
+test("plain and command environment values are lazy, cached per key, and unused commands do not run", async (t) => {
   const dir = await makeTempDir(t, "ae-credentials-");
   await script(dir, "emit.sh", "printf 'synthetic-command-key\\n'");
   await script(dir, "count.sh", "printf x >> count\nprintf 'synthetic-count-key\\n'");
@@ -67,7 +67,7 @@ test("plain and command credentials are lazy, cached per key, and unused command
     ].join("\n") + "\n",
   );
 
-  const source = createCredentialSource(dir);
+  const source = createEnvSource(dir);
   assert.equal(await source.require("AE_PLAIN_TEST"), "synthetic-plain-key");
   assert.equal(await source.require("AE_COMMAND_TEST"), "synthetic-command-key");
   assert.equal(await source.require("AE_COUNT_TEST"), "synthetic-count-key");
@@ -77,7 +77,7 @@ test("plain and command credentials are lazy, cached per key, and unused command
   assert.equal(process.env.AE_PLAIN_TEST, undefined);
 });
 
-test("credential failures are actionable and do not expose command output", async (t) => {
+test("environment-value failures are actionable and do not expose command output", async (t) => {
   const dir = await makeTempDir(t, "ae-credentials-fail-");
   await script(dir, "fail.sh", "printf 'STDERR-SENTINEL' >&2\nexit 7");
   await script(dir, "empty.sh", "exit 0");
@@ -86,7 +86,7 @@ test("credential failures are actionable and do not expose command output", asyn
     join(dir, ".env"),
     ['AE_FAIL_TEST="!./fail.sh"', 'AE_EMPTY_TEST="!./empty.sh"', 'AE_LARGE_TEST="!./large.sh"'].join("\n") + "\n",
   );
-  const source = createCredentialSource(dir);
+  const source = createEnvSource(dir);
 
   await assert.rejects(
     () => source.require("AE_FAIL_TEST"),
@@ -100,14 +100,14 @@ test("credential failures are actionable and do not expose command output", asyn
   await assert.rejects(() => source.require("AE_NOT_DEFINED"), /is not defined/);
 
   const emptyDir = await makeTempDir(t, "ae-credentials-missing-");
-  const missing = createCredentialSource(emptyDir);
+  const missing = createEnvSource(emptyDir);
   await assert.rejects(() => missing.require("AE_MISSING_FILE_KEY"), /is unavailable/);
 
   const parent = await makeTempDir(t, "ae-credentials-parent-");
   await writeFile(join(parent, ".env"), "AE_UPWARD_TEST=parent-key\n");
   const child = join(parent, "child");
   await mkdir(child);
-  await assert.rejects(() => createCredentialSource(child).require("AE_UPWARD_TEST"), /is unavailable/);
+  await assert.rejects(() => createEnvSource(child).require("AE_UPWARD_TEST"), /is unavailable/);
 
   const previous = process.env.AE_HOST_ONLY_TEST;
   process.env.AE_HOST_ONLY_TEST = "host-secret-value";
@@ -118,18 +118,18 @@ test("credential failures are actionable and do not expose command output", asyn
   const partial = await makeTempDir(t, "ae-credentials-partial-");
   await writeFile(join(partial, ".env"), "AE_OTHER_TEST=other\n");
   await assert.rejects(
-    () => createCredentialSource(partial).require("AE_HOST_ONLY_TEST"),
+    () => createEnvSource(partial).require("AE_HOST_ONLY_TEST"),
     (error: unknown) => error instanceof ConfigError && !error.message.includes("host-secret-value"),
   );
 });
 
-test("cancelled and timed-out credential commands terminate the direct command", async (t) => {
+test("cancelled and timed-out environment commands terminate the direct command", async (t) => {
   const dir = await makeTempDir(t, "ae-credentials-hang-");
   await script(dir, "hang.sh", "printf '%s\\n' \"$$\" > hang.pid\nexec /bin/sleep 30");
   await writeFile(join(dir, ".env"), 'AE_HANG_TEST="!./hang.sh"\n');
 
   const controller = new AbortController();
-  const source = createCredentialSource(dir, controller.signal);
+  const source = createEnvSource(dir, controller.signal);
   const pending = source.require("AE_HANG_TEST");
   const cancelledPid = await waitForPid(join(dir, "hang.pid"));
   t.after(() => {
@@ -145,7 +145,7 @@ test("cancelled and timed-out credential commands terminate the direct command",
 
   await script(dir, "timeout.sh", "printf '%s\\n' \"$$\" > timeout.pid\nexec /bin/sleep 30");
   await writeFile(join(dir, ".env"), 'AE_TIMEOUT_TEST="!./timeout.sh"\n');
-  const timeoutSource = createCredentialSource(dir);
+  const timeoutSource = createEnvSource(dir);
   const timeoutPending = timeoutSource.require("AE_TIMEOUT_TEST");
   const timeoutPid = await waitForPid(join(dir, "timeout.pid"));
   t.after(() => {

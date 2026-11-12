@@ -25,6 +25,106 @@ async function expectConfigError(run: () => Promise<unknown>, pattern: RegExp): 
   });
 }
 
+test("implementation parameters preserve unquoted $env references across nested maps and arrays", async (t) => {
+  const { path } = await writeDocument(t, [
+    "input: task",
+    "runner:",
+    "  $type: pi",
+    "  model: p/m",
+    "  apiKey: $env:MY_KEY",
+    "  nested:",
+    "    plain: $env:NESTED",
+    '    double: "$env:NESTED"',
+    "    single: '$env:NESTED'",
+    "    block: |",
+    "      $env:NESTED",
+    "    $type: $env:TYPE",
+    "    list:",
+    "      - $env:ITEM",
+    '      - "$env:ITEM"',
+    '  "$env:KEY": literal-key',
+    "checks:",
+    "  - $type: file",
+    "    path: $env:PATH_VALUE",
+    "    exists: true",
+  ]);
+
+  const loaded = await loadCase(path);
+  assert.deepEqual(loaded.references, [
+    { path: ["runner", "apiKey"], name: "MY_KEY" },
+    { path: ["runner", "nested", "plain"], name: "NESTED" },
+    { path: ["runner", "nested", "list", 0], name: "ITEM" },
+    { path: ["checks", 0, "path"], name: "PATH_VALUE" },
+  ]);
+  assert.equal(loaded.config.runner.apiKey, "$env:MY_KEY");
+  assert.equal(loaded.config.checks[0]?.path, "$env:PATH_VALUE");
+});
+
+test("selected cases collect only their own references and malformed plain references reject", async (t) => {
+  const { path } = await writeDocument(t, [
+    "input: task",
+    "cases:",
+    "  selected:",
+    "    runner:",
+    "      $type: pi",
+    "      model: p/m",
+    "      apiKey: $env:SELECTED_KEY",
+    "    checks:",
+    "      - $type: file",
+    "        path: hello.txt",
+    "        exists: true",
+    "  unused:",
+    "    runner:",
+    "      $type: pi",
+    "      model: p/m",
+    "      apiKey: $env:UNUSED_KEY",
+    "    checks:",
+    "      - $type: file",
+    "        path: hello.txt",
+    "        exists: true",
+  ]);
+
+  const loaded = await loadCase(path, { caseName: "selected" });
+  assert.deepEqual(loaded.references, [{ path: ["runner", "apiKey"], name: "SELECTED_KEY" }]);
+
+  const malformed = await writeDocument(
+    t,
+    [
+      "input: task",
+      "runner:",
+      "  $type: pi",
+      "  model: p/m",
+      "  apiKey: $env:BAD-NAME",
+      "checks:",
+      "  - $type: file",
+      "    path: hello.txt",
+    ],
+    "malformed.yml",
+  );
+  await expectConfigError(
+    () => loadCase(malformed.path),
+    /invalid environment reference "\$env:BAD-NAME" in implementation parameter runner\.apiKey .*line 5/,
+  );
+
+  const quoted = await writeDocument(
+    t,
+    [
+      "input: task",
+      "runner:",
+      "  $type: pi",
+      "  model: p/m",
+      '  apiKey: "$env:BAD-NAME"',
+      "checks:",
+      "  - $type: file",
+      "    path: hello.txt",
+    ],
+    "quoted.yml",
+  );
+  const quotedCase = await loadCase(quoted.path);
+  assert.deepEqual(quotedCase.references, []);
+  assert.equal(quotedCase.config.runner.apiKey, "$env:BAD-NAME");
+});
+
 test("an ordinary document resolves one case and annotates every top-level field as common", async (t) => {
   const { directory, path } = await writeDocument(t, [
     "input: Create hello.txt",

@@ -31,8 +31,8 @@ export interface PiSessionConfig {
   readonly skills: readonly string[];
   /** Built-in tools exposed to Pi, or null to disable every tool. */
   readonly tools: readonly string[] | null;
-  /** Explicit provider credentials injected into the isolated environment. */
-  readonly credentialEnv: Readonly<Record<string, string>>;
+  /** Ephemeral provider API key transported through an isolated config file and environment. */
+  readonly apiKey?: string;
   readonly allowNetwork: boolean;
 }
 
@@ -158,6 +158,9 @@ export async function createPiProcess(config: PiSessionConfig): Promise<PiProces
     await mkdir(shellStateDirectory(config), { recursive: true, mode: 0o700 });
   }
   await writeIsolatedSettings(config.dirs.configDir, shellPath);
+  if (config.apiKey !== undefined) {
+    await writeApiKeyConfig(config.dirs.configDir, config);
+  }
 
   const policy = await buildPolicy(executable, config);
   const policyPath = await writeSeatbeltPolicy(config.dirs.scratchDir, policy);
@@ -251,11 +254,24 @@ function buildEnvironment(config: PiSessionConfig): NodeJS.ProcessEnv {
     PI_TELEMETRY: "0",
     LANG: "en_US.UTF-8",
     ...(config.tools === null ? {} : { AGENT_EVALS_SHELL_STATE_DIR: shellStateDirectory(config) }),
+    ...(config.apiKey === undefined ? {} : { [API_KEY_ENV]: config.apiKey }),
   };
-  for (const [name, value] of Object.entries(config.credentialEnv)) {
-    env[name] = value;
-  }
   return env;
+}
+
+const API_KEY_ENV = "AGENT_EVALS_PI_API_KEY";
+
+async function writeApiKeyConfig(configDir: string, config: PiSessionConfig): Promise<void> {
+  if (config.model === undefined) {
+    throw new ConfigError("pi apiKey requires a model");
+  }
+  const separator = config.model.indexOf("/");
+  if (separator <= 0 || separator === config.model.length - 1) {
+    throw new ConfigError("pi apiKey requires a provider-qualified model (provider/model)");
+  }
+  const provider = config.model.slice(0, separator);
+  const models = { providers: { [provider]: { apiKey: `$${API_KEY_ENV}` } } };
+  await writeFile(join(configDir, "models.json"), JSON.stringify(models, null, 2) + "\n", { mode: 0o600 });
 }
 
 async function writeIsolatedSettings(configDir: string, shellPath?: string): Promise<void> {

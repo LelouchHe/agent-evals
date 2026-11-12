@@ -34,7 +34,7 @@ test("the packed CLI installs and runs without source or development dependencie
     return result.stdout;
   };
 
-  // Make credential-file exclusion a reachable assertion without touching a
+  // Make environment-file exclusion a reachable assertion without touching a
   // developer's real .env. The unique, ignored probe is removed even on failure.
   const probe = join(project, `.env.package-probe-${randomUUID()}`);
   await writeFile(probe, "PACKAGE_PROBE=synthetic-must-not-be-packed\n", { flag: "wx" });
@@ -84,15 +84,15 @@ test("the packed CLI installs and runs without source or development dependencie
   assert.match(help.stdout, /Usage: agent-evals/);
   await npmCommand(["run", "--silent", "prepare"], installed);
 
-  const runner = await createFakePi(t, "record-tools");
-  const judge = await createFakePi(t, "judge-credential");
+  const runner = await createFakePi(t, "runner-api-key-details");
+  const judge = await createFakePi(t, "judge-api-key");
   const config = {
     input: "Create hello.txt with exactly the content Hello, world!.",
     timeoutMs: 5_000,
     runner: {
       $type: "pi",
       model: "opencode-go/test-model",
-      credentials: ["OPENCODE_API_KEY"],
+      apiKey: "$env:MY_KEY",
       executable: runner.executable,
     },
     checks: [
@@ -100,7 +100,7 @@ test("the packed CLI installs and runs without source or development dependencie
       {
         $type: "judge",
         model: "opencode-go/test-judge",
-        credentials: ["OPENCODE_API_KEY"],
+        apiKey: "$env:MY_KEY",
         executable: judge.executable,
         file: "hello.txt",
         rubric: ["The file satisfies the task."],
@@ -109,7 +109,7 @@ test("the packed CLI installs and runs without source or development dependencie
   };
   const configPath = join(cwd, "case.yml");
   await writeFile(configPath, stringify(config));
-  await writeFile(join(cwd, ".env"), 'OPENCODE_API_KEY="!printf x >> count; printf synthetic-runner-key"\n');
+  await writeFile(join(cwd, ".env"), 'MY_KEY="!printf x >> count; printf synthetic-runner-key"\n');
   const invoke = async (entry: string, args: readonly string[]) =>
     runCliProcess(t, entry, args, {
       cwd,
@@ -120,8 +120,9 @@ test("the packed CLI installs and runs without source or development dependencie
   const built = await invoke(join(project, "dist/cli.js"), ["view", configPath]);
   assert.equal(viewed.code, 0, viewed.stderr);
   assert.equal(viewed.stdout, built.stdout);
+  assert.match(viewed.stdout, /apiKey: \$env:MY_KEY/);
   assert.deepEqual(await readdir(runtime), []);
-  assert.ok(!(await readdir(cwd)).includes("count"), "view executed the credential command");
+  assert.ok(!(await readdir(cwd)).includes("count"), "view executed the environment lookup command");
 
   const results = join(root, "results");
   const run = await invoke(bin, ["run", configPath, "--results-dir", results]);
@@ -133,6 +134,8 @@ test("the packed CLI installs and runs without source or development dependencie
     status: string;
     cleanup: { status: string };
     resolvedConfig: unknown;
+    references: { path: (string | number)[]; name: string }[];
+    runner: { finalText: string | null };
     checks: { status: string }[];
   };
   assert.equal(record.status, "pass");
@@ -142,6 +145,16 @@ test("the packed CLI installs and runs without source or development dependencie
   );
   assert.equal(record.cleanup.status, "removed");
   assert.deepEqual(record.resolvedConfig, config);
+  assert.deepEqual(record.references, [
+    { path: ["runner", "apiKey"], name: "MY_KEY" },
+    { path: ["checks", 1, "apiKey"], name: "MY_KEY" },
+  ]);
+  const details = JSON.parse(record.runner.finalText ?? "") as { apiKeyPresent: boolean; models: string };
+  assert.equal(details.apiKeyPresent, true);
+  assert.deepEqual(JSON.parse(details.models), {
+    providers: { "opencode-go": { apiKey: "$AGENT_EVALS_PI_API_KEY" } },
+  });
+  assert.doesNotMatch(details.models, /synthetic-runner-key/);
   assert.equal(await readFile(join(cwd, "count"), "utf8"), "x");
   assert.doesNotMatch(resultText + run.stdout + run.stderr, /synthetic-runner-key/);
   assert.deepEqual(await readdir(runtime), []);

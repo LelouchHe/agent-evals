@@ -12,7 +12,7 @@ checks:
   - $type: judge
     # Independent Pi invocation; omitted thinking uses the checker default.
     model: opencode-go/deepseek-v4.1-flash
-    credentials: [OPENCODE_API_KEY]
+    apiKey: $env:OPENCODE_API_KEY
     file: hello.txt
     rubric:
       - hello.txt exists and its content is "Hello, world!", allowing one final newline.
@@ -22,7 +22,7 @@ cases:
     runner:
       $type: pi
       model: opencode-go/deepseek-v4.1-flash
-      credentials: [OPENCODE_API_KEY]
+      apiKey: $env:OPENCODE_API_KEY
       # Omitted thinking uses the runner default (medium).
       # Resolved relative to this file and loaded explicitly. Discovered skills,
       # extensions, MCP servers, sessions, and global configuration stay disabled.
@@ -34,5 +34,5 @@ cases:
     runner:
       $type: pi
       model: opencode-go/deepseek-v4.1-flash
-      credentials: [OPENCODE_API_KEY]
+      apiKey: $env:OPENCODE_API_KEY
       skills: []

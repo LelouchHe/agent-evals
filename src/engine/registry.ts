@@ -3,7 +3,6 @@ import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import type { ZodType } from "zod";
 import { ConfigError, errorMessage } from "./config.ts";
-import type { CredentialSource } from "./credentials.ts";
 import type { RunRoot } from "./workspace.ts";
 
 export interface RunnerContext {
@@ -33,7 +32,6 @@ export interface Runner {
 
 export interface ImplementationContext {
   readonly authoringDir: string;
-  readonly credentials: CredentialSource;
 }
 
 export interface RunnerDefinition<P> {

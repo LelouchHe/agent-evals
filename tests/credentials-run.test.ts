@@ -5,7 +5,7 @@ import { test } from "node:test";
 import { stringify } from "yaml";
 import { loadCase } from "../src/engine/authoring.ts";
 import { ConfigError } from "../src/engine/config.ts";
-import { createCredentialSource } from "../src/engine/credentials.ts";
+import { createEnvSource } from "../src/engine/env-source.ts";
 import { addChecker, addRunner, createRegistry } from "../src/engine/registry.ts";
 import { runEvaluation } from "../src/engine/run.ts";
 import { fileChecker } from "../src/checkers/file/checker.ts";
@@ -40,9 +40,9 @@ function runCli(
   });
 }
 
-test("runner and judge share one cached provider credential and ambient keys do not leak", async (t) => {
-  const runner = await createFakePi(t, "runner-credential");
-  const judge = await createFakePi(t, "judge-credential");
+test("runner and judge share one cached environment value without leaking it", async (t) => {
+  const runner = await createFakePi(t, "runner-api-key");
+  const judge = await createFakePi(t, "judge-api-key");
   const invocation = await makeTempDir(t, "ae-credentials-run-");
   await script(invocation, "count-key.sh", "printf x >> count\nprintf 'synthetic-runner-key\\n'");
   await script(invocation, "unused-key.sh", "touch unused-ran\nprintf 'unused-key\\n'");
@@ -73,7 +73,7 @@ test("runner and judge share one cached provider credential and ambient keys do 
         {
           $type: "judge",
           model: "opencode-go/test-judge",
-          credentials: ["OPENCODE_API_KEY"],
+          apiKey: "$env:OPENCODE_API_KEY",
           file: "hello.txt",
           rubric: ["ok"],
           executable: judge.executable,
@@ -82,7 +82,7 @@ test("runner and judge share one cached provider credential and ambient keys do 
       runner: {
         $type: "pi",
         model: "opencode-go/test-model",
-        credentials: ["OPENCODE_API_KEY"],
+        apiKey: "$env:OPENCODE_API_KEY",
         executable: runner.executable,
       },
     }),
@@ -95,12 +95,18 @@ test("runner and judge share one cached provider credential and ambient keys do 
     registry: registry(),
     resultsDir,
     tempParent,
-    credentials: createCredentialSource(invocation),
+    envSource: createEnvSource(invocation),
   });
 
   assert.equal(record.status, "pass", record.error);
-  assert.equal(record.runner.finalText, "credential-present");
-  assert.equal(record.checks[0]?.reason, "credential-present");
+  assert.equal(record.runner.finalText, "api-key-present");
+  assert.equal(record.checks[0]?.reason, "api-key-present");
+  assert.deepEqual(record.references, [
+    { path: ["checks", 0, "apiKey"], name: "OPENCODE_API_KEY" },
+    { path: ["runner", "apiKey"], name: "OPENCODE_API_KEY" },
+  ]);
+  assert.equal(record.resolvedConfig.runner.apiKey, "$env:OPENCODE_API_KEY");
+  assert.equal(record.resolvedConfig.checks[0]?.apiKey, "$env:OPENCODE_API_KEY");
   assert.equal(await readFile(join(invocation, "count"), "utf8"), "x");
   await assert.rejects(() => readFile(join(invocation, "unused-ran")), /ENOENT/);
   const resultText = await readFile(join(resultsDir, record.runId, "result.json"), "utf8");
@@ -108,12 +114,12 @@ test("runner and judge share one cached provider credential and ambient keys do 
   assert.deepEqual(await readdir(tempParent), []);
 });
 
-test("different provider keys are injected only into their own runner and judge processes", async (t) => {
-  const runner = await createFakePi(t, "runner-credential-split");
-  const judge = await createFakePi(t, "judge-credential-split");
+test("different environment values reach only their own runner and judge processes", async (t) => {
+  const runner = await createFakePi(t, "runner-api-key-split");
+  const judge = await createFakePi(t, "judge-api-key-split");
   const invocation = await makeTempDir(t, "ae-credentials-split-");
-  await script(invocation, "opencode.sh", "printf x >> opencode-count\nprintf 'synthetic-opencode-key\\n'");
-  await script(invocation, "deepseek.sh", "printf x >> deepseek-count\nprintf 'synthetic-deepseek-key\\n'");
+  await script(invocation, "opencode.sh", "printf x >> opencode-count\nprintf 'synthetic-runner-key\\n'");
+  await script(invocation, "deepseek.sh", "printf x >> deepseek-count\nprintf 'synthetic-judge-key\\n'");
   await writeFile(
     join(invocation, ".env"),
     ['OPENCODE_API_KEY="!./opencode.sh"', 'DEEPSEEK_API_KEY="!./deepseek.sh"'].join("\n") + "\n",
@@ -129,7 +135,7 @@ test("different provider keys are injected only into their own runner and judge 
         {
           $type: "judge",
           model: "deepseek/test-judge",
-          credentials: ["DEEPSEEK_API_KEY"],
+          apiKey: "$env:DEEPSEEK_API_KEY",
           file: "hello.txt",
           rubric: ["ok"],
           executable: judge.executable,
@@ -138,7 +144,7 @@ test("different provider keys are injected only into their own runner and judge 
       runner: {
         $type: "pi",
         model: "opencode-go/test-model",
-        credentials: ["OPENCODE_API_KEY"],
+        apiKey: "$env:OPENCODE_API_KEY",
         executable: runner.executable,
       },
     }),
@@ -151,21 +157,27 @@ test("different provider keys are injected only into their own runner and judge 
     registry: registry(),
     resultsDir,
     tempParent,
-    credentials: createCredentialSource(invocation),
+    envSource: createEnvSource(invocation),
   });
 
   assert.equal(record.status, "pass", record.error);
-  assert.equal(record.runner.finalText, "opencode-true-deepseek-absent");
-  assert.equal(record.checks[0]?.reason, "deepseek-present-opencode-absent");
+  assert.equal(record.runner.finalText, "runner:true");
+  assert.equal(record.checks[0]?.reason, "judge:true");
   assert.equal(await readFile(join(invocation, "opencode-count"), "utf8"), "x");
   assert.equal(await readFile(join(invocation, "deepseek-count"), "utf8"), "x");
   assert.deepEqual(await readdir(tempParent), []);
 });
 
-test("a missing required credential fails before runtime resources and model start", async (t) => {
-  const runner = await createFakePi(t, "runner-credential");
+test("a missing required environment value fails before runtime resources and model start", async (t) => {
+  const runner = await createFakePi(t, "runner-api-key");
   const invocation = await makeTempDir(t, "ae-credentials-missing-run-");
   await writeFile(join(invocation, ".env"), "AE_OTHER_KEY=other\n");
+  const previous = process.env.OPENCODE_API_KEY;
+  process.env.OPENCODE_API_KEY = "host-fallback-must-not-be-used";
+  t.after(() => {
+    if (previous === undefined) delete process.env.OPENCODE_API_KEY;
+    else process.env.OPENCODE_API_KEY = previous;
+  });
   const directory = await makeTempDir(t, "ae-credentials-missing-case-");
   const configPath = join(directory, "case.yml");
   await writeFile(
@@ -176,7 +188,7 @@ test("a missing required credential fails before runtime resources and model sta
       runner: {
         $type: "pi",
         model: "opencode-go/test-model",
-        credentials: ["OPENCODE_API_KEY"],
+        apiKey: "$env:OPENCODE_API_KEY",
         executable: runner.executable,
       },
     }),
@@ -193,7 +205,7 @@ test("a missing required credential fails before runtime resources and model sta
         registry: registry(),
         resultsDir,
         tempParent,
-        credentials: createCredentialSource(invocation),
+        envSource: createEnvSource(invocation),
       }),
     ConfigError,
   );
@@ -202,8 +214,8 @@ test("a missing required credential fails before runtime resources and model sta
 });
 
 test("CLI resolves .env only from the invocation working directory", async (t) => {
-  const runner = await createFakePi(t, "runner-credential");
-  const judge = await createFakePi(t, "judge-credential");
+  const runner = await createFakePi(t, "runner-api-key");
+  const judge = await createFakePi(t, "judge-api-key");
   const caseDir = await makeTempDir(t, "ae-credentials-cli-case-");
   const configPath = join(caseDir, "case.yml");
   await writeFile(
@@ -214,7 +226,7 @@ test("CLI resolves .env only from the invocation working directory", async (t) =
         {
           $type: "judge",
           model: "opencode-go/test-judge",
-          credentials: ["OPENCODE_API_KEY"],
+          apiKey: "$env:OPENCODE_API_KEY",
           file: "hello.txt",
           rubric: ["ok"],
           executable: judge.executable,
@@ -223,7 +235,7 @@ test("CLI resolves .env only from the invocation working directory", async (t) =
       runner: {
         $type: "pi",
         model: "opencode-go/test-model",
-        credentials: ["OPENCODE_API_KEY"],
+        apiKey: "$env:OPENCODE_API_KEY",
         executable: runner.executable,
       },
     }),
@@ -244,17 +256,17 @@ test("CLI resolves .env only from the invocation working directory", async (t) =
   const elsewhere = await makeTempDir(t, "ae-credentials-cli-elsewhere-");
   const missing = await runCli(t, ["run", configPath, "--results-dir", resultsDir], elsewhere, tempParent);
   assert.equal(missing.code, 2);
-  assert.match(missing.stderr, /credential OPENCODE_API_KEY is unavailable/);
+  assert.match(missing.stderr, /environment value OPENCODE_API_KEY is unavailable/);
   assert.deepEqual(await readdir(tempParent), []);
 });
 
-test("arbitrary declared credential names reach only their declaring instances", async (t) => {
-  const runner = await createFakePi(t, "runner-custom-credential");
-  const judge = await createFakePi(t, "judge-custom-credential");
+test("natural apiKey fields receive ordinary values from arbitrary environment names", async (t) => {
+  const runner = await createFakePi(t, "runner-custom-api-key");
+  const judge = await createFakePi(t, "judge-custom-api-key");
   const invocation = await makeTempDir(t, "ae-credentials-custom-");
   await writeFile(
     join(invocation, ".env"),
-    "AE_CUSTOM_RUNNER_KEY=synthetic-custom-runner\nAE_CUSTOM_JUDGE_KEY=synthetic-custom-judge\n",
+    "MY_RUNNER_KEY=synthetic-custom-runner\nMY_JUDGE_KEY=synthetic-custom-judge\n",
   );
   const directory = await makeTempDir(t, "ae-credentials-custom-case-");
   const configPath = join(directory, "case.yml");
@@ -266,7 +278,7 @@ test("arbitrary declared credential names reach only their declaring instances",
         {
           $type: "judge",
           model: "test/judge-model",
-          credentials: ["AE_CUSTOM_JUDGE_KEY"],
+          apiKey: "$env:MY_JUDGE_KEY",
           file: "hello.txt",
           rubric: ["ok"],
           executable: judge.executable,
@@ -275,7 +287,7 @@ test("arbitrary declared credential names reach only their declaring instances",
       runner: {
         $type: "pi",
         model: "test/model",
-        credentials: ["AE_CUSTOM_RUNNER_KEY"],
+        apiKey: "$env:MY_RUNNER_KEY",
         executable: runner.executable,
       },
     }),
@@ -287,17 +299,107 @@ test("arbitrary declared credential names reach only their declaring instances",
     registry: registry(),
     resultsDir,
     tempParent,
-    credentials: createCredentialSource(invocation),
+    envSource: createEnvSource(invocation),
   });
   assert.equal(record.status, "pass", record.error);
-  assert.equal(record.runner.finalText, "custom:true-other:absent");
-  assert.equal(record.checks[0]?.reason, "custom:true-other:true");
-  assert.deepEqual(record.resolvedConfig.runner.credentials, ["AE_CUSTOM_RUNNER_KEY"]);
-  assert.deepEqual(record.resolvedConfig.checks[0]?.credentials, ["AE_CUSTOM_JUDGE_KEY"]);
+  assert.equal(record.runner.finalText, "custom:true");
+  assert.equal(record.checks[0]?.reason, "custom:true");
+  assert.equal(record.resolvedConfig.runner.apiKey, "$env:MY_RUNNER_KEY");
+  assert.equal(record.resolvedConfig.checks[0]?.apiKey, "$env:MY_JUDGE_KEY");
+  assert.deepEqual(record.references, [
+    { path: ["checks", 0, "apiKey"], name: "MY_JUDGE_KEY" },
+    { path: ["runner", "apiKey"], name: "MY_RUNNER_KEY" },
+  ]);
   assert.deepEqual(await readdir(tempParent), []);
 });
 
-test("omitting credentials performs no lookup even for a former provider name", async (t) => {
+test("an environment value that resembles a reference is not expanded again", async (t) => {
+  const runner = await createFakePi(t, "runner-echo-api-key");
+  const invocation = await makeTempDir(t, "ae-credentials-echo-");
+  await writeFile(join(invocation, ".env"), "WRAPPED_KEY=$env:OTHER\nOTHER=second-value\n");
+  const directory = await makeTempDir(t, "ae-credentials-echo-case-");
+  const configPath = join(directory, "case.yml");
+  await writeFile(
+    configPath,
+    stringify({
+      input: "task",
+      checks: [{ $type: "file", path: "hello.txt", exists: true }],
+      runner: {
+        $type: "pi",
+        model: "opencode-go/test-model",
+        apiKey: "$env:WRAPPED_KEY",
+        executable: runner.executable,
+      },
+    }),
+  );
+  const resultsDir = await makeTempDir(t, "ae-credentials-echo-results-");
+  const tempParent = await makeTempDir(t, "ae-credentials-echo-tmp-");
+  const record = await runEvaluation({
+    case: await loadCase(configPath),
+    registry: registry(),
+    resultsDir,
+    tempParent,
+    envSource: createEnvSource(invocation),
+  });
+  assert.equal(record.status, "pass", record.error);
+  assert.equal(record.runner.finalText, "$env:OTHER");
+  assert.deepEqual(await readdir(tempParent), []);
+});
+
+test("only the selected case's references are resolved", async (t) => {
+  const runner = await createFakePi(t, "runner-api-key-details");
+  const invocation = await makeTempDir(t, "ae-credentials-selected-");
+  await script(invocation, "selected.sh", "printf x >> selected-count\nprintf 'synthetic-runner-key\n'");
+  await script(invocation, "unused.sh", "touch unused-ran\nprintf 'unused-key\n'");
+  await writeFile(
+    join(invocation, ".env"),
+    ['SELECTED_KEY="!./selected.sh"', 'UNUSED_KEY="!./unused.sh"'].join("\n") + "\n",
+  );
+  const directory = await makeTempDir(t, "ae-credentials-selected-case-");
+  const configPath = join(directory, "case.yml");
+  await writeFile(
+    configPath,
+    stringify({
+      input: "task",
+      cases: {
+        selected: {
+          checks: [{ $type: "file", path: "hello.txt", exists: true }],
+          runner: {
+            $type: "pi",
+            model: "opencode-go/test-model",
+            apiKey: "$env:SELECTED_KEY",
+            executable: runner.executable,
+          },
+        },
+        unused: {
+          checks: [{ $type: "file", path: "hello.txt", exists: true }],
+          runner: {
+            $type: "pi",
+            model: "opencode-go/test-model",
+            apiKey: "$env:UNUSED_KEY",
+            executable: runner.executable,
+          },
+        },
+      },
+    }),
+  );
+  const resultsDir = await makeTempDir(t, "ae-credentials-selected-results-");
+  const tempParent = await makeTempDir(t, "ae-credentials-selected-tmp-");
+  const record = await runEvaluation({
+    case: await loadCase(configPath, { caseName: "selected" }),
+    registry: registry(),
+    resultsDir,
+    tempParent,
+    envSource: createEnvSource(invocation),
+  });
+  assert.equal(record.status, "pass", record.error);
+  assert.equal(await readFile(join(invocation, "selected-count"), "utf8"), "x");
+  await assert.rejects(() => readFile(join(invocation, "unused-ran")), /ENOENT/);
+  assert.deepEqual(record.references, [{ path: ["runner", "apiKey"], name: "SELECTED_KEY" }]);
+  assert.deepEqual(await readdir(tempParent), []);
+});
+
+test("omitting apiKey performs no environment lookup", async (t) => {
   const runner = await createFakePi(t, "success");
   const invocation = await makeTempDir(t, "ae-credentials-none-");
   await script(invocation, "count-key.sh", "printf x >> count\nprintf 'synthetic-unused-key\\n'");
@@ -319,7 +421,7 @@ test("omitting credentials performs no lookup even for a former provider name", 
     registry: registry(),
     resultsDir,
     tempParent,
-    credentials: createCredentialSource(invocation),
+    envSource: createEnvSource(invocation),
   });
   assert.equal(record.status, "pass", record.error);
   await assert.rejects(() => readFile(join(invocation, "count")), /ENOENT/);

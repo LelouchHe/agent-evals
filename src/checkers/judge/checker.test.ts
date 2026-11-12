@@ -165,5 +165,5 @@ test("judge rejects invalid parameters before launch", async (t) => {
 
   const defaults = await parse({ model: "m", file: "hello.txt", rubric: ["x"], executable: fake.executable });
   assert.equal(defaults.thinking, "medium");
-  assert.deepEqual(defaults.credentials, []);
+  assert.equal(defaults.apiKey, undefined);
 });

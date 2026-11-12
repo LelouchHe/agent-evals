@@ -25,7 +25,7 @@ import {
   type RunStatus,
   type RunnerStatus,
 } from "./results.ts";
-import { createCredentialSource, type CredentialSource } from "./credentials.ts";
+import { createEnvSource, type EnvSource } from "./env-source.ts";
 import { parseImplementationParams } from "./params.ts";
 import { truncate, truncateNullable } from "./truncate.ts";
 import { openRunRoot, type RunRoot } from "./workspace.ts";
@@ -41,8 +41,8 @@ export interface RunRequest {
   readonly signal?: AbortSignal;
   /** Parent directory for the temporary run root. Tests use this to inspect cleanup. */
   readonly tempParent?: string;
-  /** Credential source override for tests; defaults to `.env` in the invocation cwd. */
-  readonly credentials?: CredentialSource;
+  /** Environment-value source override for tests; defaults to `.env` in the invocation cwd. */
+  readonly envSource?: EnvSource;
 }
 
 /** Validate configuration, execute one runner, run all checks, and clean up. */
@@ -64,8 +64,8 @@ export async function runEvaluation(request: RunRequest): Promise<EvaluationReco
 
   let registered: Awaited<ReturnType<typeof prepareImplementations>>;
   try {
-    const credentials = request.credentials ?? createCredentialSource(process.cwd(), abort.signal);
-    registered = await prepareImplementations(request, credentials);
+    const source = request.envSource ?? createEnvSource(process.cwd(), abort.signal);
+    registered = await prepareImplementations(request, source);
     await validateFixture(request.case);
   } catch (error) {
     request.signal?.removeEventListener("abort", onAbort);
@@ -232,6 +232,7 @@ export async function runEvaluation(request: RunRequest): Promise<EvaluationReco
       ...(request.case.name === undefined ? {} : { name: request.case.name }),
     },
     resolvedConfig: request.case.config,
+    ...(request.case.references.length === 0 ? {} : { references: request.case.references }),
     status,
     runner: runnerRecord,
     checks,
@@ -247,25 +248,29 @@ export async function runEvaluation(request: RunRequest): Promise<EvaluationReco
 
 async function prepareImplementations(
   request: RunRequest,
-  credentials: CredentialSource,
+  source: EnvSource,
 ): Promise<{
   runnerType: string;
   runner: Runner;
   checks: readonly { readonly type: string; readonly checker: Checker }[];
 }> {
-  const context = { authoringDir: request.case.dir, credentials };
+  const context = { authoringDir: request.case.dir };
   const runnerDefinition = requireRunner(request.registry, request.case.config.runner.$type);
   const runnerParams = await parseImplementationParams(
     runnerDefinition.params,
-    paramsOf(request.case.config.runner),
+    await expandReferences(paramsOf(request.case.config.runner), request.case.references, ["runner"], source),
     `runner "${runnerDefinition.type}"`,
   );
   const runner = await runnerDefinition.create(runnerParams, context);
 
   const checks: { type: string; checker: Checker }[] = [];
-  for (const record of request.case.config.checks) {
+  for (const [index, record] of request.case.config.checks.entries()) {
     const definition = requireChecker(request.registry, record.$type);
-    const params = await parseImplementationParams(definition.params, paramsOf(record), `checker "${definition.type}"`);
+    const params = await parseImplementationParams(
+      definition.params,
+      await expandReferences(paramsOf(record), request.case.references, ["checks", index], source),
+      `checker "${definition.type}"`,
+    );
     checks.push({ type: definition.type, checker: await definition.create(params, context) });
   }
 
@@ -379,6 +384,43 @@ async function settleWithin(promise: Promise<unknown>, timeoutMs: number): Promi
 function paramsOf(record: Readonly<Record<string, unknown>> & { $type: string }): ImplementationParams {
   const { $type: _type, ...params } = record;
   return params;
+}
+
+/** Replace the selected implementation's declared `$env:NAME` values once. */
+async function expandReferences(
+  params: ImplementationParams,
+  references: ResolvedCase["references"],
+  prefix: readonly (string | number)[],
+  source: EnvSource,
+): Promise<ImplementationParams> {
+  const selected = references.filter((reference) => hasPrefix(reference.path, prefix));
+  if (selected.length === 0) {
+    return params;
+  }
+  const expanded = structuredClone(params) as Record<string, unknown>;
+  for (const reference of selected) {
+    setAtPath(expanded, reference.path.slice(prefix.length), await source.require(reference.name));
+  }
+  return expanded;
+}
+
+function hasPrefix(path: readonly (string | number)[], prefix: readonly (string | number)[]): boolean {
+  return prefix.every((part, index) => path[index] === part);
+}
+
+function setAtPath(root: Record<string, unknown>, path: readonly (string | number)[], value: string): void {
+  let current: Record<string, unknown> | unknown[] = root;
+  for (const [index, part] of path.entries()) {
+    if (index === path.length - 1) {
+      (current as Record<string | number, unknown>)[part] = value;
+      return;
+    }
+    const next = (current as Record<string | number, unknown>)[part];
+    if (typeof next !== "object" || next === null) {
+      throw new ConfigError(`cannot resolve environment reference at ${path.map(String).join(".")}`);
+    }
+    current = next as Record<string, unknown> | unknown[];
+  }
 }
 
 function diagnosticsOf(error: unknown): string[] {

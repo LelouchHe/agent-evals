@@ -76,12 +76,18 @@ test("pi runner passes explicit model, tools, and isolated environment", async (
   const dirs = await setup(t);
   const record = join(dirs.workspaceDir, "args.json");
   const fake = await createFakePi(t, "record-args", record);
-  await runPrepared({ model: "test/model", thinking: "high", executable: fake.executable }, dirs, 10_000);
+  const apiKey = "synthetic-transport-key";
+  await runPrepared(
+    { model: "opencode-go/test-model", thinking: "high", executable: fake.executable, apiKey },
+    dirs,
+    10_000,
+  );
 
   const recorded = JSON.parse(await readFile(record, "utf8")) as {
     args: string[];
     cwd: string;
     env: Record<string, string>;
+    models: string;
   };
   assert.ok(recorded.args.includes("--mode"));
   assert.ok(recorded.args.includes("rpc"));
@@ -90,35 +96,28 @@ test("pi runner passes explicit model, tools, and isolated environment", async (
   assert.ok(recorded.args.includes("--no-extensions"));
   assert.ok(recorded.args.includes("--no-mcp"));
   assert.ok(recorded.args.includes("--no-context-files"));
-  assert.equal(recorded.args[recorded.args.indexOf("--model") + 1], "test/model");
+  assert.equal(recorded.args[recorded.args.indexOf("--model") + 1], "opencode-go/test-model");
   assert.equal(recorded.args[recorded.args.indexOf("--thinking") + 1], "high");
   assert.equal(recorded.args[recorded.args.indexOf("--tools") + 1], "read,write,edit,bash");
   assert.equal(recorded.cwd, await realpath(dirs.workspaceDir));
   assert.equal(recorded.env.HOME, dirs.homeDir);
   assert.equal(recorded.env.TMPDIR, dirs.scratchDir);
   assert.equal(recorded.env.PI_CODING_AGENT_DIR, dirs.configDir);
+  assert.equal(recorded.env.AGENT_EVALS_PI_API_KEY, apiKey);
+  assert.deepEqual(JSON.parse(recorded.models), {
+    providers: { "opencode-go": { apiKey: "$AGENT_EVALS_PI_API_KEY" } },
+  });
+  assert.doesNotMatch(recorded.args.join(" "), /synthetic-transport-key/);
+  assert.doesNotMatch(recorded.models, /synthetic-transport-key/);
   assert.doesNotMatch(recorded.env.PATH ?? "", /\/Users\/lelouch\/mine/);
 });
 
-test("pi runner injects only declared credentials into its isolated environment", async (t) => {
+test("pi runner transports only its api key and keeps ambient environment out", async (t) => {
   const dirs = await setup(t);
   const fake = await createFakePi(t, "env");
-  await writeFile(
-    join(dirs.root, ".env"),
-    [
-      "OPENCODE_API_KEY=synthetic-credential",
-      "HOST_SECRET=dotenv-secret",
-      "PATH=/dotenv/path",
-      "HOME=/dotenv/home",
-    ].join("\n") + "\n",
-  );
-  const previousKey = process.env.OPENCODE_API_KEY;
   const previousHost = process.env.HOST_SECRET;
-  process.env.OPENCODE_API_KEY = "host-secret";
   process.env.HOST_SECRET = "host-only";
   t.after(() => {
-    if (previousKey === undefined) delete process.env.OPENCODE_API_KEY;
-    else process.env.OPENCODE_API_KEY = previousKey;
     if (previousHost === undefined) delete process.env.HOST_SECRET;
     else process.env.HOST_SECRET = previousHost;
   });
@@ -128,46 +127,23 @@ test("pi runner injects only declared credentials into its isolated environment"
       model: "opencode-go/test-model",
       executable: fake.executable,
       skills: [],
-      credentials: ["OPENCODE_API_KEY"],
+      apiKey: "synthetic-credential",
     },
     dirs,
     10_000,
   );
   const env = JSON.parse(await readFile(join(dirs.workspaceDir, "env.json"), "utf8")) as {
-    credential: string | null;
+    apiKey: string | null;
     fake: string | null;
     host: string | null;
     home: string;
     path: string;
   };
-  assert.equal(env.credential, "synthetic-credential");
+  assert.equal(env.apiKey, "synthetic-credential");
   assert.equal(env.fake, null);
   assert.equal(env.host, null);
   assert.equal(env.home, dirs.homeDir);
   assert.doesNotMatch(env.path, /dotenv/);
-});
-
-test("explicit credential names may intentionally override isolated environment values", async (t) => {
-  const dirs = await setup(t);
-  const fake = await createFakePi(t, "env");
-  await writeFile(
-    join(dirs.root, ".env"),
-    ["HOME=/synthetic/home", "PATH=/synthetic/path", "HOST_SECRET=dotenv-secret"].join("\n") + "\n",
-  );
-
-  await runPrepared(
-    { model: "test/model", executable: fake.executable, skills: [], credentials: ["HOME"] },
-    dirs,
-    10_000,
-  );
-  const env = JSON.parse(await readFile(join(dirs.workspaceDir, "env.json"), "utf8")) as {
-    home: string;
-    path: string;
-    host: string | null;
-  };
-  assert.equal(env.home, "/synthetic/home");
-  assert.notEqual(env.path, "/synthetic/path");
-  assert.equal(env.host, null);
 });
 
 test("pi runner stages declared skills inside isolated config", async (t) => {
@@ -198,10 +174,7 @@ test("pi runner rejects invalid parameters and missing prerequisites before laun
     () => parsePi({ model: "test/model", executable: fake.executable, envPassthrough: ["OPENCODE_API_KEY"] }),
     ConfigError,
   );
-  await assert.rejects(
-    () => parsePi({ model: "test/model", executable: fake.executable, credentials: ["NOT-A-NAME"] }),
-    ConfigError,
-  );
+  await assert.rejects(() => parsePi({ model: "test/model", executable: fake.executable, apiKey: "" }), ConfigError);
   await assert.rejects(async () => {
     const params = await parsePi({ model: "test/model", executable: fake.executable, skills: ["missing"] });
     await piRunner.create(params, implementationContext(dirs.root));
@@ -215,19 +188,15 @@ test("pi runner rejects invalid parameters and missing prerequisites before laun
     const params = await parsePi({ model: "test/model", executable: "missing-pi-executable" });
     await piRunner.create(params, implementationContext(dirs.root));
   }, ConfigError);
-  await assert.rejects(async () => {
-    const params = await parsePi({
-      model: "test/model",
-      executable: fake.executable,
-      credentials: ["OPENCODE_API_KEY"],
-    });
-    await piRunner.create(params, implementationContext(dirs.root));
-  }, ConfigError);
+  await assert.rejects(
+    () => runPrepared({ model: "test", executable: fake.executable, apiKey: "synthetic-key" }, dirs, 5_000),
+    (error: unknown) => error instanceof ConfigError && /provider-qualified model/.test(error.message),
+  );
 
   const defaults = await parsePi({ model: "test/model", executable: fake.executable });
   assert.equal(defaults.thinking, "medium");
   assert.deepEqual(defaults.skills, []);
-  assert.deepEqual(defaults.credentials, []);
+  assert.equal(defaults.apiKey, undefined);
 });
 
 test("pi runner reports invalid protocol output as an execution error", async (t) => {

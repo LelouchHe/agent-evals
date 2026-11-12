@@ -1,11 +1,12 @@
 import assert from "node:assert/strict";
-import { readdir, writeFile } from "node:fs/promises";
+import { readFile, readdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { test } from "node:test";
 import { stringify } from "yaml";
 import { z } from "zod";
 import { loadCase } from "../src/engine/authoring.ts";
-import { createCredentialSource } from "../src/engine/credentials.ts";
+import { ConfigError } from "../src/engine/config.ts";
+import { createEnvSource } from "../src/engine/env-source.ts";
 import {
   addChecker,
   addRunner,
@@ -17,6 +18,7 @@ import {
   type RunnerDefinition,
 } from "../src/engine/registry.ts";
 import { runEvaluation } from "../src/engine/run.ts";
+import { fileChecker } from "../src/checkers/file/checker.ts";
 import { makeTempDir } from "./helpers/fake-pi-control.ts";
 
 test("engine preparation passes each parsed implementation shape to its bound instance exactly once", async (t) => {
@@ -107,7 +109,7 @@ test("engine preparation passes each parsed implementation shape to its bound in
     registry,
     resultsDir,
     tempParent,
-    credentials: createCredentialSource(directory),
+    envSource: createEnvSource(directory),
   });
 
   assert.equal(record.status, "pass", record.error);
@@ -128,6 +130,97 @@ test("engine preparation passes each parsed implementation shape to its bound in
   assert.deepEqual(record.resolvedConfig.checks[0], { $type: "record-checker", marker: "declared-check" });
   assert.equal(record.checks[0]?.status, "pass");
   assert.equal(record.checks[0]?.subject, "checker:declared-check");
+  assert.deepEqual(await readdir(tempParent), []);
+});
+
+test("a declaration record distinguishes references from quoted literal strings", async (t) => {
+  const registry = createRegistry();
+  let received:
+    | {
+        reference: string;
+        literal: string;
+        items: string[];
+        details: { value: string };
+      }
+    | undefined;
+  addRunner(
+    registry,
+    {
+      type: "record-values",
+      params: z.strictObject({
+        reference: z.string(),
+        literal: z.string(),
+        items: z.array(z.string()),
+        details: z.strictObject({ value: z.string() }),
+      }),
+      create: (params) => {
+        received = params;
+        return {
+          run: async (context) => {
+            await writeFile(join(context.workspaceDir, "hello.txt"), "Hello, world!\n");
+            return { finalText: "ok", diagnostics: [] };
+          },
+          stop: async () => {},
+        };
+      },
+    },
+    "test",
+  );
+  addChecker(registry, fileChecker, "test");
+
+  const directory = await makeTempDir(t, "ae-typed-declaration-");
+  const casePath = join(directory, "case.yml");
+  await writeFile(join(directory, ".env"), "VALUE=resolved-value\n");
+  await writeFile(
+    casePath,
+    [
+      "input: task",
+      "runner:",
+      "  $type: record-values",
+      "  reference: $env:VALUE",
+      '  literal: "$env:VALUE"',
+      "  items:",
+      "    - $env:VALUE",
+      "    - plain",
+      "  details:",
+      "    value: $env:VALUE",
+      "checks:",
+      "  - $type: file",
+      "    path: hello.txt",
+      "    exists: true",
+    ].join("\n") + "\n",
+  );
+  const resultsDir = await makeTempDir(t, "ae-typed-declaration-results-");
+  const tempParent = await makeTempDir(t, "ae-typed-declaration-tmp-");
+  const record = await runEvaluation({
+    case: await loadCase(casePath),
+    registry,
+    resultsDir,
+    tempParent,
+    envSource: createEnvSource(directory),
+  });
+
+  assert.equal(record.status, "pass", record.error);
+  assert.deepEqual(received, {
+    reference: "resolved-value",
+    literal: "$env:VALUE",
+    items: ["resolved-value", "plain"],
+    details: { value: "resolved-value" },
+  });
+  assert.deepEqual(record.resolvedConfig.runner, {
+    $type: "record-values",
+    reference: "$env:VALUE",
+    literal: "$env:VALUE",
+    items: ["$env:VALUE", "plain"],
+    details: { value: "$env:VALUE" },
+  });
+  assert.deepEqual(record.references, [
+    { path: ["runner", "reference"], name: "VALUE" },
+    { path: ["runner", "items", 0], name: "VALUE" },
+    { path: ["runner", "details", "value"], name: "VALUE" },
+  ]);
+  const resultText = await readFile(join(resultsDir, record.runId, "result.json"), "utf8");
+  assert.doesNotMatch(resultText, /resolved-value/);
   assert.deepEqual(await readdir(tempParent), []);
 });
 
@@ -175,12 +268,13 @@ export const checker = {
   await loadTrustedImplementations(registry, { runnerDirs: [runnerDir], checkerDirs: [checkerDir] });
   const directory = await makeTempDir(t, "ae-typed-external-case-");
   const casePath = join(directory, "case.yml");
+  await writeFile(join(directory, ".env"), "EXTERNAL_TEXT=expanded-value\n");
   await writeFile(
     casePath,
     stringify({
       input: "task",
-      checks: [{ $type: "receiver-checker", text: "declared-check" }],
-      runner: { $type: "receiver-runner", text: "declared-runner" },
+      checks: [{ $type: "receiver-checker", text: "$env:EXTERNAL_TEXT" }],
+      runner: { $type: "receiver-runner", text: "$env:EXTERNAL_TEXT" },
     }),
   );
   const resultsDir = await makeTempDir(t, "ae-typed-external-results-");
@@ -191,13 +285,59 @@ export const checker = {
     registry,
     resultsDir,
     tempParent,
-    credentials: createCredentialSource(directory),
+    envSource: createEnvSource(directory),
   });
 
   assert.equal(record.status, "pass", record.error);
-  assert.equal(record.runner.finalText, "external:declared-runner");
-  assert.equal(record.checks[0]?.subject, "external:declared-check");
-  assert.deepEqual(record.resolvedConfig.runner, { $type: "receiver-runner", text: "declared-runner" });
+  assert.equal(record.runner.finalText, "external:expanded-value");
+  assert.equal(record.checks[0]?.subject, "external:expanded-value");
+  assert.deepEqual(record.resolvedConfig.runner, { $type: "receiver-runner", text: "$env:EXTERNAL_TEXT" });
+  assert.equal(record.checks[0]?.checker, "receiver-checker");
   assert.equal(record.cleanup.status, "removed");
+  assert.deepEqual(await readdir(tempParent), []);
+});
+
+test("expanded values are validated by the implementation schema without coercion", async (t) => {
+  const registry = createRegistry();
+  addRunner(
+    registry,
+    {
+      type: "typed-values",
+      params: z.strictObject({ count: z.number(), enabled: z.boolean() }),
+      create: () => {
+        throw new Error("factory must not run for invalid expanded values");
+      },
+    },
+    "test",
+  );
+  addChecker(registry, fileChecker, "test");
+
+  const directory = await makeTempDir(t, "ae-typed-values-");
+  const casePath = join(directory, "case.yml");
+  await writeFile(join(directory, ".env"), "COUNT=123\nENABLED=true\n");
+  await writeFile(
+    casePath,
+    stringify({
+      input: "task",
+      checks: [{ $type: "file", path: "hello.txt", exists: true }],
+      runner: { $type: "typed-values", count: "$env:COUNT", enabled: "$env:ENABLED" },
+    }),
+  );
+  const resultsDir = await makeTempDir(t, "ae-typed-values-results-");
+  const tempParent = await makeTempDir(t, "ae-typed-values-tmp-");
+
+  const loaded = await loadCase(casePath);
+  await assert.rejects(
+    () =>
+      runEvaluation({
+        case: loaded,
+        registry,
+        resultsDir,
+        tempParent,
+        envSource: createEnvSource(directory),
+      }),
+    ConfigError,
+  );
+  assert.deepEqual(await readdir(resultsDir), []);
   assert.deepEqual(await readdir(tempParent), []);
 });

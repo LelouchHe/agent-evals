@@ -41,7 +41,6 @@ const checkerContext: CheckerContext = {
 
 const implementationContext: ImplementationContext = {
   authoringDir: "/authoring",
-  credentials: { require: async () => "test-secret" },
 };
 
 const exampleRunner: RunnerDefinition<ExampleParams> = {
