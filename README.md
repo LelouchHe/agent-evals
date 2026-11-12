@@ -45,7 +45,7 @@ runner:
   credentials: [OPENCODE_API_KEY]
 ```
 
-Each name is read from `.env` and injected under the same environment-variable name. The list defaults to empty: no key is inferred from a provider/model, and missing declared entries fail before model start. Choose names recognized by the harness. There is no provider/key mapping, aliasing or arbitrary parameter binding; future binding questions are tracked in [Open Questions](docs/roadmap.md#open-questions). Runtime-control names cannot be overridden; see [Pi parameters](docs/configuration.md#pi-runner-type-pi).
+Each name is read from `.env` and injected under the same environment-variable name. The list defaults to empty: no key is inferred from a provider/model, and missing declared entries fail before model start. Choose names recognized by the harness. There is no provider/key mapping, aliasing or arbitrary parameter binding; future binding questions are tracked in [Open Questions](docs/roadmap.md#open-questions). Declarations are trusted operator configuration: explicitly injecting names such as `HOME`, `PATH` or `NODE_OPTIONS` can change the harness setup or behavior. Choose those overrides deliberately; there is no name/prefix blacklist.
 
 Use a plain value, or a parsed value starting with `!` to fetch an existing secret:
 

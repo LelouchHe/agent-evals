@@ -10,7 +10,9 @@ agent-evals run case.yml [--case name] [--results-dir path] \
   [--runner-dir path] [--checker-dir path]
 ```
 
-The development form is `npm run eval -- <command>`; both entry points execute the same built CLI. The trusted-directory options are repeatable and apply only to `run`.
+The development form is `npm run eval -- <command>`; both entry points execute the same built CLI. Flags are parsed by Node's `util.parseArgs`: `--name=value`, separate option values, `--` before dash-prefixed positionals, and `--help`/`-h` are supported. Use `--case=-name` for a dash-prefixed case name.
+
+The trusted-directory options are repeatable and apply only to `run`; they load implementation modules, not working directories. All supplied directories feed the same registry, where duplicate `$type` names are errors rather than ordered overrides.
 
 ## One Case or Named Cases
 
@@ -85,7 +87,7 @@ On `run`, the engine validates each record once, reports schema errors with fiel
 | `credentials` | `.env` names to inject under the same environment-variable names; default `[]`. No provider inference or arbitrary parameter binding. |
 | `executable`  | Pi executable name/path; default `pi`.                                                                                                |
 
-Credential names must be valid environment-variable names. Runtime-controlled names `HOME`, `PATH`, `TMPDIR`, `TMP`, `TEMP`, `LANG` and prefixes `NODE_`, `PI_`, `AGENT_EVALS_`, `DYLD_`, `LD_` are reserved. These bindings cannot replace isolation settings. Missing declared names fail during preparation; omission performs no credential lookup. The file/value/command rules belong in [Credentials](../README.md#credentials).
+Credential names must match `^[A-Za-z_][A-Za-z0-9_]*$`; no name/prefix blacklist applies. Case and `.env` declarations are trusted operator configuration. Explicitly declaring names such as `HOME`, `PATH` or `NODE_OPTIONS` may override the harness's default environment and change its behavior; undeclared `.env` values are still not forwarded. Missing declared names fail during preparation; omission performs no credential lookup. The file/value/command rules belong in [Credentials](../README.md#credentials).
 
 The runner exposes read/write/edit/bash tools for one initial message with autonomous tool turns. Operator skills, extensions, MCP servers, sessions, context files, prompt templates and themes are not automatically inherited. A final native assistant error is an execution error, even if files already satisfy checks; a recovered intermediate retry is not necessarily a failure.
 
@@ -114,9 +116,9 @@ The judge receives the task, selected regular-file evidence (or an explicit miss
 
 `view` uses the same authoring resolver as `run`, then prints the resolved declaration and each top-level field's source file, 1-based declaration line, and common/selected-case origin. Case labels are JSON-escaped. It does not show implementation defaults or invoke implementation schemas, factories, credential lookups or harnesses; it is not a runtime-readiness check.
 
-`run` writes `.eval-results/<run-id>/result.json` by default. Schema version 2 retains source path/optional case name, declared `resolvedConfig`, runner outcome, individual checks, overall status, diagnostics and cleanup status. Credentials and schema-normalized/defaulted values do not replace the declaration. No resource hashes or workspace snapshots are retained, so old resource contents cannot be reconstructed from their unchanged paths.
+`run` writes `.agent-evals/<run-id>/result.json` in the invocation directory by default; `--results-dir` changes the root. This is retained report data, not the evaluated workspace. Historical `.eval-results/` directories remain ignored but are not automatically moved. Schema version 2 retains source path/optional case name, declared `resolvedConfig`, runner outcome, individual checks, overall status, diagnostics and cleanup status. Credentials and schema-normalized/defaulted values do not replace the declaration. No resource hashes or workspace snapshots are retained, so old resource contents cannot be reconstructed from their unchanged paths.
 
-Overall statuses are `pass`, `fail`, `error`, `timeout`, and `cancelled`; individual checks are `pass`, `fail`, or `error`. Exit codes are 0 for pass, 1 for failed checks, and 2 for configuration/execution/checker/timeout/cancellation errors. Early configuration errors need not produce a run record.
+Overall statuses are `pass`, `fail`, `error`, `timeout`, and `cancelled`; individual checks are `pass`, `fail`, or `error`. Pass/fail summarizes satisfaction of the configured checks, not model/skill quality or an improvement claim. A normal negative judgment is `fail`; inability to execute or evaluate is `error`, with timeout/cancellation reported separately. Exit codes are 0 for pass, 1 for failed checks, and 2 for configuration/execution/checker/timeout/cancellation errors. Early configuration errors need not produce a run record.
 
 ## Trusted Extensions
 
