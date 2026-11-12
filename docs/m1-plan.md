@@ -1,6 +1,6 @@
 # M1: Filesystem Evaluation
 
-Status: the filesystem runtime, single-file authoring, typed factories and installable CLI are delivered and independently reviewed. Invocation-`.env` credentials are implemented on the working branch; their final verification/review is pending. No new live-model invocation is authorized by this record.
+Status: the filesystem runtime, single-file authoring, typed factories, installable CLI and invocation-`.env` credentials are implemented and parent-reviewed. The combined tree passed model-free clean-checkout and installed-package verification. No new live-model invocation is authorized by this record.
 
 ## Delivered Scope
 
@@ -25,19 +25,19 @@ Complete one local evaluation: prepare independent files and harness state, let 
 - [x] Build/pack/install outside repository module-resolution ancestry and verify runtime dependency/asset independence.
 - [x] Complete bounded independent reviews and close introduced blockers through the remaining-cleanup range.
 - [x] Run both single-file example cases once with approved live models at `8fd2778`.
-- [ ] Verify and independently review the new invocation-`.env` source, lazy command values, per-run caching, provider-scoped injection and secret-free results.
+- [x] Verify and independently review the invocation-`.env` source, lazy command values, per-run caching, provider-scoped injection and secret-free results, including the leader-exit and test-child cleanup repairs.
 
 Credentials must not reintroduce ambient operator authentication or Case-level `envPassthrough`. The agreed behavior is specified once in [Credentials](../README.md#credentials). Credential commands are host code; their failure/cancellation cleanup is a real input/process boundary, not a reason to expand the configuration language.
 
 ## Verification
 
-| Evidence                                                     | What it establishes                                                                                                                                                    |
-| ------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Completed cleanup code `59a804d` / reviewed record `85537ee` | 117 model-free tests passed, with no failures/skips, including lint/format/type/build gates. Parent repeated the gate from a fixed external checkout.                  |
-| Production-only disposable tarball installation              | `yaml`/`zod` resolved inside the install; installed and npm help/view matched; file/worker/judge fake execution passed eight checks and cleaned runtime state.         |
-| External context-only extensions with a separate Zod copy    | Schema/factory/instance receivers, one validation, captured typed values, unchanged declared results, and ordinary/named-case execution.                               |
-| Targeted failure probes                                      | Replaced-root/symlink containment, FIFO rejection, regex-worker termination, native provider-error classification, process/signal cleanup and test-child cancellation. |
-| Current `.env` feature                                       | Final combined gate and installed-artifact checks pending; use synthetic keys only until a separate live run is approved.                                              |
+| Evidence                                                  | What it establishes                                                                                                                                                                                                                             |
+| --------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Combined code/docs/verification checkpoint `889fe37`      | 126 model-free tests passed with no failures/skips after `npm ci` in a clean external checkout, including lint/format/type/build gates.                                                                                                         |
+| Repeatable `npm run test:package`                         | Real tarball and production-only external install passed. Dependencies resolved inside that install; executable help and installed/built view matched; file/regex/judge checks passed with one shared synthetic credential command and cleanup. |
+| External context-only extensions with a separate Zod copy | Schema/factory/instance receivers, one validation, captured typed values, unchanged declared results, and ordinary/named-case execution.                                                                                                        |
+| Targeted failure probes                                   | Replaced-root/symlink containment, FIFO rejection, regex-worker termination, native provider-error classification, process/signal cleanup and test-child cancellation.                                                                          |
+| Credential source and command lifecycle                   | Default-cwd lookup, no ambient fallback, lazy/shared resolution and scoped injection verified with synthetic keys. Success/failure backgrounds and cancelled/test-timed-out children are reaped.                                                |
 
 The non-atomic development build was reviewed and accepted as a serialized-checkout limit. Unknown-tag warnings and control-character labels were fixed; the remaining pre-existing/runtime limits are below. No retry, skip or timeout increase substitutes for an unresolved flaky test.
 
