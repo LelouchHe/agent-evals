@@ -115,6 +115,13 @@ function handlePrompt(command) {
     case "runner-credential":
       settle(process.env.OPENCODE_API_KEY === "synthetic-runner-key" ? "credential-present" : "credential-missing");
       break;
+    case "runner-custom-credential":
+      settle(
+        `custom:${process.env.AE_CUSTOM_RUNNER_KEY === "synthetic-custom-runner"}-other:${
+          process.env.AE_CUSTOM_JUDGE_KEY === undefined ? "absent" : "present"
+        }`,
+      );
+      break;
     case "runner-credential-split":
       settle(
         `opencode-${process.env.OPENCODE_API_KEY === "synthetic-opencode-key"}-deepseek-${
@@ -137,6 +144,12 @@ function handlePrompt(command) {
           criteria: [{ pass: present, reason: present ? "credential-present" : "credential-missing" }],
         }),
       );
+      break;
+    }
+    case "judge-custom-credential": {
+      const custom = process.env.AE_CUSTOM_JUDGE_KEY === "synthetic-custom-judge";
+      const other = process.env.AE_CUSTOM_RUNNER_KEY === undefined;
+      settle(JSON.stringify({ criteria: [{ pass: custom && other, reason: `custom:${custom}-other:${other}` }] }));
       break;
     }
     case "judge-credential-split": {

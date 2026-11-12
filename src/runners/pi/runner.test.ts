@@ -123,7 +123,16 @@ test("pi runner injects only the resolved provider credential into its isolated 
     else process.env.HOST_SECRET = previousHost;
   });
 
-  await runPrepared({ model: "opencode-go/test-model", executable: fake.executable, skills: [] }, dirs, 10_000);
+  await runPrepared(
+    {
+      model: "opencode-go/test-model",
+      executable: fake.executable,
+      skills: [],
+      credentials: ["OPENCODE_API_KEY"],
+    },
+    dirs,
+    10_000,
+  );
   const env = JSON.parse(await readFile(join(dirs.workspaceDir, "env.json"), "utf8")) as {
     credential: string | null;
     fake: string | null;
@@ -166,6 +175,12 @@ test("pi runner rejects invalid parameters and missing prerequisites before laun
     () => parsePi({ model: "test/model", executable: fake.executable, envPassthrough: ["OPENCODE_API_KEY"] }),
     ConfigError,
   );
+  for (const reserved of ["HOME", "PATH", "NODE_OPTIONS", "PI_CODING_AGENT_DIR"]) {
+    await assert.rejects(
+      () => parsePi({ model: "test/model", executable: fake.executable, credentials: [reserved] }),
+      ConfigError,
+    );
+  }
   await assert.rejects(async () => {
     const params = await parsePi({ model: "test/model", executable: fake.executable, skills: ["missing"] });
     await piRunner.create(params, implementationContext(dirs.root));
@@ -180,13 +195,18 @@ test("pi runner rejects invalid parameters and missing prerequisites before laun
     await piRunner.create(params, implementationContext(dirs.root));
   }, ConfigError);
   await assert.rejects(async () => {
-    const params = await parsePi({ model: "opencode-go/test-model", executable: fake.executable });
+    const params = await parsePi({
+      model: "test/model",
+      executable: fake.executable,
+      credentials: ["OPENCODE_API_KEY"],
+    });
     await piRunner.create(params, implementationContext(dirs.root));
   }, ConfigError);
 
   const defaults = await parsePi({ model: "test/model", executable: fake.executable });
   assert.equal(defaults.thinking, "medium");
   assert.deepEqual(defaults.skills, []);
+  assert.deepEqual(defaults.credentials, []);
 });
 
 test("pi runner reports invalid protocol output as an execution error", async (t) => {

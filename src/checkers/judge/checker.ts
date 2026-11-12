@@ -7,9 +7,9 @@ import { truncate } from "../../engine/truncate.ts";
 import type { CheckResult, Checker, CheckerContext, CheckerDefinition } from "../../engine/registry.ts";
 import { isMissing, readRunFile } from "../../engine/workspace.ts";
 import { assertSeatbeltAvailable } from "../../platform/macos/policy.ts";
-import { resolveModelCredentialEnv } from "../../runners/pi/credentials.ts";
+import { resolveCredentialEnv } from "../../runners/pi/credentials.ts";
 import { invokePi, resolvePiExecutable, type PiSessionError } from "../../runners/pi/session.ts";
-import { nonEmptyTrimmedString, thinkingSchema } from "../../runners/pi/params.ts";
+import { credentialNamesSchema, nonEmptyTrimmedString, thinkingSchema } from "../../runners/pi/params.ts";
 import { buildJudgePrompt } from "./prompt.ts";
 
 const judgeParamsSchema = z.strictObject({
@@ -18,6 +18,7 @@ const judgeParamsSchema = z.strictObject({
   rubric: z.array(nonEmptyTrimmedString).min(1, "must contain at least one statement"),
   file: runRelativePathSchema,
   executable: nonEmptyTrimmedString.default("pi"),
+  credentials: credentialNamesSchema,
 });
 
 type JudgeParams = z.output<typeof judgeParamsSchema>;
@@ -45,7 +46,7 @@ export const judgeChecker: CheckerDefinition<JudgeParams> = {
   async create(params, context) {
     await resolvePiExecutable(params.executable);
     assertSeatbeltAvailable();
-    const credentialEnv = await resolveModelCredentialEnv(context.credentials, params.model);
+    const credentialEnv = await resolveCredentialEnv(context.credentials, params.credentials);
     return new JudgeChecker(params, credentialEnv);
   },
 };

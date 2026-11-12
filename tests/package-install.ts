@@ -89,12 +89,18 @@ test("the packed CLI installs and runs without source or development dependencie
   const config = {
     input: "Create hello.txt with exactly the content Hello, world!.",
     timeoutMs: 5_000,
-    runner: { $type: "pi", model: "opencode-go/test-model", executable: runner.executable },
+    runner: {
+      $type: "pi",
+      model: "opencode-go/test-model",
+      credentials: ["OPENCODE_API_KEY"],
+      executable: runner.executable,
+    },
     checks: [
       { $type: "file", path: "hello.txt", exists: true, matches: "^Hello, world!\\n?$" },
       {
         $type: "judge",
         model: "opencode-go/test-judge",
+        credentials: ["OPENCODE_API_KEY"],
         executable: judge.executable,
         file: "hello.txt",
         rubric: ["The file satisfies the task."],

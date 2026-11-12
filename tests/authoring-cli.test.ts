@@ -176,6 +176,7 @@ test("a run records the resolved configuration, source, and metadata-only case n
     "    runner:",
     "      $type: pi",
     "      model: opencode-go/original-model",
+    "      credentials: [OPENCODE_API_KEY]",
     "      thinking: low",
     `      executable: ${fake.executable}`,
     "    checks:",

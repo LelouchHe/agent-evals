@@ -4,8 +4,8 @@ import { z } from "zod";
 import { ConfigError, errorMessage, resolveAuthoringAsset } from "../../engine/config.ts";
 import { assertSeatbeltAvailable } from "../../platform/macos/policy.ts";
 import type { Runner, RunnerContext, RunnerDefinition, RunnerOutcome } from "../../engine/registry.ts";
-import { resolveModelCredentialEnv } from "./credentials.ts";
-import { nonEmptyTrimmedString, thinkingSchema } from "./params.ts";
+import { resolveCredentialEnv } from "./credentials.ts";
+import { credentialNamesSchema, nonEmptyTrimmedString, thinkingSchema } from "./params.ts";
 import { invokePi, resolvePiExecutable } from "./session.ts";
 
 const piRunnerParamsSchema = z.strictObject({
@@ -13,6 +13,7 @@ const piRunnerParamsSchema = z.strictObject({
   thinking: thinkingSchema.default("medium"),
   skills: z.array(z.string().min(1, "must be a non-empty relative path")).default([]),
   executable: nonEmptyTrimmedString.default("pi"),
+  credentials: credentialNamesSchema,
 });
 
 type PiRunnerParams = z.output<typeof piRunnerParamsSchema>;
@@ -25,7 +26,7 @@ export const piRunner: RunnerDefinition<PiRunnerParams> = {
     await resolvePiExecutable(params.executable);
     await assertSkillsAvailable(params.skills, context.authoringDir);
     assertSeatbeltAvailable();
-    const credentialEnv = await resolveModelCredentialEnv(context.credentials, params.model);
+    const credentialEnv = await resolveCredentialEnv(context.credentials, params.credentials);
     return new PiRunner(params, context.authoringDir, credentialEnv);
   },
 };
