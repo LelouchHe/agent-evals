@@ -14,11 +14,11 @@ From the repository:
 npm ci
 cp .env.example .env
 # Fill the provider key or lookup command in .env before running a model.
-npm run eval -- view examples/write-file/case.yml --case with-skill
-npm run eval -- run examples/write-file/case.yml --case with-skill
+npm run eval -- view examples/deploy-runbook/case.yml --case with-skill
+npm run eval -- run examples/deploy-runbook/case.yml --case with-skill
 ```
 
-The example also has `without-skill`; names are labels, not built-in A/B modes. Both use `opencode-go/deepseek-v4.1-flash` and default thinking `medium`. This tiny task proves integration, not skill improvement. [Configuration Reference](docs/configuration.md) explains the file format and commands.
+The example also has `without-skill`; names are labels, not built-in A/B modes. Both use `opencode-go/deepseek-v4.1-flash` and default thinking `medium`. The skill supplies private error-code knowledge the task and log do not reveal, so the cases are expected to differ; one run of each is a sample, not a pass rate. [Configuration Reference](docs/configuration.md) explains the file format and commands.
 
 ## Installable CLI
 

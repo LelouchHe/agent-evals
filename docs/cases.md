@@ -16,6 +16,7 @@ Treat a case like a test: control the inputs, observe outcomes and side effects,
 - Assert outcomes, not a prescribed action sequence, unless the action itself is the behavior being tested.
 - A case may target one skill or capability. Reuse it across implementations only when their relevant expectations are shared.
 - Names and collections do not imply an A/B experiment. Repeated runs can test the current contents of the same referenced skill; different checks do not automatically yield comparable scores.
+- A check separates runs with and without a resource only if that resource supplies what the model cannot infer from the task, fixture or common practice. Conventions that match widespread standards rarely show a difference.
 - Agents are stochastic. One pass proves that run, not an improvement rate. Repetition/comparison support is a [planned capability](roadmap.md#evidence-and-measurements), not current statistical evidence.
 
 ## Prepare Explicit Inputs
@@ -23,8 +24,9 @@ Treat a case like a test: control the inputs, observe outcomes and side effects,
 Keep fixtures and case-owned assets beside the test. For example:
 
 ```text
-write-file/
+my-case/
   case.yml
+  fixture/
   skill/SKILL.md
 ```
 
@@ -40,7 +42,7 @@ Use deterministic checks for exact facts and a judge for qualitative criteria. A
 
 Do not create routing-versus-behavior pipelines. Skill loading, tool choices, restraint and result quality are concerns expressed through checks and evidence when those observations exist. A missing observation cannot prove that the agent avoided an action.
 
-File/environment evidence is stronger than an agent's own account alone. The simple write-file example is an integration smoke: with and without a skill can both pass, so it does not demonstrate skill effectiveness. Future collaborator substitution and richer observations are described in [Roadmap](roadmap.md), not implemented by adding ad hoc Case fields.
+File/environment evidence is stronger than an agent's own account alone. Future collaborator substitution and richer observations are described in [Roadmap](roadmap.md), not implemented by adding ad hoc Case fields.
 
 ## Keep Validation Data Honest
 

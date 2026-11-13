@@ -1,21 +1,23 @@
-# One source file. Common fields are invariants shared by every named case;
-# each case supplies its complete runner record. A top-level field may not
-# appear in both the common part and the selected case.
-input: Create hello.txt with exactly the content "Hello, world!".
+# The skill holds team-private knowledge (what our error codes mean and how to
+# fix them). The task does not state it and the log does not reveal it.
+input: Our deploy failed. Read deploy.log and write the cause and the commands to fix it into diagnosis.md.
+fixture: fixture
 timeoutMs: 120000
 checks:
   - $type: file
-    path: hello.txt
-    exists: true
-    # Search (not an implicit full-file match). One trailing newline is allowed.
-    matches: '^Hello, world!\n?$'
+    path: diagnosis.md
+    # Search semantics: the pattern may match anywhere in the file.
+    matches: "make rotate-signing-cert"
+  - $type: file
+    path: deploy.log
+    unchanged: true
   - $type: judge
     # Independent Pi invocation; omitted thinking uses the checker default.
     model: opencode-go/deepseek-v4.1-flash
     apiKey: $env:OPENCODE_API_KEY
-    file: hello.txt
+    file: diagnosis.md
     rubric:
-      - hello.txt exists and its content is "Hello, world!", allowing one final newline.
+      - The diagnosis identifies an expired artifact signing certificate as the cause.
 
 cases:
   with-skill:
@@ -23,7 +25,6 @@ cases:
       $type: pi
       model: opencode-go/deepseek-v4.1-flash
       apiKey: $env:OPENCODE_API_KEY
-      # Omitted thinking uses the runner default (medium).
       # Resolved relative to this file and loaded explicitly. Discovered skills,
       # extensions, MCP servers, sessions, and global configuration stay disabled.
       skills:

@@ -1,14 +1,12 @@
 import assert from "node:assert/strict";
-import { cp, mkdir, writeFile } from "node:fs/promises";
+import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { test } from "node:test";
 import { resolvePiExecutable, createPiProcess } from "../src/runners/pi/session.ts";
 import { makeTempDir } from "./helpers/fake-pi-control.ts";
 
-const skillSource = join(import.meta.dirname, "..", "examples", "write-file", "skill");
-
 test(
-  "real Pi loads the example skill inside the isolated sandbox without a model call",
+  "real Pi loads an explicit skill inside the isolated sandbox without a model call",
   { skip: process.platform !== "darwin" },
   async (t) => {
     let executable: string;
@@ -25,14 +23,18 @@ test(
     const configDir = join(root, "config");
     const scratchDir = join(root, "scratch");
     await Promise.all([mkdir(workspaceDir), mkdir(homeDir), mkdir(configDir), mkdir(scratchDir)]);
-    await cp(skillSource, join(configDir, "skills", "write-file"), { recursive: true });
+    await mkdir(join(configDir, "skills", "sample"), { recursive: true });
+    await writeFile(
+      join(configDir, "skills", "sample", "SKILL.md"),
+      "---\nname: sample\ndescription: Sample skill for the loading test.\n---\n\nbody\n",
+    );
 
     const process = await createPiProcess({
       executable,
       runRootDir: root,
       thinking: "medium",
       dirs: { workspaceDir, homeDir, configDir, scratchDir },
-      skills: [join(configDir, "skills", "write-file")],
+      skills: [join(configDir, "skills", "sample")],
       tools: ["read", "write"],
       allowNetwork: false,
     });
@@ -43,8 +45,8 @@ test(
     };
     const skill = data.commands?.find((command) => command.source === "skill");
     assert.ok(skill !== undefined, `expected a loaded skill, got ${JSON.stringify(data.commands)}`);
-    assert.equal(skill.name, "skill:write-requested-file");
-    assert.match(skill.description ?? "", /Write a file at a requested path/);
+    assert.equal(skill.name, "skill:sample");
+    assert.equal(skill.description, "Sample skill for the loading test.");
   },
 );
 
