@@ -129,7 +129,7 @@ Directories are real, so the harness can create files beside the linked ones. `d
 - **Login files are copied, not linked.** How a harness rewrites a file is outside our control, so the engine copies `login` in and copies its original files back.
 - **Credential proxy: verified, deferred.** A proxy outside the sandbox can hold an API key while the harness sees a placeholder and a local model endpoint, letting sandbox network shrink to one local port. It must not carry Claude subscription tokens (see [Credentials for Claude](#credentials-for-claude)). Network stays open for now.
 - **Process cleanup is sandbox-wide, not harness-specific.** A supervisor inside the run's Seatbelt instance launches `command` and, on completion or a stop request, sends `SIGKILL` to all signalable processes. Seatbelt's `(allow signal (target same-sandbox))` rule limits this to that instance, including orphaned processes and new sessions. The ACP runner will use this instead of Pi's shell wrapper and process-group registry. The native Pi runner is unchanged; a shell prototype's cleanup paths are verified below, but ACP lifecycle integration is not.
-- **The case is not the environment.** Case files, mock implementations, control configuration and results stay outside everything the agent can read. The environment is the fixture, the run's `HOME` and what the caller's `env` passes.
+- **The case is not the environment.** Case files, mock implementations, control configuration and results stay outside everything the agent can read. The environment is the fixture and the run's `HOME`.
 
 ## Verified Constraints
 
