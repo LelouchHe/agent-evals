@@ -64,6 +64,7 @@ if ($mode eq "login") {
   exit 0;
 }
 my @methods;
+my $model = "model-a";
 while (my $line = <STDIN>) {
   my $request = decode_json($line);
   push @methods, $request->{method};
@@ -88,7 +89,21 @@ while (my $line = <STDIN>) {
         {id => "custom", name => ($data[0] // "Custom") . ":" . ($data[1] // ""), type => "select", currentValue => "x", options => [{group => "g", name => "Grouped", options => [{value => "x", name => "Choice X"}]}]}
       ]
     };
+  } elsif ($request->{method} eq "session/set_config_option") {
+    $model = $request->{params}{value};
+    $result = {configOptions => []};
   } elsif ($request->{method} eq "session/prompt") {
+    open(my $f, ">", "answer.txt") or die $!;
+    print $f "$model: $request->{params}{prompt}[0]{text}"; close($f);
+    if ($scenario eq "hang") { sleep 600; }
+    for my $update (
+      {sessionUpdate => "agent_message_chunk", content => {type => "text", text => "draft"}},
+      {sessionUpdate => "tool_call", toolCallId => "call-1", title => "write"},
+      {sessionUpdate => "agent_message_chunk", content => {type => "text", text => "wrote "}},
+      {sessionUpdate => "agent_message_chunk", content => {type => "text", text => "answer"}},
+    ) {
+      print encode_json({jsonrpc => "2.0", method => "session/update", params => {sessionId => "session-test", update => $update}}), "\n";
+    }
     $result = {stopReason => "end_turn"};
   } else { die "unexpected method"; }
   print encode_json({jsonrpc => "2.0", id => $request->{id}, result => $result}), "\\n";

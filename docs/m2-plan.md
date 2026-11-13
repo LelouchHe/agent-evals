@@ -1,6 +1,6 @@
 # M2: Observable Runs
 
-Status: partial implementation. The standalone preparation helpers are merged; full ACP case execution, trace and mocks remain planned. [Writing Cases](cases.md#the-test-model) defines the trace, interaction and side-effect sources this milestone makes real. Current helper usage is documented in [Configuration Reference](configuration.md#acp-preparation-helpers); a full installation walkthrough is not yet verified.
+Status: partial implementation. Step A.1 is implemented: the preparation helpers and the ACP evaluation runner. Trace, Claude Code and mocks remain planned. [Writing Cases](cases.md#the-test-model) defines the trace, interaction and side-effect sources this milestone makes real. Current usage is documented in [Configuration Reference](configuration.md#acp-runner-type-acp); a full installation walkthrough is not yet verified.
 
 ## Scope
 
@@ -20,11 +20,18 @@ Not in scope: multi-turn authoring beyond what ACP gives for free, network mocks
 
 - **Verification:** 157 model-free tests passed with no failures or skips; the external production-only package installation verified dependency isolation and installed helper execution. Independent reviews and closure checks completed.
 - **Live Pi checks:** the checked-in agent configuration returned actual ACP options. A separate temporary configuration using `command: [/usr/bin/env, PI_OFFLINE=1, pi]` opened Pi's native `/login` menu and exited normally. No new authentication or model prompt was performed, credential contents were unchanged and no runtime directory remained. This does not verify the default interactive startup path; neither the repository example nor the toolkit has a default offline mode.
-- **Still planned:** the ACP evaluation runner, case inline/file-reference execution integration, per-case session config validation, trace and mocks. Existing runnable cases continue to use native Pi.
+
+## Delivered ACP Runner
+
+The registered `acp` runner completes step A.1. It reuses the helpers' HOME assembly, sandbox policy and supervisor inside the engine's run directories; [Configuration Reference](configuration.md#acp-runner-type-acp) owns its contract.
+
+- **Verification:** model-free tests cover a full run (path-referenced agent, session config, fixture workspace, output, login copy-back, runtime removal), rejection of an unoffered config value before prompting, and cancellation of a hung turn.
+- **Live Pi check (2026-11-13):** [`deploy-runbook-acp`](../examples/cases/deploy-runbook-acp/case.yml) through pi-acp with `opencode-go/deepseek-v4.1-flash` reproduced the native example: `with-skill` passed all three checks after loading the skill from the fixture's `.agents/skills/`; `without-skill` failed the pattern and judge checks. One run each.
+- **Still planned:** trace assembly and trace checks (A.2), Claude Code (A.3), mocks (B). The native Pi runner stays.
 
 ## Runner Configuration
 
-The full ACP evaluation runner remains planned. Its `agent` parameter accepts an inline startup object or a path to the same object; one standalone file can be shared across cases. ACP-specific schemas and operations live under `src/runners/acp/`, not in a general harness registry. The engine provides generic YAML/value-source loading and schema validation; operational use belongs to the ACP implementation.
+The runner's `agent` parameter accepts an inline startup object or a path to the same object; one standalone file can be shared across cases. ACP-specific schemas and operations live under `src/runners/acp/`, not in a general harness registry. The engine provides generic YAML/value-source loading and schema validation; operational use belongs to the ACP implementation.
 
 ```yaml
 runner:
@@ -35,7 +42,7 @@ runner:
     thought_level: high
 ```
 
-The standalone format is implemented for the [preparation helpers](configuration.md#acp-preparation-helpers):
+The standalone format, shared with the [preparation helpers](configuration.md#acp-preparation-helpers):
 
 ```yaml
 # agents/pi.yml
@@ -51,13 +58,13 @@ login:
 
 `acpCommand` starts the adapter; `command` starts the native interactive program. `home.login` is the persistent directory, and the top-level `login` list describes its HOME-relative file composition. Loading the configuration never performs login. There is no agent `env` field; `$env:NAME` remains a configuration-value source. The same object can ultimately be inlined in a case; a standalone file is optional, reusable or disposable after preparation. Nothing is selected from file or directory names.
 
-Per-case `runner.config` remains separate: keys match an ACP option's category, otherwise its ID. Set model first because other choices may depend on it. Offered values will be validated after session creation and before prompting; this case-execution integration is not implemented yet.
+Per-case `runner.config` remains separate: keys match an ACP option's category, otherwise its ID. Set model first because other choices may depend on it. Offered values are validated after session creation and before prompting.
 
-Checked-in startup examples: [Pi](../examples/agents/pi.yml), [Claude](../examples/agents/claude.yml). Runnable cases under `examples/cases/` still use the native Pi runner.
+Checked-in startup examples: [Pi](../examples/agents/pi.yml), [Claude](../examples/agents/claude.yml).
 
 ### Harness home
 
-ACP makes the conversation generic; installing a harness, logging in and its own settings stay harness-specific. The caller prepares two directories per harness. The ACP implementation assembles and removes each temporary HOME; the general engine supplies loading and type validation, not harness-home rules. The planned evaluation runner will reuse this setup.
+ACP makes the conversation generic; installing a harness, logging in and its own settings stay harness-specific. The caller prepares two directories per harness. The ACP implementation assembles and removes each temporary HOME; the general engine supplies loading and type validation, not harness-home rules. The helpers and the runner share this setup; the runner assembles into the engine's per-run HOME.
 
 | Part    | The caller puts there                                                                              | ACP setup                                                                                                                                                    |
 | ------- | -------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
@@ -136,7 +143,7 @@ Directories are real, so the harness can create files beside the linked ones. De
 - **Credentials sit in `login`.** They reach the sandbox and the agent can read them, as recorded in [M1 limits](m1-plan.md#known-limitations). Keep only what a run needs there; for example, Pi's `login` holds just the one provider's key, not the operator's whole `auth.json`.
 - **Login files are copied, not linked.** How a harness rewrites a file is outside our control, so ACP setup copies `login` in and copies its original files back.
 - **Credential proxy: verified, deferred.** A proxy outside the sandbox can hold an API key while the harness sees a placeholder and a local model endpoint, letting sandbox network shrink to one local port. It must not carry Claude subscription tokens (see [Credentials for Claude](#credentials-for-claude)). Network stays open for now.
-- **Process cleanup is sandbox-wide, not harness-specific.** An in-sandbox supervisor launches the workload and sends `SIGKILL` to all signalable processes on completion or a stop request. Seatbelt's `(allow signal (target same-sandbox))` rule limits this to that instance, including orphaned processes and new sessions. The helpers implement this with a private workload-completion pipe, not an agent-writable status file or the supervisor's SIGKILL exit status. The planned ACP runner will reuse it; evaluation-engine lifecycle integration remains pending. The native Pi runner and its tracked-group cleanup are unchanged.
+- **Process cleanup is sandbox-wide, not harness-specific.** An in-sandbox supervisor launches the workload and sends `SIGKILL` to all signalable processes on completion or a stop request. Seatbelt's `(allow signal (target same-sandbox))` rule limits this to that instance, including orphaned processes and new sessions. The helpers implement this with a private workload-completion pipe, not an agent-writable status file or the supervisor's SIGKILL exit status. The ACP runner reuses it for completion, timeout and cancellation. The native Pi runner and its tracked-group cleanup are unchanged.
 - **The case is not the environment.** Case files, mock implementations, control configuration and results stay outside everything the agent can read. The environment is the fixture and the run's `HOME`.
 
 ## Verified Constraints
@@ -218,7 +225,6 @@ Anthropic's [legal and compliance terms](https://code.claude.com/docs/en/legal-a
 
 ## Not Yet Verified
 
-- Full ACP evaluation integration of the implemented cleanup/completion mechanism: the engine's normal-completion, timeout and cancellation paths must still be verified when the runner exists.
 - Pi's default interactive path with `fd` and `rg` prepared in deps, using the checked-in agent YAML unchanged. The successful live UI check used the temporary offline command above; fresh authentication was not repeated.
 - A Claude Code `deps` directory: the runs above still read `claude-agent-acp` from the operator's Node installation, and whether it needs a separate `claude` command is unchecked.
 - Reporting the paths Seatbelt denied when an agent fails to start; a first query of the system log returned nothing.
@@ -228,7 +234,7 @@ Anthropic's [legal and compliance terms](https://code.claude.com/docs/en/legal-a
 
 - `CLAUDE_CODE_TMPDIR`: a generic way to point Claude Code at the run's temporary directory, or an accepted documented exception.
 - Concurrent runs sharing one `login`: two token refreshes would overwrite each other.
-- Permission answering policy and how a case configures it.
+- Permission answering: the runner currently approves every request; whether and how a case configures this is open.
 - Mock syntax, where call expectations live, and the default for unmatched calls. Command mocks sit in a per-run directory ahead of `home.path`.
 - MCP server names: a mock must use the real server's name to look the same, and harnesses may format tool names differently.
 - Normalized trace schema and retention or truncation.

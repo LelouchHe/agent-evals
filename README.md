@@ -20,15 +20,16 @@ npm run eval -- run examples/cases/deploy-runbook/case.yml --case with-skill
 
 The example also has `without-skill`; names are labels, not built-in A/B modes. Both use `opencode-go/deepseek-v4.1-flash` and default thinking `medium`. The skill supplies private error-code knowledge the task and log do not reveal, so the cases are expected to differ; one run of each is a sample, not a pass rate. [Configuration Reference](docs/configuration.md) explains the file format and commands.
 
-Runnable cases and their fixture/skill assets live under [`examples/cases/`](examples/cases/); they still use the native Pi runner. Standalone agent configurations under [`examples/agents/`](examples/agents/) are inputs to the ACP preparation helpers:
+Runnable cases and their fixture/skill assets live under [`examples/cases/`](examples/cases/). `deploy-runbook-acp` runs the same evaluation through the generic [ACP runner](docs/configuration.md#acp-runner-type-acp), using a standalone agent configuration from [`examples/agents/`](examples/agents/) that the preparation helpers also take:
 
 ```sh
 npm run eval -- config examples/agents/pi.yml
 npm run eval -- login examples/agents/pi.yml
+npm run eval -- run examples/cases/deploy-runbook-acp/case.yml --case with-skill
 # Installed CLI: agent-evals config/login <agent.yml>
 ```
 
-Set the referenced directory paths in the invocation `.env` and prepare `deps` first; the examples do not bundle software or credentials. `config` reports ACP configuration values without sending a prompt. `login` opens the declared native program interactively, then saves the declared login files on successful exit. Both use a temporary HOME and the same macOS sandbox. See [ACP preparation](docs/configuration.md#acp-preparation-helpers) for the format and storage rules. Claude's isolated installation remains unverified. Full ACP case execution is not implemented yet.
+Set the referenced directory paths in the invocation `.env` and prepare `deps` first; the examples do not bundle software or credentials. `config` reports ACP configuration values without sending a prompt. `login` opens the declared native program interactively, then saves the declared login files on successful exit. The helpers and ACP runs use a temporary HOME and the same macOS sandbox. See [ACP preparation](docs/configuration.md#acp-preparation-helpers) for the format and storage rules. Claude's isolated installation remains unverified.
 
 ## Installable CLI
 

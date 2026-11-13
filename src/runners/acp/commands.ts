@@ -1,12 +1,14 @@
-import { client, methods, PROTOCOL_VERSION, RequestError, ndJsonStream } from "@agentclientprotocol/sdk";
-import { Readable, Writable } from "node:stream";
+import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { stringify } from "yaml";
 import { loadImplementationParameters } from "../../engine/authoring.ts";
 import { ConfigError, errorMessage } from "../../engine/config.ts";
 import { createEnvSource } from "../../engine/env-source.ts";
 import { spawnSupervised, type SupervisedProcess } from "../../platform/macos/supervise.ts";
 import { agentSchema } from "./agent.ts";
-import { prepareEnvironment } from "./environment.ts";
+import { assembleEnvironment, resolveHome } from "./environment.ts";
+import { withSession } from "./session.ts";
 
 /** Helpers share the same typed agent configuration and isolated lifecycle. */
 export async function runAgentCommand(command: "config" | "login", path: string, signal: AbortSignal): Promise<string> {
@@ -19,18 +21,27 @@ export async function runAgentCommand(command: "config" | "login", path: string,
     throw new ConfigError("login requires command, home.login and a non-empty login file list");
   }
   signal.throwIfAborted();
-  const environment = await prepareEnvironment(agent, dir, command === "login");
+  const home = await resolveHome(agent, dir);
+  const directory = await mkdtemp(join(tmpdir(), "ae-acp-"));
+  const dirs = {
+    home: join(directory, "home"),
+    workspace: join(directory, "workspace"),
+    scratch: join(directory, "tmp"),
+  };
   const failures: unknown[] = [];
   let output = "";
+  let environment: Awaited<ReturnType<typeof assembleEnvironment>> | undefined;
   let supervised: SupervisedProcess | undefined;
   try {
+    await Promise.all(Object.values(dirs).map((path) => mkdir(path, { mode: 0o700 })));
+    environment = await assembleEnvironment(home, dirs, command === "login");
     const operationSignal = command === "config" ? AbortSignal.any([signal, AbortSignal.timeout(30_000)]) : signal;
     operationSignal.throwIfAborted();
     const process = await spawnSupervised({
       command: command === "config" ? agent.acpCommand : agent.command!,
       policy: environment.policy,
-      policyDirectory: environment.directory,
-      cwd: environment.cwd,
+      policyDirectory: directory,
+      cwd: dirs.workspace,
       env: environment.env,
       interactive: command === "login",
     });
@@ -56,41 +67,13 @@ export async function runAgentCommand(command: "config" | "login", path: string,
           if (code !== 0) throw new Error(`login command exited with code ${code}`);
           return "Login files saved.\n";
         }
-        let stderr = "";
-        process.child.stderr!.on("data", (chunk: Buffer) => {
-          stderr = (stderr + chunk.toString("utf8")).slice(-4096);
-        });
-        const app = client()
-          .onRequest(methods.client.session.requestPermission, async () => ({ outcome: { outcome: "cancelled" } }))
-          .onNotification(methods.client.session.update, async () => {});
-        try {
-          return await app.connectWith(
-            ndJsonStream(Writable.toWeb(process.child.stdin!), Readable.toWeb(process.child.stdout!)),
-            async (peer) => {
-              const initialized = await peer.request(methods.agent.initialize, {
-                protocolVersion: PROTOCOL_VERSION,
-                clientCapabilities: {},
-              });
-              const session = await peer.request(methods.agent.session.new, { cwd: environment.cwd, mcpServers: [] });
-              return stringify({
-                authMethods: initialized.authMethods ?? [],
-                configOptions: session.configOptions ?? [],
-              });
-            },
-          );
-        } catch (error) {
-          if (error instanceof RequestError && error.code === -32000) {
-            throw new Error("ACP authentication required; run login with this agent configuration first", {
-              cause: error,
-            });
-          }
-          if (stderr.trim())
-            throw new Error(
-              `ACP query failed: ${error instanceof Error ? error.message : String(error)}; stderr: ${stderr.trim()}`,
-              { cause: error },
-            );
-          throw error;
-        }
+        return withSession(
+          process,
+          dirs.workspace,
+          () => {},
+          async (_agent, initialized, session) =>
+            stringify({ authMethods: initialized.authMethods ?? [], configOptions: session.configOptions ?? [] }),
+        );
       };
       output = await Promise.race([work(), cancelled]);
       operationSignal.throwIfAborted();
@@ -104,13 +87,13 @@ export async function runAgentCommand(command: "config" | "login", path: string,
   try {
     if (supervised !== undefined) {
       await supervised.stop();
-      await environment.copyBack();
+      await environment!.copyBack();
     }
   } catch (error) {
     failures.push(new Error(`cleanup failed: ${errorMessage(error)}`, { cause: error }));
   }
   try {
-    await environment.dispose();
+    await rm(directory, { recursive: true, force: true });
   } catch (error) {
     failures.push(new Error(`cleanup failed: ${errorMessage(error)}`, { cause: error }));
   }

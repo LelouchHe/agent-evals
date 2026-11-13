@@ -11,6 +11,7 @@ import type { EvaluationRecord } from "./engine/results.ts";
 import { formatResolvedCase } from "./engine/view.ts";
 import { piRunner } from "./runners/pi/runner.ts";
 import { runAgentCommand } from "./runners/acp/commands.ts";
+import { acpRunner } from "./runners/acp/runner.ts";
 
 const USAGE = `Usage: agent-evals <command> <config.yml> [options]
 
@@ -95,6 +96,7 @@ async function main(argv: readonly string[]): Promise<number> {
 async function runCommand(options: CliOptions): Promise<number> {
   const registry = createRegistry();
   addRunner(registry, piRunner, "built-in");
+  addRunner(registry, acpRunner, "built-in");
   addChecker(registry, fileChecker, "built-in");
   addChecker(registry, judgeChecker, "built-in");
 
