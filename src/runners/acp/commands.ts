@@ -1,4 +1,4 @@
-import { ClientSideConnection, PROTOCOL_VERSION, RequestError, ndJsonStream } from "@agentclientprotocol/sdk";
+import { client, methods, PROTOCOL_VERSION, RequestError, ndJsonStream } from "@agentclientprotocol/sdk";
 import { Readable, Writable } from "node:stream";
 import { stringify } from "yaml";
 import { loadImplementationParameters } from "../../engine/authoring.ts";
@@ -60,20 +60,24 @@ export async function runAgentCommand(command: "config" | "login", path: string,
         process.child.stderr!.on("data", (chunk: Buffer) => {
           stderr = (stderr + chunk.toString("utf8")).slice(-4096);
         });
-        const connection = new ClientSideConnection(
-          () => ({
-            requestPermission: async () => ({ outcome: { outcome: "cancelled" } }),
-            sessionUpdate: async () => {},
-          }),
-          ndJsonStream(Writable.toWeb(process.child.stdin!), Readable.toWeb(process.child.stdout!)),
-        );
+        const app = client()
+          .onRequest(methods.client.session.requestPermission, async () => ({ outcome: { outcome: "cancelled" } }))
+          .onNotification(methods.client.session.update, async () => {});
         try {
-          const initialized = await connection.initialize({
-            protocolVersion: PROTOCOL_VERSION,
-            clientCapabilities: {},
-          });
-          const session = await connection.newSession({ cwd: environment.cwd, mcpServers: [] });
-          return stringify({ authMethods: initialized.authMethods ?? [], configOptions: session.configOptions ?? [] });
+          return await app.connectWith(
+            ndJsonStream(Writable.toWeb(process.child.stdin!), Readable.toWeb(process.child.stdout!)),
+            async (peer) => {
+              const initialized = await peer.request(methods.agent.initialize, {
+                protocolVersion: PROTOCOL_VERSION,
+                clientCapabilities: {},
+              });
+              const session = await peer.request(methods.agent.session.new, { cwd: environment.cwd, mcpServers: [] });
+              return stringify({
+                authMethods: initialized.authMethods ?? [],
+                configOptions: session.configOptions ?? [],
+              });
+            },
+          );
         } catch (error) {
           if (error instanceof RequestError && error.code === -32000) {
             throw new Error("ACP authentication required; run login with this agent configuration first", {

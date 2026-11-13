@@ -133,7 +133,9 @@ Directories are real, so the harness can create files beside the linked ones. `d
 
 ## Verified Constraints
 
-Versions: Pi 1.5.2, pi-acp fork 0.0.34, Claude Code 2.1.318, `claude-agent-acp` 0.101.0, ACP SDK 0.26.0, macOS Seatbelt.
+Earlier spike versions: Pi 1.5.2, pi-acp fork 0.0.34, Claude Code 2.1.318, `claude-agent-acp` 0.101.0, ACP SDK 0.26.0, macOS Seatbelt.
+
+The implemented helpers now use ACP SDK 2.6.0 and its stable ACP v1 app API (`client().connectWith()` and typed method requests). The SDK package version does not select experimental ACP v2; earlier spike evidence below retains its original version scope.
 
 ### ACP
 
