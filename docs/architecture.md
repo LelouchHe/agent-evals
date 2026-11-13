@@ -64,12 +64,14 @@ Built-ins and trusted extensions share this path. Dynamic modules cross a locali
 
 ## One Run, in Order
 
-1. **Prepare.** Resolve one case and preserve its declaration/reference metadata. Select definitions; obtain referenced values from the invocation `.env`, validate schemas, create instances and validate the fixture. The engine never interprets provider/key names. [Configuration](configuration.md#values-from-env) owns reference semantics.
-2. **Create state.** Make an atomic temporary root. Copy the fixture into `workspace` or start empty, capture an initial `baseline`, and prepare independent `home`, `config` and `scratch`. Source fixtures remain unchanged.
-3. **Execute.** The runner receives the task, directories, deadline and cancellation signal. Pi stages selected skills and runs its isolated RPC session under Seatbelt, with autonomous tool calls after one initial message.
-4. **Stop.** Await supported runner teardown before checks. Timeouts, cancellation and execution failures are not negative judgments. See [M1 limits](m1-plan.md#known-limitations).
-5. **Check.** Checkers inspect the still-live workspace/baseline. File regex work runs in a terminable worker; the judge reads selected evidence and starts a separate tool-free Pi invocation.
-6. **Clean and record.** Remove runtime state, then save outcomes, declared configuration and cleanup status. Early preparation errors need not produce a run record.
+A run follows the test lifecycle in [Writing Cases](cases.md#the-test-model): set up the environment, act, collect observations, assert, tear down. Teardown runs even after failure. Today the runner stops its processes and the engine removes the single runtime root; components added later, such as mocks, pair their own setup and teardown.
+
+1. **Load.** Resolve one case and preserve its declaration/reference metadata. Select definitions; obtain referenced values from the invocation `.env`, validate schemas, create instances and validate the fixture. The engine never interprets provider/key names. [Configuration](configuration.md#values-from-env) owns reference semantics.
+2. **Set up.** Make an atomic temporary root. The engine copies the fixture into `workspace` or starts empty, captures an initial `baseline`, and prepares independent `home`, `config` and `scratch`; source fixtures remain unchanged. The runner assembles its harness configuration, for Pi by staging selected skills with discovery disabled. The platform module builds the Seatbelt policy.
+3. **Act.** The runner receives the input, directories, deadline and cancellation signal, and drives the harness. Pi runs its isolated RPC session under Seatbelt, with autonomous tool calls after one initial message.
+4. **Collect.** Await supported runner teardown before checks; the runner returns its final text. Timeouts, cancellation and execution failures are not negative judgments. See [M1 limits](m1-plan.md#known-limitations).
+5. **Assert.** Checkers inspect the still-live workspace/baseline. File regex work runs in a terminable worker; the judge reads selected evidence and starts a separate tool-free Pi invocation.
+6. **Tear down and record.** Remove runtime state, then save outcomes, declared configuration and cleanup status. Early load errors need not produce a run record.
 
 ## Pi and Platform Composition
 
@@ -99,7 +101,7 @@ The host sandbox is a deliberate execution choice: real platform behavior is par
 - **Observations:** directory identity and path/symlink containment are checked before file reads. Non-regular and oversized evidence is an error, not a vacuous pass. A missing observation cannot prove a restraint was respected.
 - **Results:** declarations/reference metadata, source/case identity, outcomes, diagnostics and cleanup. Expanded parameters do not replace the declaration; runtime outputs remain the implementation's responsibility. No full resource snapshot is retained.
 
-Messages are invocation input/output; files, environment variables and service state are environment observations. Current checkers consume task/file state; the runner's final text is retained in the result but is not a general message/event evidence interface. Planned evidence collection belongs in the [Roadmap](roadmap.md#evidence-and-measurements).
+Observations come from three sources defined in [Writing Cases](cases.md#why-the-trace-matters): the runner's trace (with output as its user-facing view), mock interaction records, and environment side effects. Currently the runner returns only final text, retained in the result but not checkable, and checkers observe files only. Trace and mocks are planned in the [Roadmap](roadmap.md#evidence-and-measurements).
 
 ## Source Map
 

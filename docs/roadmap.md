@@ -21,19 +21,22 @@ Keep the runner boundary independent of a single protocol's terminology rather t
 
 ## Controlled Collaborators
 
-Extend the prepared environment with substitutes for tools, services, skills or other agents. The purpose is to control inputs and failures, observe interactions, and prevent real consequences such as sending messages or publishing changes.
+Extend the prepared environment with substitutes for tools, services, skills or other agents. The purpose is to control inputs and failures, observe interactions, and prevent real consequences such as sending messages or publishing changes. In the [test model](cases.md#the-test-model) these are mocks: observing calls and intercepting them are one mechanism.
 
+- Mocks are part of the case, supplied by its author like the fixture, and are an environment component with paired setup and teardown. Each mock records the calls that reach it.
 - A collaborator may be real, substituted or absent. Bound what the run exposes instead of trying to predict every autonomous call.
 - Prefer useful simplified implementations (fakes) to substitutes that only accept one scripted sequence. Otherwise gaps in the fake can look like agent failures.
 - Substitutes are trusted authoring assets outside the evaluated agent's writable area. Harness-native tools and protocol-served operations have different interception capabilities.
 - A substituted skill retains selection-relevant identity but changes instruction content. It remains model context, not a transparent function-call boundary, and can affect later behavior.
 - Substituted collaborators isolate behavior; real collaborators assess the combined outcome. Both kinds of test matter.
 
-Declaration, injection and lifecycle interfaces are not defined yet. ACP client-served operations may be useful injection points where supported. Replacing the model itself remains a way to test this toolkit's deterministic code, not a promised agent-evaluation case feature.
+Commands are the first interception point: a shim on the sandbox `PATH` works for any shell-using harness, and the sandbox can deny the real executable. Harness-native tools need harness support; ACP client-served file and terminal operations are a natural point there. Network interception is shelved. Exact YAML syntax and where expectations on calls are declared are not settled. Replacing the model itself remains a way to test this toolkit's deterministic code, not a promised agent-evaluation case feature.
 
 ## Evidence and Measurements
 
-Develop a coherent observation/tracer responsibility rather than accumulating unrelated special fields for files, messages, tool calls, permissions, environment variables and services.
+Develop a coherent observation responsibility rather than accumulating unrelated special fields for files, messages, tool calls, permissions, environment variables and services. The [test model](cases.md#why-the-trace-matters) fixes three sources: the runner's trace, mock interaction records and environment side effects.
+
+- The trace is a normalized event stream (messages, reasoning, tool requests and results, usage) and becomes part of the runner contract. Output is the trace's user-facing view, not a second record. Runners declare which detail they provide.
 
 - Collect observations while they are accessible; references cannot recover data never captured. Snapshots and event streams can need different timing.
 - Separate collection from referencing. An observation interface must supply evidence, not merely rename existing data.
@@ -41,7 +44,7 @@ Develop a coherent observation/tracer responsibility rather than accumulating un
 - Selected retained evidence can enable later inspection or regrading. Do not equate this with always retaining a whole environment.
 - Add behavior, usage, cost and latency measurements when the observations support them. Repetition and comparison should build on ordinary case runs, not skill-specific pipelines.
 
-No tracer plugin lifecycle, evidence layout, observation-reference language, JSON Pointer language or general interpolation mechanism is approved. The narrow `.env` parameter reference is separate from evidence collection. M1's small result/configuration record cannot reconstruct the removed workspace or its earlier resource contents.
+The normalized event schema and trace retention layout are not defined yet. No tracer plugin lifecycle, observation-reference language, JSON Pointer language or general interpolation mechanism is approved. The narrow `.env` parameter reference is separate from evidence collection. M1's small result/configuration record cannot reconstruct the removed workspace or its earlier resource contents.
 
 ## Host Platforms
 
@@ -57,8 +60,9 @@ The following product-design questions are **pending**, not implementation requi
 - **Retaining effective configuration.** Which effective/defaulted values, if any, should be recorded beyond declarations and implementation outputs? References alone do not identify their earlier contents. No second config record, resource snapshot or framework-level sensitivity classification is approved.
 - **Credential-command unlock UX.** The current direct lookup budget is five seconds. A longer budget for Touch ID/secret-manager authorization was suggested but not measured or approved. Raw command stdout/stderr must remain private.
 - **ACP permissions and capabilities.** Define the permission-answering policy and supported session/capability coverage without assuming every harness exposes identical operations.
-- **Collaborator substitutes.** Settle case ownership versus harness assembly, declaration/injection/lifecycle interfaces, and how to assess fidelity and drift for substituted skills/tools/services.
-- **Observation/tracer contracts.** Define collection timing, snapshots versus streams, selected retention, evidence references and any regrading boundary. Do not infer a generic expression language or full-environment snapshot requirement.
+- **Varying one nested field.** Any declared part can be the subject, but composition is a disjoint top-level union, so comparing only `runner.model` repeats the whole runner record per case. Revisit only if real cases make the duplication costly.
+- **Mocks.** Case ownership is decided. Settle YAML syntax, where call expectations live, default handling of unmatched calls, and how to assess fidelity and drift for substituted skills/tools/services.
+- **Trace and observation contracts.** Define the normalized event schema, runner capability declaration, trace retention and truncation, evidence references and any regrading boundary. Do not infer a generic expression language or full-environment snapshot requirement.
 - **Extension discovery and identity.** Trusted-directory discovery currently loads modules with explicitly declared types; built-ins are registered explicitly. Revisit the discovery unit (one implementation versus a module providing multiple capabilities), type naming, entrypoint conventions and built-in/extension consistency when more runner/checker/tracer implementations provide concrete cases. Defer changes; directory-derived types and fixed entrypoints are not approved.
 
 ## Delivery
