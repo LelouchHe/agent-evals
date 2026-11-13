@@ -1,0 +1,7 @@
+# Design example for the planned ACP runner; not supported by the current CLI.
+# Use this same object inline in runner.agent or reference this file once implemented.
+command: [pi-acp]
+home:
+  deps: $env:PI_DEPS
+  login: $env:PI_LOGIN
+  path: [.local/bin]

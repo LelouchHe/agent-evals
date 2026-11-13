@@ -74,6 +74,8 @@ A standalone file can be shared across different cases and case files, or used j
 
 This is an ACP runner parameter, not an engine-wide harness registry or a general configuration-import feature. The ACP implementation loads and validates either form. Per-case ACP session values stay in `runner.config`, separate from the startup object.
 
+Checked-in startup examples: [Pi](../examples/agents/pi.yml) and [Claude](../examples/agents/claude.yml). These are design examples, not inputs supported by the current CLI. Runnable cases under `examples/cases/` still use the native Pi runner.
+
 ### Harness home
 
 ACP makes the conversation generic; installing a harness, logging in and its own settings stay harness-specific. The runner keeps that knowledge out of its code: the caller prepares two directories per harness, and the engine builds each run's `HOME` from them and removes it afterwards.

@@ -1,0 +1,7 @@
+# Design example for the planned ACP runner; not supported by the current CLI.
+# Isolated Claude dependencies and temporary-directory handling are not yet verified.
+command: [claude-agent-acp]
+home:
+  deps: $env:CLAUDE_DEPS
+  login: $env:CLAUDE_LOGIN
+  path: [.local/bin]
