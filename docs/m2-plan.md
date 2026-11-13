@@ -1,6 +1,6 @@
 # M2: Observable Runs
 
-Status: design. Decisions and verified constraints below come from throwaway spikes on 2026-11-12; no M2 code is implemented. [Writing Cases](cases.md#the-test-model) defines the trace, interaction and side-effect sources this milestone makes real. User-facing setup instructions will move to a separate setup document once step 1 settles the commands.
+Status: design. Decisions and verified constraints below come from throwaway spikes on 2026-11-12–13; no M2 code is implemented. [Writing Cases](cases.md#the-test-model) defines the trace, interaction and side-effect sources this milestone makes real. User-facing setup instructions will move to a separate setup document once step 1 settles the commands.
 
 ## Scope
 
@@ -121,6 +121,7 @@ Directories are real, so the harness can create files beside the linked ones. `d
 - **Credentials sit in `login`.** They reach the sandbox and the agent can read them, as recorded in [M1 limits](m1-plan.md#known-limitations). Keep only what a run needs there; for example, Pi's `login` holds just the one provider's key, not the operator's whole `auth.json`.
 - **Login files are copied, not linked.** How a harness rewrites a file is outside our control, so the engine copies `login` in and copies its original files back.
 - **Credential proxy: verified, deferred.** A proxy outside the sandbox can hold an API key while the harness sees a placeholder and a local model endpoint, letting sandbox network shrink to one local port. It must not carry Claude subscription tokens (see [Credentials for Claude](#credentials-for-claude)). Network stays open for now.
+- **Process cleanup is sandbox-wide, not harness-specific.** A supervisor inside the run's Seatbelt instance launches `command` and, on completion or a stop request, sends `SIGKILL` to all signalable processes. Seatbelt's `(allow signal (target same-sandbox))` rule limits this to that instance, including orphaned processes and new sessions. The ACP runner will use this instead of Pi's shell wrapper and process-group registry. The native Pi runner is unchanged; a shell prototype's cleanup paths are verified below, but ACP lifecycle integration is not.
 - **The case is not the environment.** Case files, mock implementations, control configuration and results stay outside everything the agent can read. The environment is the fixture, the run's `HOME` and what the caller's `env` passes.
 
 ## Verified Constraints
@@ -170,6 +171,20 @@ Versions: Pi 1.5.2, pi-acp fork 0.0.34, Claude Code 2.1.318, `claude-agent-acp` 
 - Node's resolver needs read access to the `/var` symlink; without it DNS fails under Seatbelt.
 - The agent's working directory must be readable, and only the fixture-derived workspace is.
 
+### Process cleanup
+
+Three sequential probes used sandbox A, sandbox B created independently from the same policy, and an unsandboxed control process:
+
+- Sending `SIGURG` by PID from A succeeded for A's process and was denied for B and the outside control.
+- Broadcasting `SIGURG` with `kill -URG -1` inside A reached A's ready signal handler, but neither ready control handler. The command returned success.
+- Broadcasting `SIGKILL` inside A removed its supervisor shell, ordinary background process, orphaned `nohup` process and orphaned new-session process. B and the outside control survived and were then explicitly cleaned up. No matching test processes remained.
+
+A subsequent `/bin/sh` supervisor prototype launched a model-free harness through the production `spawnSandboxed` helper and generated Seatbelt policy. Five cases passed: normal exit 0, normal exit 7, a deadline-triggered `SIGTERM`, explicit `SIGINT` cancellation, and `SIGTERM` with a harness that ignores both stop signals. Each case first verified live ordinary, orphaned `nohup` and orphaned new-session processes; after cleanup none remained. An independent sandbox using the same policy and an unsandboxed control survived every case. The prototype also forwarded stdin, stdout and stderr. These are prototype lifecycle probes, not tests of the unimplemented ACP runner or the engine's timeout/cancellation wiring.
+
+The broadcast kills the supervisor too: the host observed `SIGKILL` for all five cases, including successful harness completion. The prototype captured child statuses 0 and 7 before broadcasting, but the supervisor's OS exit status cannot carry them. A probe-only file established this observation; agent-writable files are not a trusted completion channel. Completion reporting must be distinguished from intentional cleanup when the ACP runner is integrated.
+
+These probes verify cleanup on the tested macOS host, not recovery from forced supervisor death.
+
 ### Mocks
 
 - A `make` shim recorded direct calls and calls from inside a script, in both harnesses. `/usr/bin/make` by absolute path was denied by Seatbelt (exit 126).
@@ -185,6 +200,7 @@ Anthropic's [legal and compliance terms](https://code.claude.com/docs/en/legal-a
 
 ## Not Yet Verified
 
+- ACP integration of sandbox-wide cleanup: the engine's normal-completion, timeout and cancellation paths, and distinguishing intentional supervisor `SIGKILL` from unexpected process death without losing harness failure information.
 - A Claude Code `deps` directory: the runs above still read `claude-agent-acp` from the operator's Node installation, and whether it needs a separate `claude` command is unchecked.
 - Reporting the paths Seatbelt denied when an agent fails to start; a first query of the system log returned nothing.
 - HTTP service mocks and model-provider fault injection, which would also need the proxy.
@@ -192,7 +208,6 @@ Anthropic's [legal and compliance terms](https://code.claude.com/docs/en/legal-a
 ## Open Questions
 
 - `CLAUDE_CODE_TMPDIR`: a generic way to point Claude Code at the run's temporary directory, or an accepted documented exception.
-- Stopping every process of an arbitrary ACP agent; the native Pi runner relies on a Pi-specific supervisor and shell wrapper.
 - Details of the `agent` and `login` commands.
 - Concurrent runs sharing one `login`: two token refreshes would overwrite each other.
 - Permission answering policy and how a case configures it.
