@@ -13,7 +13,8 @@ The reusable machinery is execution, isolation, checking and recording—not the
 Use ACP as the planned primary protocol-level route for additional harnesses. One ACP runner can serve harnesses that expose the required protocol capabilities; native runners remain valid.
 
 - Further user messages belong to the same evaluation/session model, not a separate case category. ACP is the planned route for multi-turn execution, not a logical prerequisite for all multi-turn support.
-- Conversation transport can be shared, while skill/configuration/tool-server assembly remains harness-specific.
+- Conversation transport can be shared, while skill/configuration/tool-server assembly remains harness-specific. Decided for [M2](m2-plan.md#decisions): one generic ACP client plus a launch profile per harness.
+- A credential proxy outside the sandbox can keep real API keys away from the agent and let sandbox network shrink to the engine; it was verified but is deferred, and it must not carry Claude subscription tokens. See [M2](m2-plan.md#decisions).
 - Session reports such as tool calls, plans and permission requests can be evidence, but reported calls do not prove external effects.
 - Permission decisions are an evaluation variable. Configuration and capability coverage are not yet specified.
 
@@ -30,7 +31,7 @@ Extend the prepared environment with substitutes for tools, services, skills or 
 - A substituted skill retains selection-relevant identity but changes instruction content. It remains model context, not a transparent function-call boundary, and can affect later behavior.
 - Substituted collaborators isolate behavior; real collaborators assess the combined outcome. Both kinds of test matter.
 
-Commands are the first interception point: a shim on the sandbox `PATH` works for any shell-using harness, and the sandbox can deny the real executable. Harness-native tools need harness support; ACP client-served file and terminal operations are a natural point there. Network interception is shelved. Exact YAML syntax and where expectations on calls are declared are not settled. Replacing the model itself remains a way to test this toolkit's deterministic code, not a promised agent-evaluation case feature.
+Mocks sit at the environment boundary because ACP session updates report calls rather than request them. Commands are the first interception point: a shim on the sandbox `PATH` works for any shell-using harness, and the sandbox can deny the real executable. Harness-native tools need harness support; ACP client-served file and terminal operations are a natural point there. Network interception is shelved. Exact YAML syntax and where expectations on calls are declared are not settled. Replacing the model itself remains a way to test this toolkit's deterministic code, not a promised agent-evaluation case feature.
 
 ## Evidence and Measurements
 
@@ -67,4 +68,4 @@ The following product-design questions are **pending**, not implementation requi
 
 ## Delivery
 
-Only [M1](m1-plan.md) has a concrete delivery/acceptance record. Define later milestone plans when there is a real scenario and agreed scope; this document does not invent an M2/M3 schedule or turn the directions above into implementation obligations.
+[M1](m1-plan.md) has a delivery/acceptance record. [M2](m2-plan.md) (trace and mocks) is in design, with its decisions and verified constraints. Define later milestone plans when there is a real scenario and agreed scope; this document does not invent a schedule or turn the directions above into implementation obligations.

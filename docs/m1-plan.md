@@ -70,6 +70,8 @@ This proves that revision's integration, not skill effectiveness, later credenti
 - Fixture symlinks are not a supported sharing mechanism; checks reject unsafe escapes. File evidence is regular and size-bounded.
 - Evaluated Pi process cleanup covers tracked shell groups, not deliberate new-session/group escape or forced supervisor death. Agent-written registry data never authorizes host signals.
 - Staged supervisor modules rely on Node module-syntax detection; unusual CommonJS-scoped temporary roots remain unverified/unsupported.
+- The provider key reaches the evaluated agent: Pi receives it through its environment and shell tools inherit it, so `env` in the agent's shell prints it and it can enter retained output. A credential proxy that would remove this is verified but deferred; see [M2](m2-plan.md#decisions).
+- Sandboxed DNS works only because the run root sits under `/var/folders`: Node's resolver needs read access to the `/var` symlink, which the policy grants implicitly through that path's metadata. A run root elsewhere loses DNS. Network access is also unrestricted while the run needs the provider.
 - Live networking was tested only with the earlier OpenCode Go example. Current `apiKey` transport requires `provider/model` and a compatible Pi build; provider availability, key validity and business failures are handled by the adapter/harness, not framework schema policy.
 - Dynamic extensions are trusted code. Runtime capability checks do not statically prove an external module's schema/factory consistency.
 - Checkout build concurrency is restricted as documented in [Development](../README.md#development).
