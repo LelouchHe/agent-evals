@@ -27,6 +27,7 @@ import {
 } from "./results.ts";
 import { createEnvSource, type EnvSource } from "./env-source.ts";
 import { parseImplementationParams } from "./params.ts";
+import { expandReferences } from "./references.ts";
 import { truncate, truncateNullable } from "./truncate.ts";
 import { openRunRoot, type RunRoot } from "./workspace.ts";
 
@@ -384,43 +385,6 @@ async function settleWithin(promise: Promise<unknown>, timeoutMs: number): Promi
 function paramsOf(record: Readonly<Record<string, unknown>> & { $type: string }): ImplementationParams {
   const { $type: _type, ...params } = record;
   return params;
-}
-
-/** Replace the selected implementation's declared `$env:NAME` values once. */
-async function expandReferences(
-  params: ImplementationParams,
-  references: ResolvedCase["references"],
-  prefix: readonly (string | number)[],
-  source: EnvSource,
-): Promise<ImplementationParams> {
-  const selected = references.filter((reference) => hasPrefix(reference.path, prefix));
-  if (selected.length === 0) {
-    return params;
-  }
-  const expanded = structuredClone(params) as Record<string, unknown>;
-  for (const reference of selected) {
-    setAtPath(expanded, reference.path.slice(prefix.length), await source.require(reference.name));
-  }
-  return expanded;
-}
-
-function hasPrefix(path: readonly (string | number)[], prefix: readonly (string | number)[]): boolean {
-  return prefix.every((part, index) => path[index] === part);
-}
-
-function setAtPath(root: Record<string, unknown>, path: readonly (string | number)[], value: string): void {
-  let current: Record<string, unknown> | unknown[] = root;
-  for (const [index, part] of path.entries()) {
-    if (index === path.length - 1) {
-      (current as Record<string | number, unknown>)[part] = value;
-      return;
-    }
-    const next = (current as Record<string | number, unknown>)[part];
-    if (typeof next !== "object" || next === null) {
-      throw new ConfigError(`cannot resolve environment reference at ${path.map(String).join(".")}`);
-    }
-    current = next as Record<string, unknown> | unknown[];
-  }
 }
 
 function diagnosticsOf(error: unknown): string[] {

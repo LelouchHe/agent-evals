@@ -5,9 +5,10 @@ import { mkdir, readFile, readdir, realpath, rm, stat, writeFile } from "node:fs
 import { createRequire } from "node:module";
 import { dirname, join, sep } from "node:path";
 import { test } from "node:test";
-import { stringify } from "yaml";
+import { parse, stringify } from "yaml";
 import { runCliProcess } from "./helpers/cli-process.ts";
 import { createFakePi, makeTempDir } from "./helpers/fake-pi-control.ts";
+import { makeAcpAgent } from "./helpers/acp-agent.ts";
 
 // Deliberately separate from *.test.ts: npm run test:package performs an actual
 // dependency installation and may need registry access, but never calls a model.
@@ -61,13 +62,14 @@ test("the packed CLI installs and runs without source or development dependencie
   const bin = join(prefix, "node_modules", ".bin", "agent-evals");
   const require = createRequire(join(installed, "package.json"));
   const installRoot = (await realpath(prefix)) + sep;
-  for (const dependency of ["yaml", "zod"]) {
+  for (const dependency of ["@agentclientprotocol/sdk", "yaml", "zod"]) {
     assert.ok(
       (await realpath(require.resolve(dependency))).startsWith(installRoot),
       `${dependency} escaped the installation`,
     );
   }
   assert.deepEqual((await readdir(join(prefix, "node_modules"))).filter((name) => !name.startsWith(".")).sort(), [
+    "@agentclientprotocol",
     "agent-evals",
     "yaml",
     "zod",
@@ -116,6 +118,18 @@ test("the packed CLI installs and runs without source or development dependencie
       env: { ...env, TMPDIR: runtime },
       timeoutMs: 30_000,
     });
+  if (process.platform === "darwin") {
+    const agent = await makeAcpAgent(t);
+    const queried = await invoke(bin, ["config", agent.path]);
+    assert.equal(queried.code, 0, queried.stderr);
+    assert.match(queried.stdout, /model-a/);
+    const queriedBuilt = await invoke(join(project, "dist/cli.js"), ["config", agent.path]);
+    assert.equal(queriedBuilt.code, 0, queriedBuilt.stderr);
+    assert.deepEqual(parse(queried.stdout), parse(queriedBuilt.stdout));
+    const loggedIn = await invoke(bin, ["login", agent.path]);
+    assert.equal(loggedIn.code, 0, loggedIn.stderr);
+    assert.equal(await readFile(join(agent.login, ".auth/token"), "utf8"), "synthetic-token");
+  }
   const viewed = await invoke(bin, ["view", configPath]);
   const built = await invoke(join(project, "dist/cli.js"), ["view", configPath]);
   assert.equal(viewed.code, 0, viewed.stderr);

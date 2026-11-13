@@ -92,6 +92,8 @@ Judge Checker -> evidence ----+    (separate invocation, no tools)
 
 The judge reuses Pi transport/session mechanics, not the evaluated runner's session or the engine's full execution loop. The supervisor and shell wrapper cover tracked shell-process teardown inside the same Seatbelt instance. Registry files writable by the agent never authorize unsandboxed host signals.
 
+The standalone ACP `config` and `login` preparation helpers live in [`runners/acp/`](../src/runners/acp/). Their Zod schema and operational behavior are implementation-owned; generic authoring/value-source/schema utilities are shared with cases. These helpers use a sandbox-wide supervisor with a private completion pipe, not the native Pi shell registry. They do not yet provide an ACP evaluation runner.
+
 The host sandbox is a deliberate execution choice: real platform behavior is part of the subject being measured. Seatbelt is the current backend, not a claim that every OS has identical isolation guarantees.
 
 ## State and Trust Boundaries

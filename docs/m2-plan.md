@@ -1,6 +1,6 @@
 # M2: Observable Runs
 
-Status: design. Decisions and verified constraints below come from throwaway spikes on 2026-11-12–13; no M2 code is implemented. [Writing Cases](cases.md#the-test-model) defines the trace, interaction and side-effect sources this milestone makes real. User-facing setup instructions will move to a separate setup document once step 1 settles the commands.
+Status: partial implementation. The standalone config/login preparation helpers are implemented; full ACP case execution, trace and mocks remain planned. Earlier constraints below come from throwaway spikes on 2026-11-12–13. [Writing Cases](cases.md#the-test-model) defines the trace, interaction and side-effect sources this milestone makes real. User-facing setup instructions will move to a separate setup document once step 1 settles the commands.
 
 ## Scope
 
@@ -16,65 +16,36 @@ Not in scope: multi-turn authoring beyond what ACP gives for free, network mocks
 
 ## Runner Configuration
 
-```yaml
-runner:
-  $type: acp
-  agent: # inline ACP startup configuration, or a path to the same object
-    command: [pi-acp] # argv, found on the run's PATH
-    home: # parts of the fresh HOME each run gets
-      deps: $env:PI_DEPS # read-only: the harness and everything it runs with
-      login: $env:PI_LOGIN # credentials: copied in, original files copied back
-      path: [.local/bin] # HOME-relative directories put on PATH
-    env: # passed through unchanged
-      SOME_VAR: value
-  config: # ACP session config options for this case
-    model: opencode-go/deepseek-v4.1-flash
-    thought_level: high
-```
-
-| Field              | Rule                                                                                                                                                                                                                                                                                                                                                            |
-| ------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `agent`            | Required. An inline startup object or the path to a standalone YAML file containing exactly that object. Both forms use the same schema and validation.                                                                                                                                                                                                         |
-| `agent.command`    | Command name plus arguments, found on the run's `PATH`.                                                                                                                                                                                                                                                                                                         |
-| `agent.home.deps`  | Required. A directory laid out like a home directory, holding what the run depends on. Read-only.                                                                                                                                                                                                                                                               |
-| `agent.home.login` | Optional. A directory laid out the same way, holding only the files a login produces. Omitted means the run has no login files.                                                                                                                                                                                                                                 |
-| `agent.home.path`  | Required. Directories relative to `HOME` that hold commands. The run's `PATH` is these followed by the system directories.                                                                                                                                                                                                                                      |
-| `agent.env`        | Key/value pairs passed to the agent process unchanged; values may use `$env:NAME`.                                                                                                                                                                                                                                                                              |
-| `config`           | ACP session config options. A key matches an option's `category` (`model`, `thought_level`, `mode`), otherwise its `id`. `model` is set first because other options can depend on it. After `session/new` and before the prompt, a value the agent does not offer is an error (exit 2) that lists the offered values. Omitted options keep the agent's default. |
-
-Nothing here has a default location or a fixed directory name. A missing required field is an error that says what to supply.
-
-### Inline or standalone startup configuration
-
-The standalone form has exactly the same contents as an inline `agent` object, with no `runner` or `agent` wrapper:
-
-```yaml
-# agents/pi.yml
-command: [pi-acp]
-home:
-  deps: $env:PI_DEPS
-  login: $env:PI_LOGIN
-  path: [.local/bin]
-env:
-  SOME_VAR: value
-```
-
-A case can reference it instead of embedding it:
+The full ACP evaluation runner remains planned. Its `agent` parameter accepts an inline startup object or a path to the same object; one standalone file can be shared across cases. ACP-specific schemas and operations live under `src/runners/acp/`, not in a general harness registry. The engine provides generic YAML/value-source loading and schema validation; operational use belongs to the ACP implementation.
 
 ```yaml
 runner:
   $type: acp
-  agent: ./agents/pi.yml
+  agent: ./agents/pi.yml # or inline the same object
   config:
     model: opencode-go/deepseek-v4.1-flash
     thought_level: high
 ```
 
-A standalone file can be shared across different cases and case files, or used just once to query configuration or log in. It is optional; inline startup configuration does not require a separate maintained definition. Query and login tools consume this same standalone format directly, without a case. The declared command determines what starts; file and directory names never select a harness.
+The standalone format is implemented for the [preparation helpers](configuration.md#acp-preparation-helpers):
 
-This is an ACP runner parameter, not an engine-wide harness registry or a general configuration-import feature. The ACP implementation loads and validates either form. Per-case ACP session values stay in `runner.config`, separate from the startup object.
+```yaml
+# agents/pi.yml
+command: [pi]
+acpCommand: [pi-acp]
+home:
+  deps: $env:PI_DEPS
+  login: $env:PI_LOGIN
+  path: [.local/bin]
+login:
+  - .pi/agent/auth.json
+```
 
-Checked-in startup examples: [Pi](../examples/agents/pi.yml) and [Claude](../examples/agents/claude.yml). These are design examples, not inputs supported by the current CLI. Runnable cases under `examples/cases/` still use the native Pi runner.
+`acpCommand` starts the adapter; `command` starts the native interactive program. `home.login` is the persistent directory, and the top-level `login` list describes its HOME-relative file composition. Loading the configuration never performs login. The same object can ultimately be inlined in a case; a standalone file is optional, reusable or disposable after preparation. Nothing is selected from file or directory names.
+
+Per-case `runner.config` remains separate: keys match an ACP option's category, otherwise its ID. Set model first because other choices may depend on it. Offered values will be validated after session creation and before prompting; this case-execution integration is not implemented yet.
+
+Checked-in startup examples: [Pi](../examples/agents/pi.yml), [Claude](../examples/agents/claude.yml). Runnable cases under `examples/cases/` still use the native Pi runner.
 
 ### Harness home
 
@@ -143,10 +114,10 @@ Directories are real, so the harness can create files beside the linked ones. `d
 
 ### Commands
 
-Both tools take a standalone [ACP startup configuration](#inline-or-standalone-startup-configuration), not a case. They are optional preparation tools, not a harness-registration workflow. Exact command names and flags remain to be settled.
+`agent-evals config <agent.yml>` and `agent-evals login <agent.yml>` take a standalone [ACP startup configuration](#runner-configuration), not a case. They are optional preparation tools, not a harness-registration workflow. npm and the installed CLI use the same command implementation; see [the format and behavior reference](configuration.md#acp-preparation-helpers).
 
 - **Configuration query.** Starts the declared ACP command in the same sandbox and runs only `initialize` and `session/new`. Reports the agent's config option IDs/categories, descriptions, current values and available values with their labels, plus declared auth methods. A caller need not already know or supply valid session config values to discover them. No prompt is sent and no model call is made.
-- **Login.** Runs a caller-supplied interactive login command in the same sandbox with a temporary `HOME` built the same way, then copies selected login files into `home.login`. The result is stored login data, not printed tokens. Because the sandbox can write nothing else and cannot reach the keychain, a harness that logs in successfully has to store its credentials in `HOME`. ACP auth methods alone are not sufficient: neither tested harness provides a portable ACP-only login flow.
+- **Login.** Runs the declared native `command` interactively in the same sandbox with a temporary `HOME` built the same way, then saves the top-level `login` file list into `home.login` after successful completion. The result is stored login data, not printed tokens. Because the sandbox can write nothing else and cannot reach the keychain, a harness that logs in successfully has to store its credentials in `HOME`. ACP auth methods alone are not sufficient: neither tested harness provides a portable ACP-only login flow.
 
 ## Decisions
 
@@ -244,7 +215,6 @@ Anthropic's [legal and compliance terms](https://code.claude.com/docs/en/legal-a
 ## Open Questions
 
 - `CLAUDE_CODE_TMPDIR`: a generic way to point Claude Code at the run's temporary directory, or an accepted documented exception.
-- Exact CLI syntax, output format and login-file selection for the standalone configuration-query and login tools.
 - Concurrent runs sharing one `login`: two token refreshes would overwrite each other.
 - Permission answering policy and how a case configures it.
 - Mock syntax, where call expectations live, and the default for unmatched calls. Command mocks sit in a per-run directory ahead of `home.path`.
