@@ -21,9 +21,11 @@ checks:
     rubric:
       - The diagnosis identifies an expired artifact signing certificate as the cause.
 
-# Project-level skills belong to the fixture, so the cases differ only there.
+# The ACP runner has no skill parameter: project-level skills belong to the
+# fixture, at the path the harness discovers (.agents/skills/ for Pi). So the
+# cases differ only in fixture, and fixture-with-skill is fixture plus the skill.
 cases:
   with-skill:
-    fixture: with-skill
+    fixture: fixture-with-skill
   without-skill:
-    fixture: without-skill
+    fixture: fixture
