@@ -52,11 +52,6 @@ if ($ARGV[0] eq "login") {
     save("status", "0");
     exit 7;
   }
-  if ($ENV{SCENARIO} eq "tty") {
-    die "stdin is not a terminal" unless -t STDIN;
-    my $answer = <STDIN>; chomp($answer);
-    die "wrong input" unless $answer eq "confirm";
-  }
   if ($ENV{SCENARIO} eq "symlink") {
     symlink($ENV{OUTSIDE}, "$home/.auth/token") or die $!;
   } elsif ($ENV{SCENARIO} eq "fifo") {

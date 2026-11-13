@@ -20,7 +20,7 @@ The trusted-directory options are repeatable and apply only to `run`; they load 
 
 These commands do not take a case. `config` uses `acpCommand`, performs ACP initialization and creates a session, then prints YAML containing `authMethods` and `configOptions` (current values, available values, labels and descriptions as offered by the agent). It sends no prompt. Authentication may be required first. Queries have a 30-second protocol budget; errors and cancellation still tear down the sandbox.
 
-`login` runs `command` with the current terminal's input/output. Log in using that program's native interface, then exit successfully to save the listed files. It does not derive a login command from the adapter name or use case settings. The helpers reject case/run options such as `--case`.
+`login` runs `command` with the current terminal's input/output. The sandbox permits termios mode changes (`TIOCSETA`, `TIOCSETAW`, `TIOCSETAF`) only on that terminal and its `/dev/tty` alias, not arbitrary ioctl operations or other devices. Log in using that program's native interface, then exit successfully to save the listed files. It does not derive a login command from the adapter name or use case settings. The helpers reject case/run options such as `--case`.
 
 ```yaml
 command: [pi]
@@ -50,6 +50,8 @@ Each command builds a fresh HOME: directories from `deps` are real and their fil
 The login helper saves only the declared files after successful native exit, not caches or arbitrary new HOME contents. Existing login files may be refreshed during either command, even before a later failure or cancellation; changed originals are copied back after stopping the sandbox so a refreshed credential is not discarded. New login-file export still requires native success. A command failure or cancellation remains visible if copy-back also fails; secondary cleanup errors are reported alongside it. Copies are regular files with private permissions; unsafe paths, escaping symlinks and special files are rejected. Missing or non-directory deps and non-directory existing login roots are configuration errors checked before runtime allocation. Login/deps file collisions and overlapping roots are errors; deps must not contain the temporary command directory. Other runtime state is removed.
 
 Sandbox cleanup covers ordinary, orphaned and new-session descendants. A private supervisor channel carries the workload exit result; its intentional cleanup SIGKILL is not a successful login result. Forced supervisor death is not a recoverable cleanup guarantee. These helpers do not impose a hard resource/cost isolation boundary.
+
+Pi may download `fd` and `rg` during interactive startup if they are missing. Prepare those tools in `deps` for normal use; an offline UI check can instead set `env: { PI_OFFLINE: "1" }` to skip automatic downloads. This is explicit harness configuration, not engine-specific behavior.
 
 Examples: [Pi](../examples/agents/pi.yml), [Claude](../examples/agents/claude.yml). Claude's isolated installation and temporary-directory requirements remain to be verified; the shared implementation contains no harness-specific exceptions.
 

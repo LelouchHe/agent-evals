@@ -60,13 +60,13 @@ export async function prepareEnvironment(agent: AgentConfig, declaringDir: strin
         originals.set(file, data);
       }
     }
-    const writableRoots = [directory];
-    if (interactive && process.stdin.isTTY) {
-      const terminal = execFileSync("/usr/bin/tty", { stdio: ["inherit", "pipe", "ignore"], encoding: "utf8" }).trim();
-      writableRoots.push(terminal, "/dev/tty");
-    }
+    const terminal =
+      interactive && process.stdin.isTTY
+        ? execFileSync("/usr/bin/tty", { stdio: ["inherit", "pipe", "ignore"], encoding: "utf8" }).trim()
+        : undefined;
     const policy: SandboxPolicy = {
-      writableRoots,
+      writableRoots: [directory],
+      ...(terminal === undefined ? {} : { terminal }),
       readableRoots: [
         "/System",
         "/usr",

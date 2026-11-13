@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
-import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
+import { constants } from "node:fs";
+import { copyFile, mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { test } from "node:test";
 import { stringify } from "yaml";
@@ -323,7 +324,43 @@ test(
   "login receives a real terminal and forwards interactive input",
   { skip: process.platform !== "darwin", timeout: 15000 },
   async (t) => {
-    const fixture = await makeAcpAgent(t, "tty");
+    const fixture = await makeAcpAgent(t);
+    await copyFile(process.execPath, join(fixture.deps, ".local/bin/node"), constants.COPYFILE_FICLONE);
+    await writeFile(
+      fixture.path,
+      stringify({
+        ...fixture.config,
+        command: [
+          "node",
+          "-e",
+          `
+const fs = require("node:fs");
+process.stdin.setRawMode(true);
+// Darwin sys/ttycom.h: TIOCSWINSZ = _IOW('t', 103, struct winsize),
+// TIOCSETA = _IOW('t', 20, struct termios). Test both filter dimensions.
+for (const probe of [
+  'my $arg = pack("S4", 24, 80, 0, 0); $! = 0; my $result = ioctl(STDIN, 0x80087467, $arg); die "window resize unexpectedly allowed or wrong denial: $!" if defined($result) || !$!{EPERM};',
+  'open(my $f, "+<", "/dev/null") or die $!; my $arg = chr(0) x 72; $! = 0; my $result = ioctl($f, 0x80487414, $arg); die "unrelated device unexpectedly allowed or wrong denial: $!" if defined($result) || !$!{EPERM};',
+]) {
+  const result = require("node:child_process").spawnSync("/usr/bin/perl", ["-e", probe], { stdio: ["inherit", "pipe", "pipe"], encoding: "utf8" });
+  if (result.status !== 0) throw new Error(result.stderr);
+}
+console.log("ioctl boundaries verified");
+console.log("login-ready");
+let input = "";
+process.stdin.setEncoding("utf8");
+process.stdin.on("data", chunk => {
+  input += chunk;
+  if (!input.includes("confirm")) return;
+  process.stdin.setRawMode(false);
+  fs.mkdirSync(process.env.HOME + "/.auth", { recursive: true });
+  fs.writeFileSync(process.env.HOME + "/.auth/token", "synthetic-token");
+  process.exit(0);
+});
+`,
+        ],
+      }),
+    );
     const driver = join(fixture.root, "login.exp");
     await writeFile(
       driver,
@@ -374,6 +411,7 @@ exit [lindex $result 3]
     child.stdin.destroy();
     assert.equal(code, 0, output);
     assert.match(output, /login-ready/);
+    assert.match(output, /ioctl boundaries verified/);
     assert.equal(await readFile(join(fixture.login, ".auth/token"), "utf8"), "synthetic-token");
     assert.deepEqual(await readdir(fixture.runtime), []);
   },

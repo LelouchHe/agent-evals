@@ -177,6 +177,7 @@ Versions: Pi 1.5.2, pi-acp fork 0.0.34, Claude Code 2.1.318, `claude-agent-acp` 
 
 - Node's resolver needs read access to the `/var` symlink; without it DNS fails under Seatbelt.
 - The agent's working directory must be readable, and only the fixture-derived workspace is.
+- Interactive Pi needs terminal-mode ioctl permission, not just terminal reads/writes. A live offline UI check opened its `/login` menu and exited normally using the helper, without new authentication, credential-content changes or model prompts; automatic `fd`/`rg` downloads were disabled explicitly for that check. The initial prototype login policies allowed all file ioctls; the implemented helper scopes termios setters to the current terminal.
 
 ### Process cleanup
 
