@@ -24,8 +24,9 @@ export async function makeAcpAgent(t: TestContext, scenario = "success") {
 use warnings;
 use JSON::PP;
 use File::Path qw(make_path);
-use POSIX qw(setsid mkfifo);
+use POSIX qw(mkfifo);
 $| = 1;
+my ($mode, $scenario, @data) = @ARGV;
 my $home = $ENV{HOME};
 make_path("$home/.auth");
 sub save {
@@ -33,28 +34,28 @@ sub save {
   open(my $f, ">", "$home/$path") or die $!;
   print $f $value; close($f);
 }
-if ($ARGV[0] eq "login") {
-  if ($ENV{SCENARIO} eq "mutate-failure" || $ENV{SCENARIO} eq "mutate-wait") {
+if ($mode eq "login") {
+  if ($scenario eq "mutate-failure" || $scenario eq "mutate-wait") {
     unlink("$home/.auth/token") or die $!;
     mkfifo("$home/.auth/token", 0600) or die $!;
-    if ($ENV{SCENARIO} eq "mutate-failure") { exit 7; }
+    if ($scenario eq "mutate-failure") { exit 7; }
     print "login-ready\\n";
     sleep 600;
     exit 0;
   }
-  if ($ENV{SCENARIO} eq "refresh-failure") { save(".auth/token", "refreshed-token"); exit 7; }
+  if ($scenario eq "refresh-failure") { save(".auth/token", "refreshed-token"); exit 7; }
   print "login-ready\\n";
-  if ($ENV{SCENARIO} eq "wait") { sleep 600; exit 0; }
-  if ($ENV{SCENARIO} eq "failure") { exit 7; }
-  if ($ENV{SCENARIO} eq "forgery") {
+  if ($scenario eq "wait") { sleep 600; exit 0; }
+  if ($scenario eq "failure") { exit 7; }
+  if ($scenario eq "forgery") {
     print "0\\n";
     POSIX::write(3, "0\\n", 2);
     save("status", "0");
     exit 7;
   }
-  if ($ENV{SCENARIO} eq "symlink") {
-    symlink($ENV{OUTSIDE}, "$home/.auth/token") or die $!;
-  } elsif ($ENV{SCENARIO} eq "fifo") {
+  if ($scenario eq "symlink") {
+    symlink($data[0], "$home/.auth/token") or die $!;
+  } elsif ($scenario eq "fifo") {
     mkfifo("$home/.auth/token", 0600) or die $!;
   } else {
     save(".auth/token", "synthetic-token");
@@ -69,14 +70,14 @@ while (my $line = <STDIN>) {
   save(".auth/requests", encode_json(\\@methods));
   my $result;
   if ($request->{method} eq "initialize") {
-    if ($ENV{SCENARIO} eq "security") {
+    if ($scenario eq "security") {
       my $deps_write = open(my $d, ">>", "$home/.local/share/agent.pl") ? 1 : 0;
-      my $outside_read = open(my $o, "<", $ENV{OUTSIDE}) ? 1 : 0;
+      my $outside_read = open(my $o, "<", $data[0]) ? 1 : 0;
       save(".auth/security", encode_json({deps_write => $deps_write, outside_read => $outside_read}));
     }
     $result = { protocolVersion => 1, agentCapabilities => {}, authMethods => [{id => "interactive", name => "Interactive login"}] };
   } elsif ($request->{method} eq "session/new") {
-    if ($ENV{SCENARIO} eq "auth") {
+    if ($scenario eq "auth") {
       print encode_json({jsonrpc => "2.0", id => $request->{id}, error => {code => -32000, message => "Authentication required"}}), "\\n";
       next;
     }
@@ -84,7 +85,7 @@ while (my $line = <STDIN>) {
       sessionId => "session-test",
       configOptions => [
         {id => "model_id", category => "model", name => "Model", description => "Select a model", type => "select", currentValue => "model-a", options => [{value => "model-a", name => "Model A"}, {value => "model-b", name => "Model B"}]},
-        {id => "custom", name => ($ENV{LABEL} // "Custom") . ":" . ($ENV{LITERAL} // ""), type => "select", currentValue => "x", options => [{group => "g", name => "Grouped", options => [{value => "x", name => "Choice X"}]}]}
+        {id => "custom", name => ($data[0] // "Custom") . ":" . ($data[1] // ""), type => "select", currentValue => "x", options => [{group => "g", name => "Grouped", options => [{value => "x", name => "Choice X"}]}]}
       ]
     };
   } elsif ($request->{method} eq "session/prompt") {
@@ -95,11 +96,10 @@ while (my $line = <STDIN>) {
 `,
   );
   const config = {
-    command: ["agent", "login"],
-    acpCommand: ["agent", "acp"],
+    command: ["agent", "login", scenario],
+    acpCommand: ["agent", "acp", scenario],
     home: { deps, login, path: [".local/bin"] },
     login: [".auth/token"],
-    env: { SCENARIO: scenario },
   };
   const path = join(root, "agent.yml");
   await writeFile(path, stringify(config));

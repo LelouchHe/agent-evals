@@ -1,12 +1,11 @@
 import { constants } from "node:fs";
-import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { lstat, mkdir, mkdtemp, open, readdir, realpath, rename, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { ConfigError, errorMessage } from "../../engine/config.ts";
 import { isMissing, isWithin, openRunRoot, resolveWorkspacePath, type RunRoot } from "../../engine/workspace.ts";
-import { assertSeatbeltAvailable, type SandboxPolicy } from "../../platform/macos/policy.ts";
+import { assertSeatbeltAvailable, createSandboxPolicy, SYSTEM_PATH } from "../../platform/macos/policy.ts";
 import type { AgentConfig } from "./agent.ts";
 
 /** Assemble caller-owned software and copied login state without ambient installations. */
@@ -60,34 +59,17 @@ export async function prepareEnvironment(agent: AgentConfig, declaringDir: strin
         originals.set(file, data);
       }
     }
-    const terminal =
-      interactive && process.stdin.isTTY
-        ? execFileSync("/usr/bin/tty", { stdio: ["inherit", "pipe", "ignore"], encoding: "utf8" }).trim()
-        : undefined;
-    const policy: SandboxPolicy = {
+    const policy = createSandboxPolicy({
       writableRoots: [directory],
-      ...(terminal === undefined ? {} : { terminal }),
-      readableRoots: [
-        "/System",
-        "/usr",
-        "/bin",
-        "/sbin",
-        "/private/etc",
-        "/Library",
-        "/dev",
-        "/private/var/select",
-        "/private/var/db/timezone",
-        deps,
-      ],
-      readableFiles: ["/var"],
+      readableRoots: [deps],
       allowNetwork: true,
-    };
+      interactive,
+    });
     const env: NodeJS.ProcessEnv = {
       ...(process.env.TERM === undefined ? {} : { TERM: process.env.TERM }),
-      ...agent.env,
       HOME: home,
       TMPDIR: scratch,
-      PATH: [...agent.home.path.map((path) => join(home, path)), "/usr/bin", "/bin", "/usr/sbin", "/sbin"].join(":"),
+      PATH: [...agent.home.path.map((path) => join(home, path)), ...SYSTEM_PATH].join(":"),
     };
     const persist = async (selected: ReadonlyMap<string, Buffer>): Promise<void> => {
       if (login === undefined) throw new ConfigError("login requires home.login");

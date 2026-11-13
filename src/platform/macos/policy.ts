@@ -1,6 +1,10 @@
+import { execFileSync } from "node:child_process";
 import { realpathSync } from "node:fs";
 import { open } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
+
+export const SYSTEM_PATH = ["/usr/bin", "/bin", "/usr/sbin", "/sbin"] as const;
+
 export interface SandboxPolicy {
   /** Read and write access. */
   readonly writableRoots: readonly string[];
@@ -11,6 +15,34 @@ export interface SandboxPolicy {
   /** Interactive terminal device; allow termios mode changes, not arbitrary ioctl operations. */
   readonly terminal?: string;
   readonly allowNetwork: boolean;
+}
+
+/** Add macOS system access and current-terminal handling to caller-owned roots. */
+export function createSandboxPolicy(
+  options: Pick<SandboxPolicy, "writableRoots" | "readableRoots" | "allowNetwork"> & { readonly interactive: boolean },
+): SandboxPolicy {
+  const terminal =
+    options.interactive && process.stdin.isTTY
+      ? execFileSync("/usr/bin/tty", { stdio: ["inherit", "pipe", "ignore"], encoding: "utf8" }).trim()
+      : undefined;
+  return {
+    writableRoots: options.writableRoots,
+    readableRoots: [
+      "/System",
+      "/usr",
+      "/bin",
+      "/sbin",
+      "/private/etc",
+      "/Library",
+      "/dev",
+      "/private/var/select",
+      "/private/var/db/timezone",
+      ...options.readableRoots,
+    ],
+    readableFiles: ["/var"],
+    allowNetwork: options.allowNetwork,
+    ...(terminal === undefined ? {} : { terminal }),
+  };
 }
 
 /**

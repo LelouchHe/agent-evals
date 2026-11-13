@@ -120,7 +120,7 @@ for (const scenario of ["failure", "forgery", "symlink", "fifo"]) {
     const fixture = await makeAcpAgent(t, scenario);
     const outside = join(fixture.root, "outside-token");
     await writeFile(outside, "outside-secret");
-    await writeFile(fixture.path, stringify({ ...fixture.config, env: { ...fixture.config.env, OUTSIDE: outside } }));
+    await writeFile(fixture.path, stringify({ ...fixture.config, command: [...fixture.config.command, outside] }));
     const result = await runCliProcess(t, cli, ["login", fixture.path], {
       cwd: fixture.root,
       env: { ...process.env, TMPDIR: fixture.runtime },
@@ -145,7 +145,10 @@ test(
     await writeFile(outside, "operator-secret");
     await mkdir(join(fixture.login, ".auth"), { recursive: true });
     await writeFile(join(fixture.login, ".auth/security"), "{}");
-    await writeFile(fixture.path, stringify({ ...fixture.config, env: { ...fixture.config.env, OUTSIDE: outside } }));
+    await writeFile(
+      fixture.path,
+      stringify({ ...fixture.config, acpCommand: [...fixture.config.acpCommand, outside] }),
+    );
     const result = await runCliProcess(t, cli, ["config", fixture.path], {
       cwd: fixture.root,
       env: { ...process.env, TMPDIR: fixture.runtime },
@@ -189,8 +192,8 @@ test(
       stringify({
         ...fixture.config,
         home: { ...fixture.config.home, deps: "../deps", login: "../login" },
-        env: undefined,
-      }) + 'env:\n  SCENARIO: $env:SELECT\n  LABEL: $env:SELECT\n  LITERAL: "$env:MISSING"\n',
+        acpCommand: undefined,
+      }) + 'acpCommand:\n  - agent\n  - acp\n  - $env:SELECT\n  - $env:SELECT\n  - "$env:MISSING"\n',
     );
     const result = await runCliProcess(t, cli, ["config", path], {
       cwd: fixture.root,
@@ -208,6 +211,7 @@ test("helpers reject invalid schemas, YAML reuse and run-only flags before launc
     [stringify({ ...fixture.config, acpCommand: [] }), /acpCommand/],
     [stringify({ ...fixture.config, login: ["../escape"] }), /login/],
     [stringify({ ...fixture.config, unknown: true }), /unknown/],
+    [stringify({ ...fixture.config, env: { EXTRA: "unsupported" } }), /Unrecognized key.*env/],
     [
       "__proto__:\n" +
         stringify(fixture.config)

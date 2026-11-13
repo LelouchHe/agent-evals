@@ -41,7 +41,7 @@ login:
   - .pi/agent/auth.json
 ```
 
-`acpCommand` starts the adapter; `command` starts the native interactive program. `home.login` is the persistent directory, and the top-level `login` list describes its HOME-relative file composition. Loading the configuration never performs login. The same object can ultimately be inlined in a case; a standalone file is optional, reusable or disposable after preparation. Nothing is selected from file or directory names.
+`acpCommand` starts the adapter; `command` starts the native interactive program. `home.login` is the persistent directory, and the top-level `login` list describes its HOME-relative file composition. Loading the configuration never performs login. There is no agent `env` field; `$env:NAME` remains a configuration-value source. The same object can ultimately be inlined in a case; a standalone file is optional, reusable or disposable after preparation. Nothing is selected from file or directory names.
 
 Per-case `runner.config` remains separate: keys match an ACP option's category, otherwise its ID. Set model first because other choices may depend on it. Offered values will be validated after session creation and before prompting; this case-execution integration is not implemented yet.
 
