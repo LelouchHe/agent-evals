@@ -1,6 +1,10 @@
+import { execFileSync } from "node:child_process";
 import { realpathSync } from "node:fs";
 import { open } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
+
+export const SYSTEM_PATH = ["/usr/bin", "/bin", "/usr/sbin", "/sbin"] as const;
+
 export interface SandboxPolicy {
   /** Read and write access. */
   readonly writableRoots: readonly string[];
@@ -8,7 +12,37 @@ export interface SandboxPolicy {
   readonly readableRoots: readonly string[];
   /** Read-only single files, such as a launcher script. */
   readonly readableFiles?: readonly string[];
+  /** Interactive terminal device; allow termios mode changes, not arbitrary ioctl operations. */
+  readonly terminal?: string;
   readonly allowNetwork: boolean;
+}
+
+/** Add macOS system access and current-terminal handling to caller-owned roots. */
+export function createSandboxPolicy(
+  options: Pick<SandboxPolicy, "writableRoots" | "readableRoots" | "allowNetwork"> & { readonly interactive: boolean },
+): SandboxPolicy {
+  const terminal =
+    options.interactive && process.stdin.isTTY
+      ? execFileSync("/usr/bin/tty", { stdio: ["inherit", "pipe", "ignore"], encoding: "utf8" }).trim()
+      : undefined;
+  return {
+    writableRoots: options.writableRoots,
+    readableRoots: [
+      "/System",
+      "/usr",
+      "/bin",
+      "/sbin",
+      "/private/etc",
+      "/Library",
+      "/dev",
+      "/private/var/select",
+      "/private/var/db/timezone",
+      ...options.readableRoots,
+    ],
+    readableFiles: ["/var"],
+    allowNetwork: options.allowNetwork,
+    ...(terminal === undefined ? {} : { terminal }),
+  };
 }
 
 /**
@@ -18,7 +52,8 @@ export interface SandboxPolicy {
 export function renderSeatbeltPolicy(policy: SandboxPolicy): string {
   const writable = normalize(policy.writableRoots);
   const readable = normalize([...policy.readableRoots, ...policy.writableRoots]);
-  const files = normalize(policy.readableFiles ?? []);
+  const terminals = policy.terminal === undefined ? [] : normalize([policy.terminal, "/dev/tty"]);
+  const files = normalize([...(policy.readableFiles ?? []), ...terminals]);
   const readClauses = [
     '(literal "/")',
     ...readable.map((path) => `(subpath ${quote(path)})`),
@@ -52,8 +87,18 @@ export function renderSeatbeltPolicy(policy: SandboxPolicy): string {
         .join(" ")})`,
     );
   }
-  const writeClauses = [...writable.map((path) => `(subpath ${quote(path)})`), '(literal "/dev/null")'];
+  const terminalClauses = terminals.map((path) => `(literal ${quote(path)})`);
+  const writeClauses = [
+    ...writable.map((path) => `(subpath ${quote(path)})`),
+    ...terminalClauses,
+    '(literal "/dev/null")',
+  ];
   lines.push(`(allow file-write* ${writeClauses.join(" ")})`);
+  if (terminals.length > 0) {
+    lines.push(
+      `(allow file-ioctl (require-all (require-any ${terminalClauses.join(" ")}) (ioctl-command TIOCSETA TIOCSETAW TIOCSETAF)))`,
+    );
+  }
   if (policy.allowNetwork) {
     lines.push("(allow network-outbound)");
   }

@@ -1,0 +1,8 @@
+command: [pi]
+acpCommand: [pi-acp]
+home:
+  deps: $env:PI_DEPS
+  login: $env:PI_LOGIN
+  path: [.local/bin]
+login:
+  - .pi/agent/auth.json

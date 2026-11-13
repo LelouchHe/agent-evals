@@ -38,6 +38,7 @@ test("Seatbelt policy renders deny-default, scoped reads, writes, and network", 
 test("Seatbelt policy omits network when not requested", () => {
   const policy = renderSeatbeltPolicy({ writableRoots: ["/tmp/ws"], readableRoots: [], allowNetwork: false });
   assert.doesNotMatch(policy, /network-outbound/);
+  assert.doesNotMatch(policy, /file-ioctl/);
 });
 
 test(

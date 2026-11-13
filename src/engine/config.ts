@@ -31,7 +31,7 @@ export type FieldOrigin =
 
 /** One unquoted plain `$env:NAME` in an implementation parameter value. */
 export interface EnvReference {
-  /** Path relative to the resolved case configuration root. */
+  /** Path relative to the loaded configuration root. */
   readonly path: readonly (string | number)[];
   readonly name: string;
 }

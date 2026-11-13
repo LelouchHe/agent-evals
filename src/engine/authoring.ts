@@ -1,5 +1,9 @@
 import { readFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
+import type { ZodType } from "zod";
+import type { EnvSource } from "./env-source.ts";
+import { parseImplementationParams } from "./params.ts";
+import { expandReferences } from "./references.ts";
 import {
   isAlias,
   isMap,
@@ -48,25 +52,7 @@ interface CaseEntry {
  * field origins. Runtime implementation validation remains a separate step.
  */
 export async function loadCase(path: string, selection: CaseSelection = {}): Promise<ResolvedCase> {
-  const file = resolve(path);
-  const text = await readConfiguration(file);
-  const document = parseDocument(text, { merge: false, uniqueKeys: true });
-  const firstError = document.errors[0];
-  if (firstError !== undefined) {
-    throw new ConfigError(`invalid YAML in case configuration ${file}: ${firstError.message}`);
-  }
-  const firstWarning = document.warnings[0];
-  if (firstWarning !== undefined) {
-    throw new ConfigError(`unsupported YAML in case configuration ${file}: ${firstWarning.message}`);
-  }
-  if (document.contents === null || document.contents === undefined) {
-    throw new ConfigError(`case configuration ${file} must contain a YAML mapping`);
-  }
-
-  rejectForbiddenSyntax(document.contents, text, file);
-  const root = expectMapNode(document.contents, "case configuration", file);
-  const fields = readFields(root, "case configuration", file, text);
-
+  const { file, text, fields } = await readMapping(path);
   const common: FieldEntry[] = [];
   let casesField: FieldEntry | undefined;
   for (const field of fields) {
@@ -117,6 +103,42 @@ export async function loadCase(path: string, selection: CaseSelection = {}): Pro
     references,
     origins,
   };
+}
+
+/** Load a standalone implementation object using the same YAML and value-source rules as cases. */
+export async function loadImplementationParameters<P>(
+  path: string,
+  schema: ZodType<P>,
+  source: EnvSource,
+): Promise<{ params: P; dir: string }> {
+  const { file, text, fields } = await readMapping(path);
+  // Preserve every YAML key as data, including __proto__, for schema validation.
+  const raw: Record<string, unknown> = Object.fromEntries(fields.map((field) => [field.key, fieldValue(field)]));
+  const references: EnvReference[] = [];
+  for (const field of fields) {
+    collectNodeReferences(field.node, [field.key], references, file, text);
+  }
+  return {
+    params: await parseImplementationParams(schema, await expandReferences(raw, references, [], source), file),
+    dir: dirname(file),
+  };
+}
+
+async function readMapping(path: string): Promise<{ file: string; text: string; fields: FieldEntry[] }> {
+  const file = resolve(path);
+  const text = await readConfiguration(file);
+  const document = parseDocument(text, { merge: false, uniqueKeys: true });
+  const issue = document.errors[0] ?? document.warnings[0];
+  if (issue !== undefined) {
+    const kind = document.errors.length > 0 ? "invalid" : "unsupported";
+    throw new ConfigError(`${kind} YAML in configuration ${file}: ${issue.message}`);
+  }
+  if (document.contents === null || document.contents === undefined) {
+    throw new ConfigError(`configuration ${file} must contain a YAML mapping`);
+  }
+  rejectForbiddenSyntax(document.contents, text, file);
+  const root = expectMapNode(document.contents, "configuration", file);
+  return { file, text, fields: readFields(root, "configuration", file, text) };
 }
 
 /**

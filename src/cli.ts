@@ -10,12 +10,15 @@ import { runEvaluation } from "./engine/run.ts";
 import type { EvaluationRecord } from "./engine/results.ts";
 import { formatResolvedCase } from "./engine/view.ts";
 import { piRunner } from "./runners/pi/runner.ts";
+import { runAgentCommand } from "./runners/acp/commands.ts";
 
 const USAGE = `Usage: agent-evals <command> <config.yml> [options]
 
 Commands:
   run <config.yml>         Execute one resolved case
   view <config.yml>        Show the resolved case and its field origins
+  config <agent.yml>       Query ACP configuration values without prompting
+  login <agent.yml>        Run the declared native command and save login files
 
 Options:
   --case <name>            Named case to select (required for files with cases)
@@ -27,7 +30,7 @@ Options:
 Configuration errors exit with code 2 before any run resource is created.
 `;
 
-type Command = "run" | "view";
+type Command = "run" | "view" | "config" | "login";
 
 interface CliOptions {
   readonly command: Command;
@@ -64,6 +67,19 @@ async function main(argv: readonly string[]): Promise<number> {
       });
       process.stdout.write(formatResolvedCase(resolved));
       return 0;
+    }
+    if (options.command === "config" || options.command === "login") {
+      const abort = new AbortController();
+      const onSignal = () => abort.abort();
+      process.on("SIGINT", onSignal);
+      process.on("SIGTERM", onSignal);
+      try {
+        process.stdout.write(await runAgentCommand(options.command, options.configPath, abort.signal));
+        return 0;
+      } finally {
+        process.off("SIGINT", onSignal);
+        process.off("SIGTERM", onSignal);
+      }
     }
     return await runCommand(options);
   } catch (error) {
@@ -143,7 +159,7 @@ function parseArguments(argv: readonly string[]): CliOptions {
   }
 
   const [command, rawConfigPath, ...unexpected] = positionals;
-  if (command !== "run" && command !== "view") {
+  if (command !== "run" && command !== "view" && command !== "config" && command !== "login") {
     throw new ConfigError(command === undefined ? "a command is required" : `unknown command: ${command}`);
   }
   if (rawConfigPath === undefined) {
@@ -153,6 +169,15 @@ function parseArguments(argv: readonly string[]): CliOptions {
     throw new ConfigError(`unexpected argument: ${unexpected[0]}`);
   }
 
+  if (
+    (command === "config" || command === "login") &&
+    (values.case !== undefined ||
+      values["results-dir"] !== undefined ||
+      values["runner-dir"] !== undefined ||
+      values["checker-dir"] !== undefined)
+  ) {
+    throw new ConfigError(`${command} accepts only an agent configuration file, not case or run options`);
+  }
   const runnerDirs = (values["runner-dir"] ?? []).map((directory) => resolve(directory));
   const checkerDirs = (values["checker-dir"] ?? []).map((directory) => resolve(directory));
   if (command === "view" && (values["results-dir"] !== undefined || runnerDirs.length > 0 || checkerDirs.length > 0)) {

@@ -1,10 +1,12 @@
 # Configuration Reference
 
-The CLI resolves one YAML file into one executable case. Test-design guidance belongs in [Writing Cases](cases.md); module and extension contracts belong in [Architecture](architecture.md).
+The run/view commands resolve one YAML file into one executable case. ACP preparation helpers instead load a standalone agent configuration. Test-design guidance belongs in [Writing Cases](cases.md); module and extension contracts belong in [Architecture](architecture.md).
 
 ## Commands
 
 ```sh
+agent-evals config agent.yml
+agent-evals login agent.yml
 agent-evals view case.yml [--case name]
 agent-evals run case.yml [--case name] [--results-dir path] \
   [--runner-dir path] [--checker-dir path]
@@ -13,6 +15,44 @@ agent-evals run case.yml [--case name] [--results-dir path] \
 The development form is `npm run eval -- <command>`; both entry points execute the same built CLI. Flags are parsed by Node's `util.parseArgs`: `--name=value`, separate option values, `--` before dash-prefixed positionals, and `--help`/`-h` are supported. Use `--case=-name` for a dash-prefixed case name.
 
 The trusted-directory options are repeatable and apply only to `run`; they load implementation modules, not working directories. All supplied directories feed the same registry, where duplicate `$type` names are errors rather than ordered overrides.
+
+## ACP Preparation Helpers
+
+These commands do not take a case. `config` uses `acpCommand`, performs ACP initialization and creates a session, then prints YAML containing `authMethods` and `configOptions` (current values, available values, labels and descriptions as offered by the agent). It sends no prompt. Authentication may be required first. Queries have a 30-second protocol budget; errors and cancellation still tear down the sandbox.
+
+`login` runs `command` with the current terminal's input/output. The sandbox permits termios mode changes (`TIOCSETA`, `TIOCSETAW`, `TIOCSETAF`) only on that terminal and its `/dev/tty` alias, not arbitrary ioctl operations or other devices. Log in using that program's native interface, then exit successfully to save the listed files. It does not derive a login command from the adapter name or use case settings. The helpers reject case/run options such as `--case`.
+
+```yaml
+command: [pi]
+acpCommand: [pi-acp]
+home:
+  deps: $env:PI_DEPS
+  login: $env:PI_LOGIN
+  path: [.local/bin]
+login:
+  - .pi/agent/auth.json
+```
+
+| Field        | Rule                                                                                                                 |
+| ------------ | -------------------------------------------------------------------------------------------------------------------- |
+| `acpCommand` | Required non-empty argv for the ACP entry point.                                                                     |
+| `command`    | Optional native argv; required by the login helper.                                                                  |
+| `home.deps`  | Required caller-prepared software/settings directory, laid out like HOME.                                            |
+| `home.login` | Optional persistent login directory; required by the login helper. A first login may start with a missing directory. |
+| `home.path`  | Required list of HOME-relative command directories, followed by system directories on PATH.                          |
+| `login`      | HOME-relative paths describing the login directory's file composition. The login helper requires a non-empty list.   |
+
+The ACP implementation declares one strict Zod schema; unknown fields, invalid argv and unsafe HOME-relative paths are errors. Agent YAML does not support an `env` field; `$env:NAME` supplies configuration values, not process environment variables. Standalone files use the same YAML restrictions and unquoted `$env` rules as case parameters. Directory paths resolve from the agent file; `.env` remains rooted at the invocation directory. The format is also the planned inline `runner.agent` format, but the ACP evaluation runner and case references are not implemented yet.
+
+Each command builds a fresh HOME: directories from `deps` are real and their files are read-only links; login files are copied, not linked. Dependencies must be self-contained (directory symlinks and special files are unsupported); only declared software and system directories are readable. The operator's ambient PATH, HOME and credentials are not inherited. Keep login directories evaluation-owned, separate from everyday credentials.
+
+The login helper saves only the declared files after successful native exit, not caches or arbitrary new HOME contents. Existing login files may be refreshed during either command, even before a later failure or cancellation; changed originals are copied back after stopping the sandbox so a refreshed credential is not discarded. New login-file export still requires native success. A command failure or cancellation remains visible if copy-back also fails; secondary cleanup errors are reported alongside it. Copies are regular files with private permissions; unsafe paths, escaping symlinks and special files are rejected. Missing or non-directory deps and non-directory existing login roots are configuration errors checked before runtime allocation. Login/deps file collisions and overlapping roots are errors; deps must not contain the temporary command directory. Other runtime state is removed.
+
+Sandbox cleanup covers ordinary, orphaned and new-session descendants. A private supervisor channel carries the workload exit result; its intentional cleanup SIGKILL is not a successful login result. Forced supervisor death is not a recoverable cleanup guarantee. These helpers do not impose a hard resource/cost isolation boundary.
+
+Pi may download `fd` and `rg` during interactive startup if they are missing. Prepare those tools in `deps` for normal use; an offline UI check can instead use `command: [/usr/bin/env, PI_OFFLINE=1, pi]` to skip automatic downloads. This is explicit harness configuration, not engine-specific behavior.
+
+Examples: [Pi](../examples/agents/pi.yml), [Claude](../examples/agents/claude.yml). Claude's isolated installation and temporary-directory requirements remain to be verified; the shared implementation contains no harness-specific exceptions.
 
 ## One Case or Named Cases
 
