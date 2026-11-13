@@ -53,6 +53,67 @@ test(
   },
 );
 
+test(
+  "invalid configured directories are configuration errors before launching",
+  { skip: process.platform !== "darwin" },
+  async (t) => {
+    const fixture = await makeAcpAgent(t);
+    for (const [home, field] of [
+      [{ ...fixture.config.home, deps: join(fixture.root, "missing-deps") }, "home.deps"],
+      [{ ...fixture.config.home, deps: fixture.path }, "home.deps"],
+      [{ ...fixture.config.home, login: fixture.path }, "home.login"],
+      [{ ...fixture.config.home, login: join(fixture.path, "child") }, "home.login"],
+    ] as const) {
+      await writeFile(fixture.path, stringify({ ...fixture.config, home }));
+      const result = await runCliProcess(t, cli, ["config", fixture.path], {
+        cwd: fixture.root,
+        env: { ...process.env, TMPDIR: fixture.runtime },
+      });
+      assert.equal(result.code, 2);
+      assert.ok(result.stderr.startsWith("configuration error: " + field), result.stderr);
+      assert.match(result.stderr, /directory/);
+      assert.deepEqual(await readdir(fixture.runtime), []);
+    }
+  },
+);
+
+test(
+  "re-login failure remains visible when copy-back rejects mutated original credentials",
+  { skip: process.platform !== "darwin" },
+  async (t) => {
+    const fixture = await makeAcpAgent(t, "mutate-failure");
+    await mkdir(join(fixture.login, ".auth"), { recursive: true });
+    await writeFile(join(fixture.login, ".auth/token"), "original-token");
+    const result = await runCliProcess(t, cli, ["login", fixture.path], {
+      cwd: fixture.root,
+      env: { ...process.env, TMPDIR: fixture.runtime },
+    });
+    assert.equal(result.code, 2);
+    assert.match(result.stderr, /login command exited with code 7/);
+    assert.match(result.stderr, /cleanup failed.*regular file/);
+    assert.equal(await readFile(join(fixture.login, ".auth/token"), "utf8"), "original-token");
+    assert.deepEqual(await readdir(fixture.runtime), []);
+  },
+);
+
+test(
+  "failed re-login still preserves a refreshed original credential",
+  { skip: process.platform !== "darwin" },
+  async (t) => {
+    const fixture = await makeAcpAgent(t, "refresh-failure");
+    await mkdir(join(fixture.login, ".auth"), { recursive: true });
+    await writeFile(join(fixture.login, ".auth/token"), "original-token");
+    const result = await runCliProcess(t, cli, ["login", fixture.path], {
+      cwd: fixture.root,
+      env: { ...process.env, TMPDIR: fixture.runtime },
+    });
+    assert.equal(result.code, 2);
+    assert.match(result.stderr, /login command exited with code 7/);
+    assert.equal(await readFile(join(fixture.login, ".auth/token"), "utf8"), "refreshed-token");
+    assert.deepEqual(await readdir(fixture.runtime), []);
+  },
+);
+
 for (const scenario of ["failure", "forgery", "symlink", "fifo"]) {
   test(`login rejects ${scenario} without saving credentials`, { skip: process.platform !== "darwin" }, async (t) => {
     const fixture = await makeAcpAgent(t, scenario);
@@ -198,53 +259,65 @@ test(
   },
 );
 
-test(
-  "login cancellation stops the workload without exporting files",
-  { skip: process.platform !== "darwin", timeout: 15000 },
-  async (t) => {
-    const fixture = await makeAcpAgent(t, "wait");
-    const child = spawn(process.execPath, [cli, "login", fixture.path], {
-      cwd: fixture.root,
-      env: { ...process.env, TMPDIR: fixture.runtime },
-      stdio: ["ignore", "pipe", "pipe"],
-      detached: true,
-    });
-    let exited = false;
-    const force = () => {
-      if (!exited && child.pid !== undefined) {
-        try {
-          process.kill(-child.pid, "SIGKILL");
-        } catch {
-          /* Already gone. */
+for (const scenario of ["wait", "mutate-wait"]) {
+  test(
+    scenario === "wait"
+      ? "login cancellation stops the workload without exporting files"
+      : "re-login cancellation remains visible when original credentials become unsafe",
+    { skip: process.platform !== "darwin", timeout: 15000 },
+    async (t) => {
+      const fixture = await makeAcpAgent(t, scenario);
+      if (scenario === "mutate-wait") {
+        await mkdir(join(fixture.login, ".auth"), { recursive: true });
+        await writeFile(join(fixture.login, ".auth/token"), "original-token");
+      }
+      const child = spawn(process.execPath, [cli, "login", fixture.path], {
+        cwd: fixture.root,
+        env: { ...process.env, TMPDIR: fixture.runtime },
+        stdio: ["ignore", "pipe", "pipe"],
+        detached: true,
+      });
+      let exited = false;
+      const force = () => {
+        if (!exited && child.pid !== undefined) {
+          try {
+            process.kill(-child.pid, "SIGKILL");
+          } catch {
+            /* Already gone. */
+          }
         }
+      };
+      t.after(force);
+      const timer = setTimeout(force, 8000);
+      t.after(() => clearTimeout(timer));
+      let output = "";
+      let stderr = "";
+      let cancelled = false;
+      child.stdout.on("data", (chunk: Buffer) => {
+        output += chunk.toString();
+        if (!cancelled && output.includes("login-ready")) {
+          cancelled = true;
+          child.kill("SIGTERM");
+        }
+      });
+      child.stderr.on("data", (chunk: Buffer) => {
+        stderr += chunk.toString();
+      });
+      const [code] = await once(child, "close");
+      exited = true;
+      clearTimeout(timer);
+      assert.ok(cancelled, output);
+      assert.equal(code, 2, stderr);
+      assert.match(stderr, /cancelled/);
+      if (scenario === "wait") await assert.rejects(readdir(fixture.login), { code: "ENOENT" });
+      else {
+        assert.match(stderr, /cleanup failed.*regular file/);
+        assert.equal(await readFile(join(fixture.login, ".auth/token"), "utf8"), "original-token");
       }
-    };
-    t.after(force);
-    const timer = setTimeout(force, 8000);
-    t.after(() => clearTimeout(timer));
-    let output = "";
-    let stderr = "";
-    let cancelled = false;
-    child.stdout.on("data", (chunk: Buffer) => {
-      output += chunk.toString();
-      if (!cancelled && output.includes("login-ready")) {
-        cancelled = true;
-        child.kill("SIGTERM");
-      }
-    });
-    child.stderr.on("data", (chunk: Buffer) => {
-      stderr += chunk.toString();
-    });
-    const [code] = await once(child, "close");
-    exited = true;
-    clearTimeout(timer);
-    assert.ok(cancelled, output);
-    assert.equal(code, 2, stderr);
-    assert.match(stderr, /cancelled/);
-    await assert.rejects(readdir(fixture.login), { code: "ENOENT" });
-    assert.deepEqual(await readdir(fixture.runtime), []);
-  },
-);
+      assert.deepEqual(await readdir(fixture.runtime), []);
+    },
+  );
+}
 
 test(
   "login receives a real terminal and forwards interactive input",

@@ -2,9 +2,9 @@ import { ClientSideConnection, PROTOCOL_VERSION, RequestError, ndJsonStream } fr
 import { Readable, Writable } from "node:stream";
 import { stringify } from "yaml";
 import { loadImplementationParameters } from "../../engine/authoring.ts";
-import { ConfigError } from "../../engine/config.ts";
+import { ConfigError, errorMessage } from "../../engine/config.ts";
 import { createEnvSource } from "../../engine/env-source.ts";
-import { spawnSupervised } from "../../platform/macos/supervise.ts";
+import { spawnSupervised, type SupervisedProcess } from "../../platform/macos/supervise.ts";
 import { agentSchema } from "./agent.ts";
 import { prepareEnvironment } from "./environment.ts";
 
@@ -20,6 +20,9 @@ export async function runAgentCommand(command: "config" | "login", path: string,
   }
   signal.throwIfAborted();
   const environment = await prepareEnvironment(agent, dir, command === "login");
+  const failures: unknown[] = [];
+  let output = "";
+  let supervised: SupervisedProcess | undefined;
   try {
     const operationSignal = command === "config" ? AbortSignal.any([signal, AbortSignal.timeout(30_000)]) : signal;
     operationSignal.throwIfAborted();
@@ -31,6 +34,7 @@ export async function runAgentCommand(command: "config" | "login", path: string,
       env: environment.env,
       interactive: command === "login",
     });
+    supervised = process;
     let onAbort: () => void = () => {};
     const cancelled = new Promise<never>((_resolve, reject) => {
       onAbort = () =>
@@ -84,16 +88,31 @@ export async function runAgentCommand(command: "config" | "login", path: string,
           throw error;
         }
       };
-      const output = await Promise.race([work(), cancelled]);
+      output = await Promise.race([work(), cancelled]);
       operationSignal.throwIfAborted();
       if (command === "login") await environment.saveLogin(agent.login!);
-      return output;
     } finally {
       operationSignal.removeEventListener("abort", onAbort);
-      await process.stop();
+    }
+  } catch (error) {
+    failures.push(error);
+  }
+  try {
+    if (supervised !== undefined) {
+      await supervised.stop();
       await environment.copyBack();
     }
-  } finally {
-    await environment.dispose();
+  } catch (error) {
+    failures.push(new Error(`cleanup failed: ${errorMessage(error)}`, { cause: error }));
   }
+  try {
+    await environment.dispose();
+  } catch (error) {
+    failures.push(new Error(`cleanup failed: ${errorMessage(error)}`, { cause: error }));
+  }
+  if (failures.length === 1) throw failures[0];
+  if (failures.length > 1) {
+    throw new AggregateError(failures, failures.map(errorMessage).join("; "), { cause: failures[0] });
+  }
+  return output;
 }

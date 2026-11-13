@@ -34,6 +34,15 @@ sub save {
   print $f $value; close($f);
 }
 if ($ARGV[0] eq "login") {
+  if ($ENV{SCENARIO} eq "mutate-failure" || $ENV{SCENARIO} eq "mutate-wait") {
+    unlink("$home/.auth/token") or die $!;
+    mkfifo("$home/.auth/token", 0600) or die $!;
+    if ($ENV{SCENARIO} eq "mutate-failure") { exit 7; }
+    print "login-ready\\n";
+    sleep 600;
+    exit 0;
+  }
+  if ($ENV{SCENARIO} eq "refresh-failure") { save(".auth/token", "refreshed-token"); exit 7; }
   print "login-ready\\n";
   if ($ENV{SCENARIO} eq "wait") { sleep 600; exit 0; }
   if ($ENV{SCENARIO} eq "failure") { exit 7; }
