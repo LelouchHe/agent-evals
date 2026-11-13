@@ -1,18 +1,26 @@
 # M2: Observable Runs
 
-Status: partial implementation. The standalone config/login preparation helpers are implemented; full ACP case execution, trace and mocks remain planned. Earlier constraints below come from throwaway spikes on 2026-11-12–13. [Writing Cases](cases.md#the-test-model) defines the trace, interaction and side-effect sources this milestone makes real. User-facing setup instructions will move to a separate setup document once step 1 settles the commands.
+Status: partial implementation. The standalone preparation helpers are merged; full ACP case execution, trace and mocks remain planned. [Writing Cases](cases.md#the-test-model) defines the trace, interaction and side-effect sources this milestone makes real. Current helper usage is documented in [Configuration Reference](configuration.md#acp-preparation-helpers); a full installation walkthrough is not yet verified.
 
 ## Scope
 
 Two independent parts. Neither depends on the other's mechanism.
 
 - **A. Trace.** One generic ACP runner records a normalized trace of each run; output is the trace's user-facing view. Checks can assert on output and trace. Delivered in three steps:
-  1. The generic ACP runner with a caller-prepared harness home (`deps` and `login`), ACP config validation, an agent query command and a sandboxed login command; Pi through pi-acp reproduces the native runner's example results.
+  1. The generic ACP runner with a caller-prepared harness home (`deps` and `login`), ACP config validation, the standalone `config` and `login` preparation commands; Pi through pi-acp reproduces the native runner's example results.
   2. The runner assembles and retains the trace; checks assert on output and tool calls.
   3. Claude Code runs through the same runner with only its own `deps` and `login`, proving no harness-specific code is needed.
 - **B. Mocks.** Case-owned mocks replace collaborators at the environment boundary and record the calls that reach them. Checks can assert on those records.
 
 Not in scope: multi-turn authoring beyond what ACP gives for free, network mocks, Linux. Deferred: the credential proxy and sandbox network restriction (see [Decisions](#decisions)).
+
+## Delivered Preparation Slice
+
+[PR #2](https://github.com/LelouchHe/agent-evals/pull/2), merged as `858d8e2` on 2026-11-13, delivered the standalone `config` and `login` helpers, their shared Zod configuration, isolated HOME assembly and supervised process cleanup. This is part of step A.1, not completion of that step. [Configuration Reference](configuration.md#acp-preparation-helpers) owns the current command contract.
+
+- **Verification:** 157 model-free tests passed with no failures or skips; the external production-only package installation verified dependency isolation and installed helper execution. Independent reviews and closure checks completed.
+- **Live Pi checks:** the checked-in agent configuration returned actual ACP options. A separate temporary configuration using `command: [/usr/bin/env, PI_OFFLINE=1, pi]` opened Pi's native `/login` menu and exited normally. No new authentication or model prompt was performed, credential contents were unchanged and no runtime directory remained. This does not verify the default interactive startup path; neither the repository example nor the toolkit has a default offline mode.
+- **Still planned:** the ACP evaluation runner, case inline/file-reference execution integration, per-case session config validation, trace and mocks. Existing runnable cases continue to use native Pi.
 
 ## Runner Configuration
 
@@ -49,20 +57,20 @@ Checked-in startup examples: [Pi](../examples/agents/pi.yml), [Claude](../exampl
 
 ### Harness home
 
-ACP makes the conversation generic; installing a harness, logging in and its own settings stay harness-specific. The runner keeps that knowledge out of its code: the caller prepares two directories per harness, and the engine builds each run's `HOME` from them and removes it afterwards.
+ACP makes the conversation generic; installing a harness, logging in and its own settings stay harness-specific. The caller prepares two directories per harness. The ACP implementation assembles and removes each temporary HOME; the general engine supplies loading and type validation, not harness-home rules. The planned evaluation runner will reuse this setup.
 
-| Part    | The caller puts there                                                                                                                              | The engine                                                                                                                                             |
-| ------- | -------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `deps`  | Installed, runnable software: the harness, its ACP adapter, their runtime, commands the agent uses that the system lacks, and user-level settings. | Recreates its directories in the run's `HOME` and symlinks its files. The sandbox can read it and never write it.                                      |
-| `login` | Only the files a login produces: credentials and login state.                                                                                      | Copies its files into the run's `HOME`. After the run it copies back the files `login` already had, if they changed. The sandbox cannot reach `login`. |
+| Part    | The caller puts there                                                                              | ACP setup                                                                                                                                                    |
+| ------- | -------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `deps`  | Runnable software: the harness, ACP adapter, runtime, non-system commands and user-level settings. | Recreates directories and symlinks files into HOME. The sandbox can read but not write deps.                                                                 |
+| `login` | Credentials and login state at HOME-relative paths.                                                | Copies existing files into HOME and copies changed originals back after stopping the sandbox. The source login directory is inaccessible inside the sandbox. |
 
-The engine has one layout rule: a file at a relative path in `deps` or `login` appears at the same path under the run's `HOME`. Which paths matter is the harness's rule, not ours: Pi looks for `~/.pi/agent/auth.json`, so the caller puts it at `.pi/agent/auth.json` in `login`. The engine never inspects the contents.
+A relative path in either source appears at the same path under the temporary HOME. Which paths matter is the harness's rule, not ours: Pi expects `~/.pi/agent/auth.json`, so its login directory holds `.pi/agent/auth.json`. ACP setup copies the data without interpreting credential contents.
 
 - The same file in both parts is an error.
-- Files the harness creates, such as sessions, caches and locks, stay in the run's `HOME` and are removed with it. `login` never gains files.
-- The sandbox reads the system directories, `deps` and the run. A command the system does not ship is available only if `deps` holds it, and two harnesses never see each other's software or credentials.
+- Sessions, caches, locks and other new runtime files are discarded. Ordinary copy-back never adds files to login; the explicit login helper can populate the declared login file list after successful native exit.
+- Initially available commands come from the system and deps, not the operator's everyday installation. Each configuration declares its own software and login sources.
 - Versions are whatever the caller installed; the operator's everyday installation is neither used nor affected.
-- Mocks need nothing in `deps`: a command mock is a per-run directory the engine puts ahead of `home.path`.
+- Planned command mocks need nothing in deps: their per-run command directory goes ahead of `home.path`.
 - Project-level configuration and skills belong to the fixture, for example `.agents/skills/` for Pi or `.claude/skills/` for Claude Code. `with-skill` and `without-skill` differ only in their fixtures.
 
 #### What the directories hold
@@ -110,7 +118,7 @@ $HOME/                           fresh per run, removed afterwards
 PATH=$HOME/.local/bin:/usr/bin:/bin:/usr/sbin:/sbin
 ```
 
-Directories are real, so the harness can create files beside the linked ones. `deps` and `login` themselves are unchanged, except for login files copied back.
+Directories are real, so the harness can create files beside the linked ones. Deps remains read-only; persistent login updates follow the rules above.
 
 ### Commands
 
@@ -126,9 +134,9 @@ Directories are real, so the harness can create files beside the linked ones. `d
 - **Mocks live at the environment boundary, not in ACP.** ACP session updates are reports, not requests, so they cannot intercept a call. Command mocks are `PATH` shims with the real executable denied by Seatbelt; service mocks are MCP servers injected through `session/new`. Mock behavior and call records live outside the sandbox.
 - **The environment is built only from directories the evaluation owns.** The sandbox reads the system directories, `deps` and the run, and nothing else under the operator's home. Granting read access to existing installations was rejected: they sit beside the operator's credentials, and no rule derives a safe installation root for every installer.
 - **Credentials sit in `login`.** They reach the sandbox and the agent can read them, as recorded in [M1 limits](m1-plan.md#known-limitations). Keep only what a run needs there; for example, Pi's `login` holds just the one provider's key, not the operator's whole `auth.json`.
-- **Login files are copied, not linked.** How a harness rewrites a file is outside our control, so the engine copies `login` in and copies its original files back.
+- **Login files are copied, not linked.** How a harness rewrites a file is outside our control, so ACP setup copies `login` in and copies its original files back.
 - **Credential proxy: verified, deferred.** A proxy outside the sandbox can hold an API key while the harness sees a placeholder and a local model endpoint, letting sandbox network shrink to one local port. It must not carry Claude subscription tokens (see [Credentials for Claude](#credentials-for-claude)). Network stays open for now.
-- **Process cleanup is sandbox-wide, not harness-specific.** A supervisor inside the run's Seatbelt instance launches `command` and, on completion or a stop request, sends `SIGKILL` to all signalable processes. Seatbelt's `(allow signal (target same-sandbox))` rule limits this to that instance, including orphaned processes and new sessions. The ACP runner will use this instead of Pi's shell wrapper and process-group registry. The native Pi runner is unchanged; a shell prototype's cleanup paths are verified below, but ACP lifecycle integration is not.
+- **Process cleanup is sandbox-wide, not harness-specific.** An in-sandbox supervisor launches the workload and sends `SIGKILL` to all signalable processes on completion or a stop request. Seatbelt's `(allow signal (target same-sandbox))` rule limits this to that instance, including orphaned processes and new sessions. The helpers implement this with a private workload-completion pipe, not an agent-writable status file or the supervisor's SIGKILL exit status. The planned ACP runner will reuse it; evaluation-engine lifecycle integration remains pending. The native Pi runner and its tracked-group cleanup are unchanged.
 - **The case is not the environment.** Case files, mock implementations, control configuration and results stay outside everything the agent can read. The environment is the fixture and the run's `HOME`.
 
 ## Verified Constraints
@@ -191,9 +199,9 @@ Three sequential probes used sandbox A, sandbox B created independently from the
 
 A subsequent `/bin/sh` supervisor prototype launched a model-free harness through the production `spawnSandboxed` helper and generated Seatbelt policy. Five cases passed: normal exit 0, normal exit 7, a deadline-triggered `SIGTERM`, explicit `SIGINT` cancellation, and `SIGTERM` with a harness that ignores both stop signals. Each case first verified live ordinary, orphaned `nohup` and orphaned new-session processes; after cleanup none remained. An independent sandbox using the same policy and an unsandboxed control survived every case. The prototype also forwarded stdin, stdout and stderr. These are prototype lifecycle probes, not tests of the unimplemented ACP runner or the engine's timeout/cancellation wiring.
 
-The broadcast kills the supervisor too: the host observed `SIGKILL` for all five cases, including successful harness completion. The prototype captured child statuses 0 and 7 before broadcasting, but the supervisor's OS exit status cannot carry them. A probe-only file established this observation; agent-writable files are not a trusted completion channel. Completion reporting must be distinguished from intentional cleanup when the ACP runner is integrated.
+The broadcast also killed the prototype supervisor, so its OS exit status could not carry the workload result. The implemented helper supervisor now reports that result through a private pipe that the workload does not inherit. Production runtime tests cover native exit 0/7 and explicit stop, with live ordinary/orphan/new-session processes and surviving independent sandbox/host controls; helper tests also cover cancellation and primary-error preservation. Agent-writable files are not a trusted completion channel.
 
-These probes verify cleanup on the tested macOS host, not recovery from forced supervisor death.
+This verifies the helper components on the tested macOS host, not the future evaluation runner's engine integration or recovery from forced supervisor death.
 
 ### Mocks
 
@@ -210,7 +218,8 @@ Anthropic's [legal and compliance terms](https://code.claude.com/docs/en/legal-a
 
 ## Not Yet Verified
 
-- ACP integration of sandbox-wide cleanup: the engine's normal-completion, timeout and cancellation paths, and distinguishing intentional supervisor `SIGKILL` from unexpected process death without losing harness failure information.
+- Full ACP evaluation integration of the implemented cleanup/completion mechanism: the engine's normal-completion, timeout and cancellation paths must still be verified when the runner exists.
+- Pi's default interactive path with `fd` and `rg` prepared in deps, using the checked-in agent YAML unchanged. The successful live UI check used the temporary offline command above; fresh authentication was not repeated.
 - A Claude Code `deps` directory: the runs above still read `claude-agent-acp` from the operator's Node installation, and whether it needs a separate `claude` command is unchecked.
 - Reporting the paths Seatbelt denied when an agent fails to start; a first query of the system log returned nothing.
 - HTTP service mocks and model-provider fault injection, which would also need the proxy.

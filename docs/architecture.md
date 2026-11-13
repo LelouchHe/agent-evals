@@ -1,10 +1,12 @@
 # Architecture
 
-Agent Evals executes configured tests against agent systems. The engine is generic; the current runtime is deliberately narrow: one input message, a filesystem workspace, a Pi RPC runner, and file/judge checks on macOS.
+Agent Evals executes configured tests against agent systems. The engine is generic; the current evaluation runtime is deliberately narrow: one input message, a filesystem workspace, a Pi RPC runner, and file/judge checks on macOS. Standalone ACP configuration-query and login helpers are also implemented; the ACP evaluation runner remains planned.
 
 This page explains how the implemented modules cooperate. [Configuration](configuration.md) owns the authoring/reference rules; [Roadmap](roadmap.md) owns the target shape and planned capabilities.
 
 ## Components and Connections
+
+Evaluation commands (`run` / `view`):
 
 ```text
 CLI: agent-evals / npm run eval (same dist/cli.js)
@@ -31,6 +33,15 @@ Resolved configuration display            Registry: select runner/checkers by $t
                                    Checkers -> individual judgments
                                              |
                                    Remove runtime -> save run record
+```
+
+Preparation commands (`config` / `login`) take standalone agent YAML and bypass case selection and the registry:
+
+```text
+CLI config/login
+  -> Shared YAML + invocation .env expansion + ACP-owned Zod schema
+  -> ACP helpers: HOME/login assembly and workflow
+  -> macOS backend: policy, terminal permissions and supervised process
 ```
 
 | Component          | Owns                                                                                             | Does not own                                                                  |
@@ -114,5 +125,6 @@ Observations come from three sources defined in [Writing Cases](cases.md#why-the
 | Preparation and lifecycle     | [`params.ts`](../src/engine/params.ts), [`env-source.ts`](../src/engine/env-source.ts), [`run.ts`](../src/engine/run.ts)         |
 | Files and retained records    | [`workspace.ts`](../src/engine/workspace.ts), [`results.ts`](../src/engine/results.ts)                                           |
 | Harness adapter and transport | [`runners/pi/`](../src/runners/pi/)                                                                                              |
+| ACP preparation helpers       | [`runners/acp/`](../src/runners/acp/) (not a registered evaluation runner)                                                       |
 | Assertions and model judgment | [`checkers/file/`](../src/checkers/file/), [`checkers/judge/`](../src/checkers/judge/)                                           |
 | OS enforcement and packaging  | [`platform/macos/`](../src/platform/macos/), [`build.mjs`](../scripts/build.mjs)                                                 |

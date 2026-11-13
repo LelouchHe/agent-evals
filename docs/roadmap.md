@@ -68,4 +68,4 @@ The following product-design questions are **pending**, not implementation requi
 
 ## Delivery
 
-[M1](m1-plan.md) has a delivery/acceptance record. [M2](m2-plan.md) (trace and mocks) is in design, with its decisions and verified constraints. Define later milestone plans when there is a real scenario and agreed scope; this document does not invent a schedule or turn the directions above into implementation obligations.
+[M1](m1-plan.md) has a delivery/acceptance record. [M2](m2-plan.md#delivered-preparation-slice) is partially implemented: standalone ACP configuration-query and login helpers have shipped; the ACP evaluation runner, trace and mocks remain planned. The milestone plan separates current delivery and verification from earlier spikes and remaining work. Define later milestone plans when there is a real scenario and agreed scope; this document does not invent a schedule or turn the directions above into implementation obligations.
