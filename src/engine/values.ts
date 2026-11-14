@@ -13,61 +13,43 @@ export interface ValueSource {
   readonly run: RunVariables;
 }
 
-type Part = string | { readonly env: string } | { readonly run: keyof RunVariables };
+type Placeholder = { readonly env: string } | { readonly run: keyof RunVariables };
 
 const BUILT_INS: readonly (keyof RunVariables)[] = ["HOME", "TMPDIR"];
 
+/** `$${` is a literal `${`; `${...}` is a placeholder; any other `${` is unterminated. */
+const TOKEN = /\$\$\{|\$\{([^}]*)\}|\$\{/g;
+
 /**
- * Split a string into literal text and placeholders: `${env:NAME}` reads the
- * invocation `.env`, `${NAME}` reads a built-in variable and `$${` is a literal `${`.
+ * Replace every token in a string: `${env:NAME}` reads the invocation `.env`,
+ * `${NAME}` reads a built-in variable and `$${` is a literal `${`.
  */
-function parse(text: string, where: string): Part[] {
-  const parts: Part[] = [];
-  let literal = "";
-  let index = 0;
-  while (index < text.length) {
-    if (text.startsWith("$${", index)) {
-      literal += "${";
-      index += 3;
-      continue;
-    }
-    if (!text.startsWith("${", index)) {
-      literal += text[index];
-      index += 1;
-      continue;
-    }
-    const end = text.indexOf("}", index + 2);
-    if (end < 0) throw new ConfigError(`unterminated "\${" in ${where}; write "$\${" for a literal`);
-    const expression = text.slice(index + 2, end);
-    const colon = expression.indexOf(":");
-    const source = colon < 0 ? undefined : expression.slice(0, colon);
-    const name = colon < 0 ? expression : expression.slice(colon + 1);
-    if (!ENV_NAME_PATTERN.test(name)) throw new ConfigError(`invalid placeholder "\${${expression}}" in ${where}`);
-    if (literal !== "") parts.push(literal);
-    literal = "";
-    if (source === "env") {
-      parts.push({ env: name });
-    } else if (source !== undefined) {
-      throw new ConfigError(`unknown value source "${source}" in "\${${expression}}" in ${where} (available: env)`);
-    } else if ((BUILT_INS as readonly string[]).includes(name)) {
-      parts.push({ run: name as keyof RunVariables });
-    } else {
-      throw new ConfigError(
-        `unknown variable "\${${name}}" in ${where} (built-in: ${BUILT_INS.join(", ")}); use "\${env:${name}}" for a .env value`,
-      );
-    }
-    index = end + 1;
+function replace(text: string, where: string, resolve: (placeholder: Placeholder) => string): string {
+  return text.replace(TOKEN, (token, expression: string | undefined) => {
+    if (token === "$${") return "${";
+    if (expression === undefined) throw new ConfigError(`unterminated "\${" in ${where}; write "$\${" for a literal`);
+    return resolve(placeholder(expression, where));
+  });
+}
+
+function placeholder(expression: string, where: string): Placeholder {
+  const colon = expression.indexOf(":");
+  const source = colon < 0 ? undefined : expression.slice(0, colon);
+  const name = expression.slice(colon + 1);
+  if (!ENV_NAME_PATTERN.test(name)) throw new ConfigError(`invalid placeholder "\${${expression}}" in ${where}`);
+  if (source === "env") return { env: name };
+  if (source !== undefined) {
+    throw new ConfigError(`unknown value source "${source}" in "\${${expression}}" in ${where} (available: env)`);
   }
-  if (literal !== "" || parts.length === 0) parts.push(literal);
-  return parts;
+  if ((BUILT_INS as readonly string[]).includes(name)) return { run: name as keyof RunVariables };
+  throw new ConfigError(
+    `unknown variable "\${${name}}" in ${where} (built-in: ${BUILT_INS.join(", ")}); use "\${env:${name}}" for a .env value`,
+  );
 }
 
 /** Reject malformed placeholders anywhere in a value without reading any source. */
 export function checkPlaceholders(value: unknown, where: string): void {
-  walk(value, where, (text, at) => {
-    parse(text, at);
-    return text;
-  });
+  walk(value, where, (text, at) => replace(text, at, () => ""));
 }
 
 /**
@@ -75,17 +57,18 @@ export function checkPlaceholders(value: unknown, where: string): void {
  * text is not scanned again; keys and non-string values are unchanged.
  */
 export async function substituteValues<T>(value: T, where: string, source: ValueSource): Promise<T> {
+  // Collect every .env name first: lookups are asynchronous, replacement is not.
   const names = new Set<string>();
-  walk(value, where, (text, at) => {
-    for (const part of parse(text, at)) if (typeof part !== "string" && "env" in part) names.add(part.env);
-    return text;
-  });
+  walk(value, where, (text, at) =>
+    replace(text, at, (found) => {
+      if ("env" in found) names.add(found.env);
+      return "";
+    }),
+  );
   const env = new Map<string, string>();
   for (const name of names) env.set(name, await source.env.require(name));
   return walk(value, where, (text, at) =>
-    parse(text, at)
-      .map((part) => (typeof part === "string" ? part : "env" in part ? env.get(part.env)! : source.run[part.run]))
-      .join(""),
+    replace(text, at, (found) => ("env" in found ? env.get(found.env)! : source.run[found.run])),
   ) as T;
 }
 
