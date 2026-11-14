@@ -1,5 +1,7 @@
 # The skill holds team-private knowledge (what our error codes mean and how to
 # fix them). The task does not state it and the log does not reveal it.
+# Each harness runs through the generic ACP runner; prepare its deps and login
+# directories first (docs/configuration.md#acp-preparation-helpers).
 input: Our deploy failed. Read deploy.log and write the cause and the commands to fix it into diagnosis.md.
 fixture: fixture
 timeoutMs: 120000
@@ -12,28 +14,41 @@ checks:
     path: deploy.log
     unchanged: true
   - $type: judge
-    # Independent Pi invocation; omitted thinking uses the checker default.
     model: opencode-go/deepseek-v4.1-flash
     apiKey: ${env:OPENCODE_API_KEY}
     file: diagnosis.md
     rubric:
       - The diagnosis identifies an expired artifact signing certificate as the cause.
 
+# Project-level skills are workspace files: the ACP runner has no skill
+# parameter, so a case places the skill directory where its harness discovers
+# it. All cases share the fixture; the with-skill cases add the skill on top.
 cases:
-  with-skill:
+  pi-with-skill:
     runner:
-      $type: pi
-      model: opencode-go/deepseek-v4.1-flash
-      apiKey: ${env:OPENCODE_API_KEY}
-      # Resolved relative to this file and loaded explicitly. Discovered skills,
-      # extensions, MCP servers, sessions, and global configuration stay disabled.
-      skills:
-        - skill
-
-  # The empty skills list is meaningful: automatic skill discovery stays disabled.
-  without-skill:
+      $type: acp
+      agent: ../../agents/pi.yml
+      config:
+        model: opencode-go/deepseek-v4.1-flash
+    files:
+      .agents/skills/deploy-runbook: skill
+  pi-without-skill:
     runner:
-      $type: pi
-      model: opencode-go/deepseek-v4.1-flash
-      apiKey: ${env:OPENCODE_API_KEY}
-      skills: []
+      $type: acp
+      agent: ../../agents/pi.yml
+      config:
+        model: opencode-go/deepseek-v4.1-flash
+  claude-with-skill:
+    runner:
+      $type: acp
+      agent: ../../agents/claude.yml
+      config:
+        model: haiku
+    files:
+      .claude/skills/deploy-runbook: skill
+  claude-without-skill:
+    runner:
+      $type: acp
+      agent: ../../agents/claude.yml
+      config:
+        model: haiku

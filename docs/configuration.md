@@ -53,6 +53,23 @@ environment:
   CLAUDE_CODE_TMPDIR: ${TMPDIR}
 ```
 
+### Claude Code Token
+
+Claude runs on the operator's subscription with a [`claude setup-token`](https://code.claude.com/docs/en/authentication#generate-a-long-lived-token) token, not the `login` helper. The token is valid for one year and never refreshed, so idle periods and concurrent runs do not invalidate it. It requires a Pro, Max, Ultra, Team or Enterprise plan and can only make model requests, so claude.ai connectors stay out of the run. Create it once and keep it in the keychain:
+
+```sh
+# Opens the browser authorization and prints the token; nothing is saved.
+$CLAUDE_DEPS/.local/bin/claude setup-token
+# -w last prompts for the token, keeping it out of shell history; -U replaces an old one.
+security add-generic-password -U -a "$USER" -s claude-oauth-token -w
+```
+
+```dotenv
+CLAUDE_OAUTH_TOKEN="!security find-generic-password -w -s claude-oauth-token"
+```
+
+When it expires, runs fail with an authentication error; generate a new token and store it the same way. The agent can read the token inside the sandbox, as with any run credential. Heavy automated evaluation should use a Console API key instead (`ANTHROPIC_API_KEY`).
+
 Each command builds a fresh HOME: directories from `deps` are real and their files are read-only links; login files are copied, not linked. Dependencies must be self-contained (directory symlinks and special files are unsupported); only declared software and system directories are readable. The operator's ambient PATH, HOME and credentials are not inherited. Keep login directories evaluation-owned, separate from everyday credentials.
 
 The login helper saves only the declared files after successful native exit, not caches or arbitrary new HOME contents. Existing login files may be refreshed during either command, even before a later failure or cancellation; changed originals are copied back after stopping the sandbox so a refreshed credential is not discarded. New login-file export still requires native success. A command failure or cancellation remains visible if copy-back also fails; secondary cleanup errors are reported alongside it. Copies are regular files with private permissions; unsafe paths, escaping symlinks and special files are rejected. Missing or non-directory deps and non-directory existing login roots are configuration errors checked before runtime allocation. Login/deps file collisions and overlapping roots are errors; deps must not contain the temporary command directory. Other runtime state is removed.
@@ -61,7 +78,7 @@ Sandbox cleanup covers ordinary, orphaned and new-session descendants. A private
 
 Pi may download `fd` and `rg` during interactive startup if they are missing. Prepare those tools in `deps` for normal use; an offline UI check can instead use `command: [/usr/bin/env, PI_OFFLINE=1, pi]` to skip automatic downloads. This is explicit harness configuration, not engine-specific behavior.
 
-Examples: [Pi](../examples/agents/pi.yml), [Claude](../examples/agents/claude.yml). Claude's isolated installation and temporary-directory requirements remain to be verified; the shared implementation contains no harness-specific exceptions.
+Examples: [Pi](../examples/agents/pi.yml), [Claude](../examples/agents/claude.yml). Both run unchanged through the same implementation, which contains no harness-specific exceptions; their comments say what each `deps` holds.
 
 ## One Case or Named Cases
 
@@ -189,7 +206,7 @@ Each run assembles the harness home in the run's own HOME exactly as the helpers
 
 The run completes only when the turn ends with `end_turn`; any other stop reason, an agent exit or a protocol error is an execution error. The runner records a [trace](#inspecting-and-recording); output is the agent's text after its last tool call. Permission requests are approved (`allow_once`, else `allow_always`): the sandbox is the boundary. On completion, timeout or cancellation the whole sandbox is stopped, then changed original login files are copied back. Only the workspace, the run HOME and its temporary directory are writable; deps is read-only, and the baseline, policy and case files are unreadable.
 
-Example: [`deploy-runbook-acp`](../examples/cases/deploy-runbook-acp/case.yml), whose cases share one fixture and differ in whether `files` places `skill` at `.agents/skills/deploy-runbook`.
+Example: [`deploy-runbook`](../examples/cases/deploy-runbook/case.yml), whose Pi and Claude cases share one fixture and differ in agent, model and whether `files` places `skill` where that harness discovers it (`.agents/skills/` or `.claude/skills/`).
 
 ### File Checker (`$type: file`)
 

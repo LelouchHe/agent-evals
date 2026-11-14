@@ -1,6 +1,6 @@
 # M2: Observable Runs
 
-Status: partial implementation. Step A.1 is implemented: the preparation helpers and the ACP evaluation runner. The ACP runner retains a merged trace and runs Claude Code from declared data alone; trace evidence for the judge, a checked-in Claude case and mocks remain planned. [Writing Cases](cases.md#the-test-model) defines the trace, interaction and side-effect sources this milestone makes real. Current usage is documented in [Configuration Reference](configuration.md#acp-runner-type-acp); a full installation walkthrough is not yet verified.
+Status: partial implementation. Step A.1 is implemented: the preparation helpers and the ACP evaluation runner. The ACP runner retains a merged trace and runs Claude Code from declared data alone; trace evidence for the judge and mocks remain planned. [Writing Cases](cases.md#the-test-model) defines the trace, interaction and side-effect sources this milestone makes real. Current usage is documented in [Configuration Reference](configuration.md#acp-runner-type-acp); a full installation walkthrough is not yet verified.
 
 ## Scope
 
@@ -26,10 +26,11 @@ Not in scope: multi-turn authoring beyond what ACP gives for free, network mocks
 The registered `acp` runner completes step A.1. It reuses the helpers' HOME assembly, sandbox policy and supervisor inside the engine's run directories; [Configuration Reference](configuration.md#acp-runner-type-acp) owns its contract.
 
 - **Verification:** model-free tests cover a full run (path-referenced agent, session config, fixture workspace, output, login copy-back, runtime removal), rejection of an unoffered config value before prompting, and cancellation of a hung turn.
-- **Live Pi check (2026-11-13):** [`deploy-runbook-acp`](../examples/cases/deploy-runbook-acp/case.yml) through pi-acp with `opencode-go/deepseek-v4.1-flash` reproduced the native example: `with-skill` passed all three checks after loading the skill from the workspace's `.agents/skills/`; `without-skill` failed the pattern and judge checks. One run each.
-- **Trace (A.2, first part):** the runner merges session updates into `trace.json` ([format](configuration.md#inspecting-and-recording)). A live `deploy-runbook-acp` `with-skill` run produced a 7 KB trace showing the log read, the `SKILL.md` read and the written diagnosis.
-- **Claude Code (A.3, live 2026-11-14):** the same `deploy-runbook-acp` cases through `claude-agent-acp` 0.107.0 with `haiku`, the skill placed at `.claude/skills/`, the [Claude example](../examples/agents/claude.yml) unchanged and nothing Claude-specific in code. `with-skill` passed all three checks and its trace shows a `Load skill: deploy-runbook` tool call; `without-skill` failed the pattern and judge checks. One run each; no token appeared in results or traces.
-- **Still planned:** trace evidence for the judge (A.2), a checked-in Claude case, mocks (B). The native Pi runner stays.
+- **Live Pi check (2026-11-13):** The ACP example (now [`deploy-runbook`](../examples/cases/deploy-runbook/case.yml)) through pi-acp with `opencode-go/deepseek-v4.1-flash` reproduced the native example: `with-skill` passed all three checks after loading the skill from the workspace's `.agents/skills/`; `without-skill` failed the pattern and judge checks. One run each.
+- **Trace (A.2, first part):** the runner merges session updates into `trace.json` ([format](configuration.md#inspecting-and-recording)). A live Pi `with-skill` run produced a 7 KB trace showing the log read, the `SKILL.md` read and the written diagnosis.
+- **Claude Code (A.3, live 2026-11-14):** the same evaluation through `claude-agent-acp` 0.107.0 with `haiku`, the skill placed at `.claude/skills/`, the [Claude example](../examples/agents/claude.yml) unchanged and nothing Claude-specific in code. `with-skill` passed all three checks and its trace shows a `Load skill: deploy-runbook` tool call; `without-skill` failed the pattern and judge checks. One run each; no token appeared in results or traces.
+- **Examples (2026-11-14):** [`deploy-runbook`](../examples/cases/deploy-runbook/case.yml) now holds the Pi and Claude ACP cases; [`deploy-runbook-native`](../examples/cases/deploy-runbook-native/case.yml) is the native-runner version with the same assets. One live run of each ACP case: both `with-skill` cases passed all three checks; both `without-skill` cases failed the pattern and judge checks. The native `with-skill` case still passes.
+- **Still planned:** trace evidence for the judge (A.2), mocks (B). The native Pi runner stays.
 
 ## Runner Configuration
 
@@ -228,7 +229,7 @@ Without being asked, an agent listed its run directory, read a control file that
 
 Anthropic's [legal and compliance terms](https://code.claude.com/docs/en/legal-and-compliance.md) reserve subscription OAuth for ordinary use of Claude Code and native apps and forbid intermediating Claude.ai credentials or session tokens; a proxy that swaps a subscription token does exactly that. Logging in to the unmodified Claude Code with the operator's own subscription involves no intermediary.
 
-The example uses `claude setup-token`: the operator's subscription, a long-lived token that is never refreshed, passed as `CLAUDE_CODE_OAUTH_TOKEN` from a keychain lookup in `.env`. A `/login` credential instead needs regular refreshes and rotates its refresh token; one left unused since the spikes could no longer be refreshed, and Claude cleared it. Reusing the everyday keychain login was rejected: a refresh inside the sandbox would invalidate the operator's own session. The token is readable by the agent, like any credential in a run. Subscription limits assume ordinary individual use; heavy automated evaluation should use a Console API key.
+The example uses `claude setup-token` ([steps](configuration.md#claude-code-token)): the operator's subscription, a one-year token that is never refreshed, passed as `CLAUDE_CODE_OAUTH_TOKEN` from a keychain lookup in `.env`. A `/login` credential instead needs regular refreshes and rotates its refresh token; one left unused since the spikes could no longer be refreshed, and Claude cleared it. Reusing the everyday keychain login was rejected: a refresh inside the sandbox would invalidate the operator's own session. The token is readable by the agent, like any credential in a run. Subscription limits assume ordinary individual use; heavy automated evaluation should use a Console API key.
 
 ## Not Yet Verified
 

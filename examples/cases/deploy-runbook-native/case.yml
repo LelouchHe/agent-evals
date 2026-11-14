@@ -1,0 +1,39 @@
+# The ../deploy-runbook evaluation through the native Pi runner, which loads
+# skills explicitly instead of from the workspace. It shares that example's assets.
+input: Our deploy failed. Read deploy.log and write the cause and the commands to fix it into diagnosis.md.
+fixture: ../deploy-runbook/fixture
+timeoutMs: 120000
+checks:
+  - $type: file
+    path: diagnosis.md
+    # Search semantics: the pattern may match anywhere in the file.
+    matches: "make rotate-signing-cert"
+  - $type: file
+    path: deploy.log
+    unchanged: true
+  - $type: judge
+    # Independent Pi invocation; omitted thinking uses the checker default.
+    model: opencode-go/deepseek-v4.1-flash
+    apiKey: ${env:OPENCODE_API_KEY}
+    file: diagnosis.md
+    rubric:
+      - The diagnosis identifies an expired artifact signing certificate as the cause.
+
+cases:
+  with-skill:
+    runner:
+      $type: pi
+      model: opencode-go/deepseek-v4.1-flash
+      apiKey: ${env:OPENCODE_API_KEY}
+      # Resolved relative to this file and loaded explicitly. Discovered skills,
+      # extensions, MCP servers, sessions, and global configuration stay disabled.
+      skills:
+        - ../deploy-runbook/skill
+
+  # The empty skills list is meaningful: automatic skill discovery stays disabled.
+  without-skill:
+    runner:
+      $type: pi
+      model: opencode-go/deepseek-v4.1-flash
+      apiKey: ${env:OPENCODE_API_KEY}
+      skills: []

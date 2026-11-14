@@ -2,34 +2,28 @@
 
 A toolkit for evaluating AI agent systems.
 
-Evaluate instructions, skills, workflows, configurations and harnesses through explicit tasks, controlled environments and evidence-based checks. The current [M1](docs/m1-plan.md) runs one filesystem case with Pi RPC, macOS Seatbelt, and `file`/`judge` checkers. See [Roadmap](docs/roadmap.md) for the intended broader system.
+Evaluate instructions, skills, workflows, configurations and harnesses through explicit tasks, controlled environments and evidence-based checks. Harnesses run through a generic [ACP runner](docs/configuration.md#acp-runner-type-acp) (verified with Pi and Claude Code) or the native Pi runner, under macOS Seatbelt, with `file`/`judge` checkers. [M2](docs/m2-plan.md) is in progress; see [Roadmap](docs/roadmap.md) for the intended broader system.
 
-Requirements: Node.js 24+; macOS with `sandbox-exec` and an installed `pi` CLI for harness execution. `view` needs neither Pi nor credentials. The package/repository remain private and unpublished; visibility and publication require explicit approval.
+Requirements: Node.js 24+; macOS with `sandbox-exec`. ACP runs need caller-prepared harness directories; the native runner needs an installed `pi` CLI. `view` needs neither a harness nor credentials. The package/repository remain private and unpublished; visibility and publication require explicit approval.
 
 ## Quick Start
 
-From the repository:
+[`examples/cases/deploy-runbook`](examples/cases/deploy-runbook/case.yml) asks an agent to diagnose a failed deploy. Its skill supplies private error-code knowledge the task and log do not reveal, so `with-skill` and `without-skill` cases are expected to differ; one run of each is a sample, not a pass rate. Names are labels, not built-in A/B modes. It has four cases: `pi-with-skill`, `pi-without-skill`, `claude-with-skill` and `claude-without-skill`, each using a standalone agent configuration from [`examples/agents/`](examples/agents/).
 
 ```sh
 npm ci
 cp .env.example .env
-# Fill the provider key or lookup command in .env before running a model.
-npm run eval -- view examples/cases/deploy-runbook/case.yml --case with-skill
-npm run eval -- run examples/cases/deploy-runbook/case.yml --case with-skill
-```
-
-The example also has `without-skill`; names are labels, not built-in A/B modes. Both use `opencode-go/deepseek-v4.1-flash` and default thinking `medium`. The skill supplies private error-code knowledge the task and log do not reveal, so the cases are expected to differ; one run of each is a sample, not a pass rate. [Configuration Reference](docs/configuration.md) explains the file format and commands.
-
-Runnable cases and their fixture/skill assets live under [`examples/cases/`](examples/cases/). `deploy-runbook-acp` runs the same evaluation through the generic [ACP runner](docs/configuration.md#acp-runner-type-acp), using a standalone agent configuration from [`examples/agents/`](examples/agents/) that the preparation helpers also take:
-
-```sh
-npm run eval -- config examples/agents/pi.yml
-npm run eval -- login examples/agents/pi.yml
-npm run eval -- run examples/cases/deploy-runbook-acp/case.yml --case with-skill
+# Set the harness directories and the judge's provider key or lookup command in .env.
+npm run eval -- view examples/cases/deploy-runbook/case.yml --case pi-with-skill
+npm run eval -- config examples/agents/pi.yml   # offered models and options, no prompt
+npm run eval -- login examples/agents/pi.yml    # native login, saved into home.login
+npm run eval -- run examples/cases/deploy-runbook/case.yml --case pi-with-skill
 # Installed CLI: agent-evals config/login <agent.yml>
 ```
 
-Set the referenced directory paths in the invocation `.env` and prepare `deps` first; the examples do not bundle software or credentials. `config` reports ACP configuration values without sending a prompt. `login` opens the declared native program interactively, then saves the declared login files on successful exit. The helpers and ACP runs use a temporary HOME and the same macOS sandbox. See [ACP preparation](docs/configuration.md#acp-preparation-helpers) for the format and storage rules. Claude's isolated installation remains unverified.
+Prepare each harness's `deps` first; the examples do not bundle software or credentials. `login` opens the declared native program interactively and saves the declared login files on successful exit. Claude authenticates with a one-year [`claude setup-token` token](docs/configuration.md#claude-code-token) from `.env` instead, so it needs no `login`. The helpers and ACP runs use a temporary HOME and the same macOS sandbox. See [ACP preparation](docs/configuration.md#acp-preparation-helpers) for the format and storage rules.
+
+[`deploy-runbook-native`](examples/cases/deploy-runbook-native/case.yml) runs the same evaluation through the native Pi runner, with an installed `pi` and only the provider key; it shares the ACP example's fixture and skill. [Configuration Reference](docs/configuration.md) explains the file format and commands.
 
 ## Installable CLI
 
