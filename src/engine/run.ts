@@ -173,9 +173,13 @@ export async function runEvaluation(request: RunRequest): Promise<EvaluationReco
         diagnostics.push(`failed to stop runner: ${errorMessage(caught)}`);
         error ??= `failed to stop runner: ${errorMessage(caught)}`;
       }
-      trace = runner.trace?.();
-      if (mockHost !== undefined) {
-        interactions = await mockHost.close();
+      // Closing the host must not depend on the runner's trace, and vice versa.
+      try {
+        if (mockHost !== undefined) {
+          interactions = await mockHost.close();
+        }
+      } finally {
+        trace = runner.trace?.();
       }
     }
 

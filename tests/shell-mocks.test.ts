@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { readFile, readdir, writeFile } from "node:fs/promises";
+import { readFile, readdir, stat, writeFile } from "node:fs/promises";
 import type { Readable } from "node:stream";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -339,3 +339,53 @@ async function collect(stream: Readable | null): Promise<string> {
   for await (const chunk of stream) chunks.push(chunk as Buffer);
   return Buffer.concat(chunks).toString("utf8");
 }
+
+test("a throwing runner trace still closes the mock host", async (t) => {
+  const registry = createRegistry();
+  let socketPath: string | undefined;
+  addRunner(
+    registry,
+    {
+      type: "tracing-runner",
+      params: z.strictObject({}),
+      mocks: true,
+      create: () => ({
+        run: async (context) => {
+          socketPath = context.mocks?.socketPath;
+          return { finalText: null, diagnostics: [] };
+        },
+        stop: async () => {},
+        trace: () => {
+          throw new Error("trace failed");
+        },
+      }),
+    },
+    "test",
+  );
+  addChecker(registry, fileChecker, "built-in");
+
+  const directory = await makeTempDir(t, "ae-mocks-trace-");
+  const casePath = join(directory, "case.yml");
+  await writeFile(
+    casePath,
+    stringify({
+      input: INPUT,
+      mocks: MOCKS,
+      runner: { $type: "tracing-runner" },
+      checks: [{ $type: "file", path: "absent.txt", exists: false }],
+    }),
+  );
+  const record = await runEvaluation({
+    case: await loadCase(casePath),
+    registry,
+    resultsDir: await makeTempDir(t, "ae-mocks-trace-results-"),
+    tempParent: await makeTempDir(t, "ae-mocks-trace-runs-"),
+  });
+
+  assert.equal(record.status, "error");
+  assert.match(record.error ?? "", /trace failed/);
+  // The host closed and removed its socket before the trace was read.
+  const path = socketPath;
+  assert.ok(path !== undefined);
+  await assert.rejects(() => stat(path), { code: "ENOENT" });
+});
