@@ -47,7 +47,7 @@ async function runCase(
 }
 
 test(
-  "acp runner applies session config, prompts in the workspace and returns the text after the last tool call",
+  "acp runner applies session config, prompts in the workspace and records the merged trace",
   { skip: process.platform !== "darwin" },
   async (t) => {
     const { fixture, record, requests } = await runCase(t, "success", () => ({
@@ -56,6 +56,21 @@ test(
     }));
     assert.equal(record.status, "pass", record.error);
     assert.equal(record.runner.finalText, "wrote answer");
+    // Updates replace the fields they carry; null leaves the previous value.
+    assert.deepEqual(JSON.parse(await readFile(join(fixture.root, "results", record.runId, "trace.json"), "utf8")), [
+      { type: "thought", text: "plan it" },
+      { type: "message", text: "draft" },
+      {
+        type: "tool",
+        toolCallId: "call-1",
+        title: "echo hi",
+        kind: "execute",
+        rawInput: { command: "echo hi" },
+        status: "completed",
+        content: [{ type: "content", content: { type: "text", text: "hi" } }],
+      },
+      { type: "message", text: "wrote answer" },
+    ]);
     assert.deepEqual(requests, ["initialize", "session/new", "session/set_config_option", "session/prompt"]);
     assert.deepEqual(await readdir(fixture.runtime), []);
   },

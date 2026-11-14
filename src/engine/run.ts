@@ -16,6 +16,7 @@ import {
   type Registry,
   type Runner,
   type RunnerOutcome,
+  type TraceEntry,
 } from "./registry.ts";
 import {
   createResultDirectory,
@@ -90,6 +91,7 @@ export async function runEvaluation(request: RunRequest): Promise<EvaluationReco
     finalText: null,
   };
   let checks: CheckResult[] = [];
+  let trace: readonly TraceEntry[] | undefined;
   const diagnostics: string[] = [];
   let error: string | undefined;
   let status: RunStatus;
@@ -154,6 +156,7 @@ export async function runEvaluation(request: RunRequest): Promise<EvaluationReco
         diagnostics.push(`failed to stop runner: ${errorMessage(caught)}`);
         error ??= `failed to stop runner: ${errorMessage(caught)}`;
       }
+      trace = runner.trace?.();
     }
 
     const runnerStatus: RunnerStatus = stopFailed
@@ -245,7 +248,7 @@ export async function runEvaluation(request: RunRequest): Promise<EvaluationReco
   };
 
   const paths = await createResultDirectory(request.resultsDir, runId);
-  await writeResult(paths, record);
+  await writeResult(paths, record, trace);
   return record;
 }
 

@@ -52,10 +52,10 @@ npm run eval -- run examples/write-file/case.yml --case with-skill
 npm run eval -- run examples/write-file/case.yml --case without-skill
 ```
 
-| Case            | Result                                           | Total / runner time | Local result directory                             |
-| --------------- | ------------------------------------------------ | ------------------- | -------------------------------------------------- |
-| `with-skill`    | File existence/content and real judge all passed | 22.8 / 17.4 s       | `.eval-results/2026-11-12T02-33-57-461Z-074a8624/` |
-| `without-skill` | File existence/content and real judge all passed | 22.0 / 17.0 s       | `.eval-results/2026-11-12T02-34-43-457Z-88b3d849/` |
+| Case            | Result                                           | Total / runner time |
+| --------------- | ------------------------------------------------ | ------------------- |
+| `with-skill`    | File existence/content and real judge all passed | 22.8 / 17.4 s       |
+| `without-skill` | File existence/content and real judge all passed | 22.0 / 17.0 s       |
 
 Both used `opencode-go/deepseek-v4.1-flash`, default thinking `medium`, separate runner/judge invocations and the example's 120-second budgets. Cleanup was `removed`, diagnostics were empty, and no new sandbox permissions or wrapper script was needed. Secrets were injected only in memory at that revision. Results are Git-ignored; costs/tokens were not measured.
 

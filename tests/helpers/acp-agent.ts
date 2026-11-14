@@ -97,8 +97,13 @@ while (my $line = <STDIN>) {
     print $f "$model: $request->{params}{prompt}[0]{text}"; close($f);
     if ($scenario eq "hang") { sleep 600; }
     for my $update (
+      {sessionUpdate => "agent_thought_chunk", content => {type => "text", text => "plan "}},
+      {sessionUpdate => "agent_thought_chunk", content => {type => "text", text => "it"}},
       {sessionUpdate => "agent_message_chunk", content => {type => "text", text => "draft"}},
-      {sessionUpdate => "tool_call", toolCallId => "call-1", title => "write"},
+      {sessionUpdate => "tool_call", toolCallId => "call-1", title => "Terminal", kind => "execute", rawInput => {}},
+      {sessionUpdate => "tool_call_update", toolCallId => "call-1", title => "echo hi", rawInput => {command => "echo hi"}, status => "in_progress"},
+      {sessionUpdate => "tool_call_update", toolCallId => "call-1", content => [{type => "content", content => {type => "text", text => "h"}}]},
+      {sessionUpdate => "tool_call_update", toolCallId => "call-1", status => "completed", title => undef, content => [{type => "content", content => {type => "text", text => "hi"}}]},
       {sessionUpdate => "agent_message_chunk", content => {type => "text", text => "wrote "}},
       {sessionUpdate => "agent_message_chunk", content => {type => "text", text => "answer"}},
     ) {

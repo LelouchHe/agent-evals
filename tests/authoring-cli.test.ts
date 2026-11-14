@@ -441,7 +441,6 @@ export const checker = {
   assert.equal(record.runner.finalText, "runner:external-runner");
   assert.equal(record.checks[0]?.subject, "checker:external-checker");
   assert.match(result.stdout, /results: .*\/\.agent-evals\/[^/]+\/result\.json/);
-  await assert.rejects(() => access(join(cwd, ".eval-results")), /ENOENT/);
   assert.deepEqual(await readdir(tempParent), []);
 });
 

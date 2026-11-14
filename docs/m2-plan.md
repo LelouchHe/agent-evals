@@ -1,6 +1,6 @@
 # M2: Observable Runs
 
-Status: partial implementation. Step A.1 is implemented: the preparation helpers and the ACP evaluation runner. Trace, Claude Code and mocks remain planned. [Writing Cases](cases.md#the-test-model) defines the trace, interaction and side-effect sources this milestone makes real. Current usage is documented in [Configuration Reference](configuration.md#acp-runner-type-acp); a full installation walkthrough is not yet verified.
+Status: partial implementation. Step A.1 is implemented: the preparation helpers and the ACP evaluation runner. The ACP runner retains a merged trace; trace evidence for the judge, Claude Code and mocks remain planned. [Writing Cases](cases.md#the-test-model) defines the trace, interaction and side-effect sources this milestone makes real. Current usage is documented in [Configuration Reference](configuration.md#acp-runner-type-acp); a full installation walkthrough is not yet verified.
 
 ## Scope
 
@@ -8,7 +8,7 @@ Two independent parts. Neither depends on the other's mechanism.
 
 - **A. Trace.** One generic ACP runner records a normalized trace of each run; output is the trace's user-facing view. Checks can assert on output and trace. Delivered in three steps:
   1. The generic ACP runner with a caller-prepared harness home (`deps` and `login`), ACP config validation, the standalone `config` and `login` preparation commands; Pi through pi-acp reproduces the native runner's example results.
-  2. The runner assembles and retains the trace; checks assert on output and tool calls.
+  2. The runner assembles and retains the trace (done); the judge can take the trace as evidence.
   3. Claude Code runs through the same runner with only its own `deps` and `login`, proving no harness-specific code is needed.
 - **B. Mocks.** Case-owned mocks replace collaborators at the environment boundary and record the calls that reach them. Checks can assert on those records.
 
@@ -27,7 +27,8 @@ The registered `acp` runner completes step A.1. It reuses the helpers' HOME asse
 
 - **Verification:** model-free tests cover a full run (path-referenced agent, session config, fixture workspace, output, login copy-back, runtime removal), rejection of an unoffered config value before prompting, and cancellation of a hung turn.
 - **Live Pi check (2026-11-13):** [`deploy-runbook-acp`](../examples/cases/deploy-runbook-acp/case.yml) through pi-acp with `opencode-go/deepseek-v4.1-flash` reproduced the native example: `with-skill` passed all three checks after loading the skill from the workspace's `.agents/skills/`; `without-skill` failed the pattern and judge checks. One run each.
-- **Still planned:** trace assembly and trace checks (A.2), Claude Code (A.3), mocks (B). The native Pi runner stays.
+- **Trace (A.2, first part):** the runner merges session updates into `trace.json` ([format](configuration.md#inspecting-and-recording)). A live `deploy-runbook-acp` `with-skill` run produced a 7 KB trace showing the log read, the `SKILL.md` read and the written diagnosis.
+- **Still planned:** trace evidence for the judge (A.2), Claude Code (A.3), mocks (B). The native Pi runner stays.
 
 ## Runner Configuration
 
@@ -137,7 +138,8 @@ Directories are real, so the harness can create files beside the linked ones. De
 ## Decisions
 
 - **One generic ACP runner, no per-harness profiles.** The runner knows ACP, not harnesses; everything harness-specific is data the caller prepares for the [harness home](#harness-home). Pi runs through the local [pi-acp fork](https://github.com/LelouchHe/pi-acp); the native Pi runner stays until the ACP runner covers it.
-- **The trace is assembled from ACP updates.** Message and thought chunks are joined; every update for one `toolCallId` is merged into one tool-call record. Runners declare which detail they provide; a check needing missing detail is an error.
+- **The trace is assembled from ACP updates.** Message and thought chunks are joined; every update for one `toolCallId` is merged into one tool-call record holding its final state. Pi resends cumulative tool output in every update, so keeping intermediate states would grow with output length and add nothing. Runners declare which detail they provide; a check needing missing detail is an error.
+- **No field-level tool checks.** Harnesses shape the same action differently: Claude sends an empty `rawInput` first and fills it later, `kind` varies for the same tool, and agents read files through shell commands as often as through read tools. Process questions go to a judge reading the trace; deterministic evidence of what ran comes from mocks.
 - **Mocks live at the environment boundary, not in ACP.** ACP session updates are reports, not requests, so they cannot intercept a call. Command mocks are `PATH` shims with the real executable denied by Seatbelt; service mocks are MCP servers injected through `session/new`. Mock behavior and call records live outside the sandbox.
 - **The environment is built only from directories the evaluation owns.** The sandbox reads the system directories, `deps` and the run, and nothing else under the operator's home. Granting read access to existing installations was rejected: they sit beside the operator's credentials, and no rule derives a safe installation root for every installer.
 - **Credentials sit in `login`.** They reach the sandbox and the agent can read them, as recorded in [M1 limits](m1-plan.md#known-limitations). Keep only what a run needs there; for example, Pi's `login` holds just the one provider's key, not the operator's whole `auth.json`.
@@ -237,4 +239,4 @@ Anthropic's [legal and compliance terms](https://code.claude.com/docs/en/legal-a
 - Permission answering: the runner currently approves every request; whether and how a case configures this is open.
 - Mock syntax, where call expectations live, and the default for unmatched calls. Command mocks sit in a per-run directory ahead of `home.path`.
 - MCP server names: a mock must use the real server's name to look the same, and harnesses may format tool names differently.
-- Normalized trace schema and retention or truncation.
+- Trace truncation: tool output is retained as the harness reports it.
