@@ -2,7 +2,7 @@
 
 A toolkit for evaluating AI agent systems.
 
-Evaluate instructions, skills, workflows, configurations and harnesses through explicit tasks, controlled environments and evidence-based checks. Harnesses run through a generic [ACP runner](docs/configuration.md#acp-runner-type-acp) (verified with Pi and Claude Code) or the native Pi runner, under macOS Seatbelt, with `file`/`judge` checkers. [M2](docs/m2-plan.md) delivered ACP execution and trace evidence; [M3](docs/m3-plan.md) plans shell collaborator mocks, [M4](docs/m4-plan.md) plans the interaction checker, and [Roadmap](docs/roadmap.md) describes the broader target system.
+Evaluate instructions, skills, workflows, configurations and harnesses through explicit tasks, controlled environments and evidence-based checks. Harnesses run through a generic [ACP runner](docs/configuration.md#acp-runner-type-acp) (verified with Pi and Claude Code) or the native Pi runner, under macOS Seatbelt, with `file`/`judge` checkers. [M2](docs/m2-plan.md) delivered ACP execution and trace evidence; [M3](docs/m3-plan.md) plans shell collaborator mocks, [M4](docs/m4-plan.md) plans the interaction checker, M5 covers MCP collaborators and has no plan yet, and [Roadmap](docs/roadmap.md) describes the broader target system.
 
 Requirements: Node.js 24+; macOS with `sandbox-exec`. ACP runs need caller-prepared harness directories; the native runner needs an installed `pi` CLI. `view` needs neither a harness nor credentials. The package/repository remain private and unpublished; visibility and publication require explicit approval.
 
