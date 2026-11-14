@@ -535,6 +535,26 @@ test("final schema errors name the selected case and validate every required fie
       /fixture must be relative/,
     ],
     [
+      "absolute files destination",
+      ["input: task", "files:", "  /etc/passwd: skill", "runner:", "  $type: pi", "checks:", "  - $type: file"],
+      /files destination "\/etc\/passwd" must be relative to the workspace root/,
+    ],
+    [
+      "escaping files destination",
+      ["input: task", "files:", "  ../outside: skill", "runner:", "  $type: pi", "checks:", "  - $type: file"],
+      /files destination "\.\.\/outside" must not contain "\.\."/,
+    ],
+    [
+      "absolute files source",
+      ["input: task", "files:", "  file.txt: /etc/passwd", "runner:", "  $type: pi", "checks:", "  - $type: file"],
+      /files\["file\.txt"\] must be relative/,
+    ],
+    [
+      "files is not a mapping",
+      ["input: task", "files: [skill]", "runner:", "  $type: pi", "checks:", "  - $type: file"],
+      /files must be a YAML mapping/,
+    ],
+    [
       "bad timeout",
       ["input: task", "timeoutMs: 1.5", "runner:", "  $type: pi", "checks:", "  - $type: file"],
       /timeoutMs must be a positive integer/,

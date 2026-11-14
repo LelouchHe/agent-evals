@@ -26,7 +26,7 @@ Not in scope: multi-turn authoring beyond what ACP gives for free, network mocks
 The registered `acp` runner completes step A.1. It reuses the helpers' HOME assembly, sandbox policy and supervisor inside the engine's run directories; [Configuration Reference](configuration.md#acp-runner-type-acp) owns its contract.
 
 - **Verification:** model-free tests cover a full run (path-referenced agent, session config, fixture workspace, output, login copy-back, runtime removal), rejection of an unoffered config value before prompting, and cancellation of a hung turn.
-- **Live Pi check (2026-11-13):** [`deploy-runbook-acp`](../examples/cases/deploy-runbook-acp/case.yml) through pi-acp with `opencode-go/deepseek-v4.1-flash` reproduced the native example: `with-skill` passed all three checks after loading the skill from the fixture's `.agents/skills/`; `without-skill` failed the pattern and judge checks. One run each.
+- **Live Pi check (2026-11-13):** [`deploy-runbook-acp`](../examples/cases/deploy-runbook-acp/case.yml) through pi-acp with `opencode-go/deepseek-v4.1-flash` reproduced the native example: `with-skill` passed all three checks after loading the skill from the workspace's `.agents/skills/`; `without-skill` failed the pattern and judge checks. One run each.
 - **Still planned:** trace assembly and trace checks (A.2), Claude Code (A.3), mocks (B). The native Pi runner stays.
 
 ## Runner Configuration
@@ -78,7 +78,7 @@ A relative path in either source appears at the same path under the temporary HO
 - Initially available commands come from the system and deps, not the operator's everyday installation. Each configuration declares its own software and login sources.
 - Versions are whatever the caller installed; the operator's everyday installation is neither used nor affected.
 - Planned command mocks need nothing in deps: their per-run command directory goes ahead of `home.path`.
-- Project-level configuration and skills belong to the fixture, for example `.agents/skills/` for Pi or `.claude/skills/` for Claude Code. `with-skill` and `without-skill` differ only in their fixtures.
+- Project-level configuration and skills belong to the workspace: `fixture` supplies the base and a case's `files` entry places the rest, for example `.agents/skills/` for Pi or `.claude/skills/` for Claude Code. `with-skill` places the skill directory there; `without-skill` places nothing.
 
 #### What the directories hold
 
@@ -104,10 +104,10 @@ agent-evals-home/
 
 Settings that make a harness usable for unattended, isolated runs:
 
-| Harness     | File in `deps`            | Settings                                                                                                                                                               |
-| ----------- | ------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Pi          | `.pi/agent/settings.json` | `"defaultProjectTrust": "always"` so fixture skills load without a prompt; `"quietStartup": true`, `"enableInstallTelemetry": false`, `"retry": { "enabled": false }`. |
-| Claude Code | `.claude/settings.json`   | `"syncClaudeAiSkills": false` and `"disableClaudeAiConnectors": true` keep account content out of the run.                                                             |
+| Harness     | File in `deps`            | Settings                                                                                                                                                                     |
+| ----------- | ------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Pi          | `.pi/agent/settings.json` | `"defaultProjectTrust": "always"` so project-level skills load without a prompt; `"quietStartup": true`, `"enableInstallTelemetry": false`, `"retry": { "enabled": false }`. |
+| Claude Code | `.claude/settings.json`   | `"syncClaudeAiSkills": false` and `"disableClaudeAiConnectors": true` keep account content out of the run.                                                                   |
 
 #### The assembled HOME
 
@@ -171,7 +171,7 @@ The implemented helpers now use ACP SDK 2.6.0 and its stable ACP v1 app API (`cl
 
 ### Harness home
 
-- A `deps` directory holding official Node 24.22.2, `pi` 1.5.2 and the packed pi-acp fork under `.local/`, plus Pi's settings (`defaultProjectTrust: "always"`), ran the example with no read access to the operator's own Pi, Node or pi-acp: `with-skill` loaded `skill:deploy-runbook` from the fixture's `.agents/skills/` and found the fix. No `PI_CODING_AGENT_DIR`, wrapper script or extra flags were needed.
+- A `deps` directory holding official Node 24.22.2, `pi` 1.5.2 and the packed pi-acp fork under `.local/`, plus Pi's settings (`defaultProjectTrust: "always"`), ran the example with no read access to the operator's own Pi, Node or pi-acp: `with-skill` loaded `skill:deploy-runbook` from the workspace's `.agents/skills/` and found the fix. No `PI_CODING_AGENT_DIR`, wrapper script or extra flags were needed.
 - Mirroring that installation, about 21,000 files, took 0.7 s and removing it 0.6 s. The policy needs one `subpath` rule per directory; one rule per mirrored file failed to compile.
 - Linking login files into the run failed in both directions. Pi locks the resolved path of `auth.json` and needed write access beside the real file. Claude Code rewrote `.claude.json` through its link but replaced the `.credentials.json` link with a new file, so a refreshed token, whose refresh token had rotated, stayed in the run and would have been deleted.
 - Copying `login` in and copying its original files back fixed both without harness rules: Pi ran with no extra write rule and left `auth.json` unchanged; a forced Claude token refresh was copied back and the next run authenticated with it. `login` gained no files in any run.
@@ -193,7 +193,7 @@ The implemented helpers now use ACP SDK 2.6.0 and its stable ACP v1 app API (`cl
 ### Sandbox
 
 - Node's resolver needs read access to the `/var` symlink; without it DNS fails under Seatbelt.
-- The agent's working directory must be readable, and only the fixture-derived workspace is.
+- The agent's working directory must be readable, and only the prepared workspace is.
 - Interactive Pi needs terminal-mode ioctl permission, not just terminal reads/writes. A live offline UI check opened its `/login` menu and exited normally using the helper, without new authentication, credential-content changes or model prompts; automatic `fd`/`rg` downloads were disabled explicitly for that check. The initial prototype login policies allowed all file ioctls; the implemented helper scopes termios setters to the current terminal.
 
 ### Process cleanup

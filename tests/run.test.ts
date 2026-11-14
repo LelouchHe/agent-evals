@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { test } from "node:test";
 import { stringify } from "yaml";
 import { loadCase } from "../src/engine/authoring.ts";
@@ -19,6 +19,9 @@ interface ScenarioOptions {
   readonly judgeExecutable?: string;
   readonly checks?: readonly Record<string, unknown>[];
   readonly fixtureFiles?: Record<string, string>;
+  /** Authoring files written beside the case file, keyed by config-relative path. */
+  readonly assets?: Record<string, string>;
+  readonly files?: Record<string, string>;
   readonly timeoutMs?: number;
   readonly skill?: boolean;
 }
@@ -44,12 +47,17 @@ async function writeScenario(t: Parameters<typeof makeTempDir>[0], options: Scen
       await writeFile(join(fixtureDir, name), content);
     }
   }
+  for (const [name, content] of Object.entries(options.assets ?? {})) {
+    await mkdir(dirname(join(directory, name)), { recursive: true });
+    await writeFile(join(directory, name), content);
+  }
   await writeFile(
     casePath,
     stringify({
       input: 'Create hello.txt with exactly the content "Hello, world!".',
       ...(options.timeoutMs === undefined ? {} : { timeoutMs: options.timeoutMs }),
       ...(options.fixtureFiles === undefined ? {} : { fixture: "fixture" }),
+      ...(options.files === undefined ? {} : { files: options.files }),
       checks,
       runner: {
         $type: "pi",
@@ -154,6 +162,54 @@ test("integration: unchanged uses the engine baseline, which is outside agent ac
     record.checks.map((check) => check.status),
     ["pass", "pass"],
   );
+  assert.deepEqual(await readdir(tempParent), []);
+});
+
+test("integration: files entries replace fixture files and belong to the baseline", async (t) => {
+  const runner = await createFakePi(t, "success");
+  const { scenario, record, resultsDir, tempParent } = await runScenario(t, {
+    runnerExecutable: runner.executable,
+    fixtureFiles: { "seed.txt": "from fixture\n" },
+    assets: { "override/seed.txt": "from override\n", "skill/SKILL.md": "skill body\n" },
+    files: { "seed.txt": "override/seed.txt", ".agents/skills/demo": "skill" },
+    checks: [
+      { $type: "file", path: "seed.txt", matches: "^from override\\n$" },
+      { $type: "file", path: "seed.txt", unchanged: true },
+      { $type: "file", path: ".agents/skills/demo/SKILL.md", matches: "^skill body" },
+    ],
+  });
+
+  assert.equal(record.status, "pass", record.error);
+  assert.deepEqual(
+    record.checks.map((check) => check.status),
+    ["pass", "pass", "pass"],
+  );
+  // The placed files are part of the baseline, so `unchanged` saw the replaced bytes.
+  // The source fixture keeps its own bytes.
+  assert.equal(await readFile(join(scenario.directory, "fixture", "seed.txt"), "utf8"), "from fixture\n");
+  assert.deepEqual(await readdir(tempParent), []);
+
+  const saved = JSON.parse(await readFile(join(resultsDir, record.runId, "result.json"), "utf8")) as EvaluationRecord;
+  assert.deepEqual(saved.resolvedConfig.files, {
+    "seed.txt": "override/seed.txt",
+    ".agents/skills/demo": "skill",
+  });
+});
+
+test("integration: two files entries producing one path fail the run before the runner starts", async (t) => {
+  const runner = await createFakePi(t, "record-prompt");
+  const { record, tempParent } = await runScenario(t, {
+    runnerExecutable: runner.executable,
+    assets: { "a/inner.txt": "first\n", "b/inner.txt": "second\n" },
+    files: { outer: "a", "outer/inner.txt": "b/inner.txt" },
+    checks: [{ $type: "file", path: "hello.txt", exists: true }],
+  });
+
+  assert.equal(record.status, "error");
+  assert.match(record.error ?? "", /files entry "outer\/inner\.txt" overwrites outer\/inner\.txt/);
+  assert.deepEqual(record.checks, []);
+  assert.equal(record.runner.durationMs, 0);
+  await assert.rejects(readFile(runner.extraFile), { code: "ENOENT" });
   assert.deepEqual(await readdir(tempParent), []);
 });
 

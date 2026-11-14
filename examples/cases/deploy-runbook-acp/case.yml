@@ -21,11 +21,11 @@ checks:
     rubric:
       - The diagnosis identifies an expired artifact signing certificate as the cause.
 
-# The ACP runner has no skill parameter: project-level skills belong to the
-# fixture, at the path the harness discovers (.agents/skills/ for Pi). So the
-# cases differ only in fixture, and fixture-with-skill is fixture plus the skill.
+# Project-level skills are workspace files: the ACP runner has no skill
+# parameter, so a case places its skill directory where the harness discovers
+# it. Both cases share the fixture; with-skill adds the skill on top.
 cases:
   with-skill:
-    fixture: fixture-with-skill
-  without-skill:
-    fixture: fixture
+    files:
+      .agents/skills/deploy-runbook: skill
+  without-skill: {}
