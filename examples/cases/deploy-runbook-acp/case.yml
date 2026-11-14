@@ -1,0 +1,32 @@
+# The same evaluation as ../deploy-runbook, run through the generic ACP runner.
+# Prepare the Pi deps and login directories first; see docs/configuration.md.
+input: Our deploy failed. Read deploy.log and write the cause and the commands to fix it into diagnosis.md.
+fixture: fixture
+timeoutMs: 120000
+runner:
+  $type: acp
+  agent: ../../agents/pi.yml
+  config:
+    model: opencode-go/deepseek-v4.1-flash
+checks:
+  - $type: file
+    path: diagnosis.md
+    matches: "make rotate-signing-cert"
+  - $type: file
+    path: deploy.log
+    unchanged: true
+  - $type: judge
+    model: opencode-go/deepseek-v4.1-flash
+    apiKey: $env:OPENCODE_API_KEY
+    file: diagnosis.md
+    rubric:
+      - The diagnosis identifies an expired artifact signing certificate as the cause.
+
+# Project-level skills are workspace files: the ACP runner has no skill
+# parameter, so a case places its skill directory where the harness discovers
+# it. Both cases share the fixture; with-skill adds the skill on top.
+cases:
+  with-skill:
+    files:
+      .agents/skills/deploy-runbook: skill
+  without-skill: {}

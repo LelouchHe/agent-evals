@@ -26,6 +26,7 @@ import {
   type RunnerStatus,
 } from "./results.ts";
 import { createEnvSource, type EnvSource } from "./env-source.ts";
+import { placeCaseFiles } from "./files.ts";
 import { parseImplementationParams } from "./params.ts";
 import { expandReferences } from "./references.ts";
 import { truncate, truncateNullable } from "./truncate.ts";
@@ -67,7 +68,7 @@ export async function runEvaluation(request: RunRequest): Promise<EvaluationReco
   try {
     const source = request.envSource ?? createEnvSource(process.cwd(), abort.signal);
     registered = await prepareImplementations(request, source);
-    await validateFixture(request.case);
+    await validateAuthoringAssets(request.case);
   } catch (error) {
     request.signal?.removeEventListener("abort", onAbort);
     throw error;
@@ -110,6 +111,7 @@ export async function runEvaluation(request: RunRequest): Promise<EvaluationReco
       const source = resolveAuthoringAsset(request.case.dir, fixture, "case.fixture");
       await cp(source, workspaceDir, { recursive: true, preserveTimestamps: true });
     }
+    await placeCaseFiles(request.case, join(root, "files"), workspaceDir);
     await cp(workspaceDir, baselineDir, { recursive: true, preserveTimestamps: true });
     const workspaceRoot = await openRunRoot(workspaceDir);
     const baselineRoot = await openRunRoot(baselineDir);
@@ -278,20 +280,29 @@ async function prepareImplementations(
   return { runnerType: runnerDefinition.type, runner, checks };
 }
 
-async function validateFixture(loadedCase: ResolvedCase): Promise<void> {
+async function validateAuthoringAssets(loadedCase: ResolvedCase): Promise<void> {
   const fixture = loadedCase.config.fixture;
-  if (fixture === undefined) {
-    return;
+  if (fixture !== undefined) {
+    const source = resolveAuthoringAsset(loadedCase.dir, fixture, "case.fixture");
+    let info;
+    try {
+      info = await stat(source);
+    } catch (caught) {
+      throw new ConfigError(`case fixture ${fixture} is not accessible: ${errorMessage(caught)}`);
+    }
+    if (!info.isDirectory()) {
+      throw new ConfigError(`case fixture ${fixture} must be a directory`);
+    }
   }
-  const source = resolveAuthoringAsset(loadedCase.dir, fixture, "case.fixture");
-  let info;
-  try {
-    info = await stat(source);
-  } catch (caught) {
-    throw new ConfigError(`case fixture ${fixture} is not accessible: ${errorMessage(caught)}`);
-  }
-  if (!info.isDirectory()) {
-    throw new ConfigError(`case fixture ${fixture} must be a directory`);
+
+  for (const [destination, source] of Object.entries(loadedCase.config.files ?? {})) {
+    try {
+      await stat(resolveAuthoringAsset(loadedCase.dir, source, `case.files["${destination}"]`));
+    } catch (caught) {
+      throw new ConfigError(
+        `case files source ${source} for "${destination}" is not accessible: ${errorMessage(caught)}`,
+      );
+    }
   }
 }
 

@@ -42,7 +42,7 @@ login:
 | `home.path`  | Required list of HOME-relative command directories, followed by system directories on PATH.                          |
 | `login`      | HOME-relative paths describing the login directory's file composition. The login helper requires a non-empty list.   |
 
-The ACP implementation declares one strict Zod schema; unknown fields, invalid argv and unsafe HOME-relative paths are errors. Agent YAML does not support an `env` field; `$env:NAME` supplies configuration values, not process environment variables. Standalone files use the same YAML restrictions and unquoted `$env` rules as case parameters. Directory paths resolve from the agent file; `.env` remains rooted at the invocation directory. The format is also the planned inline `runner.agent` format, but the ACP evaluation runner and case references are not implemented yet.
+The ACP implementation declares one strict Zod schema; unknown fields, invalid argv and unsafe HOME-relative paths are errors. Agent YAML does not support an `env` field; `$env:NAME` supplies configuration values, not process environment variables. Standalone files use the same YAML restrictions and unquoted `$env` rules as case parameters. Directory paths resolve from the agent file; `.env` remains rooted at the invocation directory. The [ACP runner](#acp-runner-type-acp) takes the same object inline or by path.
 
 Each command builds a fresh HOME: directories from `deps` are real and their files are read-only links; login files are copied, not linked. Dependencies must be self-contained (directory symlinks and special files are unsupported); only declared software and system directories are readable. The operator's ambient PATH, HOME and credentials are not inherited. Keep login directories evaluation-owned, separate from everyday credentials.
 
@@ -101,7 +101,8 @@ Select a name explicitly, even with one entry. `cases` must be a non-empty mappi
 | `input`     | Required non-empty initial user message.                                                                                                            |
 | `runner`    | Required implementation record.                                                                                                                     |
 | `checks`    | Required non-empty list of implementation records.                                                                                                  |
-| `fixture`   | Optional directory relative to this YAML. Omission starts an empty workspace.                                                                       |
+| `fixture`   | Optional directory relative to this YAML, copied into the workspace root. Omission starts an empty workspace.                                       |
+| `files`     | Optional mapping from a workspace-relative destination (`.` is the root) to an authoring file or directory, placed after the fixture.               |
 | `timeoutMs` | Optional positive integer milliseconds; defaults to 300000. Bounds runner execution and is also each check's budget, not the whole run's wall time. |
 | `cases`     | Optional document-level selection control; not passed to execution.                                                                                 |
 
@@ -110,6 +111,17 @@ Unknown common fields, invalid shapes and duplicate YAML keys are errors. There 
 Anchor declarations, alias nodes and the scalar mapping key `<<` are rejected at every depth, including quoted `<<` keys. Parser warnings, including unknown tags such as `!include`, are errors. Ordinary string values containing `&`, `*`, `<<` or tag-like text remain data; built-in YAML tags that parse without warnings are not categorically banned.
 
 Authoring resources are relative to the YAML file; checker targets are relative to the evaluated workspace. Neither is silently based on the engine's working directory. Credentials are separate runtime inputs from the invocation directory; see [Credentials](../README.md#credentials).
+
+### Fixture and Files
+
+`fixture` is the base environment. `files` is the per-case variation layered on top: each key is a workspace-relative destination (`.` is the root, never absolute and never containing `..`) and each value is an authoring file or directory resolved like `fixture`.
+
+- An entry may replace a file that came from `fixture`; that is the common "same base, one changed file" case.
+- Entries may not overwrite each other: two entries producing the same file path are an error. Directory entries merge.
+- A file arriving where a directory exists, or a directory where a file exists, is an error rather than a replacement, whether the existing path came from `fixture` or from another entry.
+- Placement happens after the fixture copy and before the baseline snapshot, so placed files are part of the baseline and `unchanged` covers them.
+
+The engine only copies; it assigns no meaning to a destination and knows no harness paths. A project-level skill is one use: place its directory where the harness discovers it, for example `.agents/skills/` for Pi or `.claude/skills/` for Claude Code.
 
 ## Values from .env
 
@@ -144,6 +156,29 @@ On `run`, the engine validates each record once, reports schema errors with fiel
 The adapter, not the engine, handles Pi authentication and model requirements. The key is passed in the isolated process environment through a non-secret Pi config reference, not argv or a plaintext key file. This requires a compatible Pi build with `models.json` API-key environment interpolation (verified with Pi 1.5.1); custom providers need Pi configuration beyond this adapter.
 
 The runner exposes read/write/edit/bash for one initial message. Operator skills, extensions, MCP servers, sessions and context files are not automatically inherited. A final native assistant error is an execution error; a recovered intermediate retry is not necessarily a failure.
+
+### ACP Runner (`$type: acp`)
+
+```yaml
+runner:
+  $type: acp
+  agent: ../../agents/pi.yml # or inline the same object
+  config:
+    model: opencode-go/deepseek-v4.1-flash
+```
+
+| Parameter | Contract                                                                                                                                                                       |
+| --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `agent`   | Required. An inline [agent object](#acp-preparation-helpers), or a config-relative path to a standalone file holding one. Only `acpCommand` and `home` are used.               |
+| `config`  | Optional mapping of session config values (string or boolean), applied in declaration order. A key names an option's category when exactly one has it, otherwise an option ID. |
+
+A path-referenced file resolves its own directories from its location and its `$env:NAME` values from the invocation `.env`; an inline object follows the case's rules. Missing deps or an invalid login root are configuration errors before any run resource exists.
+
+Each run assembles the harness home in the run's own HOME exactly as the helpers do, starts `acpCommand` in the workspace under the same sandbox, creates one session, applies `config`, then sends the input as one prompt. `agent-evals config <agent.yml>` lists the offered options. A key matching no option, or a value the agent does not offer, fails the run before prompting; set `model` first because other choices may depend on it. Skills and project settings come from the prepared workspace (`fixture` and `files`), not runner parameters.
+
+The run completes only when the turn ends with `end_turn`; any other stop reason, an agent exit or a protocol error is an execution error. Recorded output is the agent's text after its last tool call. Permission requests are approved (`allow_once`, else `allow_always`): the sandbox is the boundary. On completion, timeout or cancellation the whole sandbox is stopped, then changed original login files are copied back. Only the workspace, the run HOME and its temporary directory are writable; deps is read-only, and the baseline, policy and case files are unreadable.
+
+Example: [`deploy-runbook-acp`](../examples/cases/deploy-runbook-acp/case.yml), whose cases share one fixture and differ in whether `files` places `skill` at `.agents/skills/deploy-runbook`.
 
 ### File Checker (`$type: file`)
 

@@ -13,7 +13,7 @@ The reusable machinery is execution, isolation, checking and recording—not the
 Use ACP as the planned primary protocol-level route for additional harnesses. One ACP runner can serve harnesses that expose the required protocol capabilities; native runners remain valid.
 
 - Further user messages belong to the same evaluation/session model, not a separate case category. ACP is the planned route for multi-turn execution, not a logical prerequisite for all multi-turn support.
-- Conversation transport can be shared, while skill/configuration/tool-server assembly remains harness-specific. Decided for [M2](m2-plan.md#runner-configuration): one generic ACP runner with no per-harness code; harness installation, settings and credentials come from a caller-prepared harness home, project configuration from fixtures.
+- Conversation transport can be shared, while skill/configuration/tool-server assembly remains harness-specific. Decided for [M2](m2-plan.md#runner-configuration): one generic ACP runner with no per-harness code; harness installation, settings and credentials come from a caller-prepared harness home, project configuration from the prepared workspace.
 - A credential proxy outside the sandbox can keep real API keys away from the agent and let sandbox network shrink to the engine; it was verified but is deferred, and it must not carry Claude subscription tokens. See [M2](m2-plan.md#decisions).
 - Session reports such as tool calls, plans and permission requests can be evidence, but reported calls do not prove external effects.
 - Permission decisions are an evaluation variable. Configuration and capability coverage are not yet specified.
@@ -68,4 +68,4 @@ The following product-design questions are **pending**, not implementation requi
 
 ## Delivery
 
-[M1](m1-plan.md) has a delivery/acceptance record. [M2](m2-plan.md#delivered-preparation-slice) is partially implemented: standalone ACP configuration-query and login helpers have shipped; the ACP evaluation runner, trace and mocks remain planned. The milestone plan separates current delivery and verification from earlier spikes and remaining work. Define later milestone plans when there is a real scenario and agreed scope; this document does not invent a schedule or turn the directions above into implementation obligations.
+[M1](m1-plan.md) has a delivery/acceptance record. [M2](m2-plan.md#delivered-preparation-slice) is partially implemented: standalone ACP configuration-query and login helpers and the ACP evaluation runner are implemented; trace, Claude Code and mocks remain planned. The milestone plan separates current delivery and verification from earlier spikes and remaining work. Define later milestone plans when there is a real scenario and agreed scope; this document does not invent a schedule or turn the directions above into implementation obligations.

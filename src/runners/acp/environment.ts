@@ -1,15 +1,22 @@
 import { constants } from "node:fs";
 import { randomUUID } from "node:crypto";
-import { lstat, mkdir, mkdtemp, open, readdir, realpath, rename, rm, stat, symlink, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { lstat, mkdir, open, readdir, realpath, rename, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
 import { ConfigError, errorMessage } from "../../engine/config.ts";
 import { isMissing, isWithin, openRunRoot, resolveWorkspacePath, type RunRoot } from "../../engine/workspace.ts";
 import { assertSeatbeltAvailable, createSandboxPolicy, SYSTEM_PATH } from "../../platform/macos/policy.ts";
 import type { AgentConfig } from "./agent.ts";
 
-/** Assemble caller-owned software and copied login state without ambient installations. */
-export async function prepareEnvironment(agent: AgentConfig, declaringDir: string, interactive: boolean) {
+export interface HarnessHome {
+  readonly path: readonly string[];
+  readonly deps: string;
+  /** Canonical persistent login directory; it may not exist before the first login. */
+  readonly login?: string;
+  readonly loginRoot?: RunRoot;
+}
+
+/** Validate the caller-owned software and login directories without creating run state. */
+export async function resolveHome(agent: AgentConfig, declaringDir: string): Promise<HarnessHome> {
   assertSeatbeltAvailable();
   let deps: string;
   try {
@@ -33,91 +40,95 @@ export async function prepareEnvironment(agent: AgentConfig, declaringDir: strin
   if (login !== undefined && (isWithin(deps, login) || isWithin(login, deps))) {
     throw new ConfigError("deps and login must be separate, non-overlapping directories");
   }
-  const directory = await mkdtemp(join(tmpdir(), "ae-acp-"));
-  try {
-    if (isWithin(deps, await realpath(directory)))
-      throw new ConfigError("deps must not contain the temporary command directory");
-    const home = join(directory, "home");
-    const cwd = join(directory, "workspace");
-    const scratch = join(directory, "tmp");
-    await Promise.all([home, cwd, scratch].map((path) => mkdir(path, { mode: 0o700 })));
-    await mirror(deps, home);
-    const homeRoot = await openRunRoot(home);
-    const originals = new Map<string, Buffer>();
-    if (loginRoot !== undefined) {
-      for (const file of await files(loginRoot.path)) {
-        const destination = join(home, file);
+  return {
+    path: agent.home.path,
+    deps,
+    ...(login === undefined ? {} : { login }),
+    ...(loginRoot === undefined ? {} : { loginRoot }),
+  };
+}
+
+/**
+ * Assemble caller-owned software and copied login state into empty run
+ * directories, without ambient installations. The caller owns and removes them.
+ */
+export async function assembleEnvironment(
+  source: HarnessHome,
+  dirs: { readonly home: string; readonly workspace: string; readonly scratch: string },
+  interactive: boolean,
+) {
+  const { deps, login, loginRoot } = source;
+  const { home } = dirs;
+  if (isWithin(deps, await realpath(home))) throw new ConfigError("deps must not contain the temporary run directory");
+  await mirror(deps, home);
+  const homeRoot = await openRunRoot(home);
+  const originals = new Map<string, Buffer>();
+  if (loginRoot !== undefined) {
+    for (const file of await files(loginRoot.path)) {
+      const destination = join(home, file);
+      try {
+        await lstat(destination);
+        throw new ConfigError(`deps and login contain the same file: ${file}`);
+      } catch (error) {
+        if (!isMissing(error)) throw error;
+      }
+      const data = await readRegular(loginRoot, file);
+      await mkdir(dirname(destination), { recursive: true, mode: 0o700 });
+      await writeFile(destination, data, { mode: 0o600, flag: "wx" });
+      originals.set(file, data);
+    }
+  }
+  const policy = createSandboxPolicy({
+    writableRoots: [home, dirs.workspace, dirs.scratch],
+    readableRoots: [deps],
+    allowNetwork: true,
+    interactive,
+  });
+  const env: NodeJS.ProcessEnv = {
+    ...(process.env.TERM === undefined ? {} : { TERM: process.env.TERM }),
+    HOME: home,
+    TMPDIR: dirs.scratch,
+    PATH: [...source.path.map((path) => join(home, path)), ...SYSTEM_PATH].join(":"),
+  };
+  const persist = async (selected: ReadonlyMap<string, Buffer>): Promise<void> => {
+    if (login === undefined) throw new ConfigError("login requires home.login");
+    await mkdir(login, { recursive: true, mode: 0o700 });
+    const targetRoot = await openRunRoot(login);
+    for (const [file, data] of selected) {
+      const target = await resolveWorkspacePath(targetRoot, file);
+      await mkdir(dirname(target), { recursive: true, mode: 0o700 });
+      const temporary = join(dirname(target), `.agent-evals-${randomUUID()}`);
+      try {
+        await writeFile(temporary, data, { flag: "wx", mode: 0o600 });
+        await rename(temporary, target);
+      } finally {
+        await rm(temporary, { force: true });
+      }
+    }
+  };
+  return {
+    env,
+    policy,
+    async saveLogin(selected: readonly string[]): Promise<void> {
+      // Validate every source before modifying the persistent login directory.
+      const contents = new Map<string, Buffer>();
+      for (const file of selected) contents.set(file, await readRegular(homeRoot, file));
+      await persist(contents);
+    },
+    /** Call only after the sandbox has stopped. */
+    async copyBack(): Promise<void> {
+      const changed = new Map<string, Buffer>();
+      for (const [file, before] of originals) {
         try {
-          await lstat(destination);
-          throw new ConfigError(`deps and login contain the same file: ${file}`);
+          const after = await readRegular(homeRoot, file);
+          if (!before.equals(after)) changed.set(file, after);
         } catch (error) {
           if (!isMissing(error)) throw error;
         }
-        const data = await readRegular(loginRoot, file);
-        await mkdir(dirname(destination), { recursive: true, mode: 0o700 });
-        await writeFile(destination, data, { mode: 0o600, flag: "wx" });
-        originals.set(file, data);
       }
-    }
-    const policy = createSandboxPolicy({
-      writableRoots: [directory],
-      readableRoots: [deps],
-      allowNetwork: true,
-      interactive,
-    });
-    const env: NodeJS.ProcessEnv = {
-      ...(process.env.TERM === undefined ? {} : { TERM: process.env.TERM }),
-      HOME: home,
-      TMPDIR: scratch,
-      PATH: [...agent.home.path.map((path) => join(home, path)), ...SYSTEM_PATH].join(":"),
-    };
-    const persist = async (selected: ReadonlyMap<string, Buffer>): Promise<void> => {
-      if (login === undefined) throw new ConfigError("login requires home.login");
-      await mkdir(login, { recursive: true, mode: 0o700 });
-      const targetRoot = await openRunRoot(login);
-      for (const [file, data] of selected) {
-        const target = await resolveWorkspacePath(targetRoot, file);
-        await mkdir(dirname(target), { recursive: true, mode: 0o700 });
-        const temporary = join(dirname(target), `.agent-evals-${randomUUID()}`);
-        try {
-          await writeFile(temporary, data, { flag: "wx", mode: 0o600 });
-          await rename(temporary, target);
-        } finally {
-          await rm(temporary, { force: true });
-        }
-      }
-    };
-    return {
-      directory,
-      cwd,
-      env,
-      policy,
-      async saveLogin(selected: readonly string[]): Promise<void> {
-        // Validate every source before modifying the persistent login directory.
-        const contents = new Map<string, Buffer>();
-        for (const file of selected) contents.set(file, await readRegular(homeRoot, file));
-        await persist(contents);
-      },
-      async copyBack(): Promise<void> {
-        const changed = new Map<string, Buffer>();
-        for (const [file, before] of originals) {
-          try {
-            const after = await readRegular(homeRoot, file);
-            if (!before.equals(after)) changed.set(file, after);
-          } catch (error) {
-            if (!isMissing(error)) throw error;
-          }
-        }
-        if (changed.size > 0) await persist(changed);
-      },
-      async dispose(): Promise<void> {
-        await rm(directory, { recursive: true, force: true });
-      },
-    };
-  } catch (error) {
-    await rm(directory, { recursive: true, force: true });
-    throw error;
-  }
+      if (changed.size > 0) await persist(changed);
+    },
+  };
 }
 
 /** Canonicalize existing ancestors too, without creating a first-login directory. */

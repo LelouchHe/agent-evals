@@ -19,6 +19,8 @@ export interface ImplementationRecord extends ImplementationParams {
 export interface CaseConfig {
   readonly input: string;
   readonly fixture?: string;
+  /** Authoring asset placed at a workspace-relative destination path. */
+  readonly files?: Readonly<Record<string, string>>;
   readonly timeoutMs?: number;
   readonly checks: readonly ImplementationRecord[];
   readonly runner: ImplementationRecord;
@@ -53,7 +55,14 @@ export interface ResolvedCase {
 }
 
 /** Top-level fields allowed in a complete resolved case. */
-export const CASE_FIELD_KEYS: ReadonlySet<string> = new Set(["input", "fixture", "timeoutMs", "checks", "runner"]);
+export const CASE_FIELD_KEYS: ReadonlySet<string> = new Set([
+  "input",
+  "fixture",
+  "files",
+  "timeoutMs",
+  "checks",
+  "runner",
+]);
 
 /** The document-level authoring control for named cases. */
 export const CASES_KEY = "cases";
@@ -71,6 +80,7 @@ export function expectCaseConfig(value: unknown, label: string): CaseConfig {
 
   const input = expectNonEmptyString(record.input, `${label}.input`);
   const fixture = record.fixture === undefined ? undefined : expectRelativePath(record.fixture, `${label}.fixture`);
+  const files = record.files === undefined ? undefined : expectFiles(record.files, label);
   const timeoutMs = record.timeoutMs === undefined ? undefined : expectTimeout(record.timeoutMs, `${label}.timeoutMs`);
   if (!Array.isArray(record.checks) || record.checks.length === 0) {
     throw new ConfigError(`${label}.checks must be a non-empty list`);
@@ -81,6 +91,7 @@ export function expectCaseConfig(value: unknown, label: string): CaseConfig {
   return {
     input,
     ...(fixture === undefined ? {} : { fixture }),
+    ...(files === undefined ? {} : { files }),
     ...(timeoutMs === undefined ? {} : { timeoutMs }),
     checks,
     runner,
@@ -123,13 +134,44 @@ function expectRelativePath(value: unknown, label: string): string {
   return path;
 }
 
+/**
+ * Read the case's file placements. Keys are workspace-relative destinations,
+ * so unlike authoring sources they may not leave the workspace.
+ */
+function expectFiles(value: unknown, label: string): Readonly<Record<string, string>> {
+  const record = expectRecord(value, `${label}.files`);
+  return Object.fromEntries(
+    Object.entries(record).map(([destination, source]) => {
+      expectWorkspaceDestination(destination, `${label}.files destination "${destination}"`);
+      return [destination, expectRelativePath(source, `${label}.files["${destination}"]`)];
+    }),
+  );
+}
+
+function expectWorkspaceDestination(destination: string, label: string): void {
+  expectNonEmptyString(destination, label);
+  if (destination.includes("\0")) {
+    throw new ConfigError(`${label} contains a NUL byte`);
+  }
+  if (isAbsoluteLike(destination)) {
+    throw new ConfigError(`${label} must be relative to the workspace root`);
+  }
+  if (destination.split(/[\\/]+/).includes("..")) {
+    throw new ConfigError(`${label} must not contain ".."`);
+  }
+}
+
 function assertRelativePath(relativePath: string, label: string): void {
   if (relativePath.includes("\0")) {
     throw new ConfigError(`${label} contains a NUL byte`);
   }
-  if (relativePath.startsWith("/") || relativePath.startsWith("\\") || /^[A-Za-z]:[\\/]/.test(relativePath)) {
+  if (isAbsoluteLike(relativePath)) {
     throw new ConfigError(`${label} must be relative to its configuration file`);
   }
+}
+
+function isAbsoluteLike(path: string): boolean {
+  return path.startsWith("/") || path.startsWith("\\") || /^[A-Za-z]:[\\/]/.test(path);
 }
 
 function expectTimeout(value: unknown, label: string): number {

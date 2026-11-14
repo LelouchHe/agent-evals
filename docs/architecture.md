@@ -1,6 +1,6 @@
 # Architecture
 
-Agent Evals executes configured tests against agent systems. The engine is generic; the current evaluation runtime is deliberately narrow: one input message, a filesystem workspace, a Pi RPC runner, and file/judge checks on macOS. Standalone ACP configuration-query and login helpers are also implemented; the ACP evaluation runner remains planned.
+Agent Evals executes configured tests against agent systems. The engine is generic; the current evaluation runtime is deliberately narrow: one input message, a filesystem workspace, a native Pi RPC runner or the generic ACP runner, and file/judge checks on macOS. Standalone ACP configuration-query and login helpers share the ACP runner's environment setup.
 
 This page explains how the implemented modules cooperate. [Configuration](configuration.md) owns the authoring/reference rules; [Roadmap](roadmap.md) owns the target shape and planned capabilities.
 
@@ -78,7 +78,7 @@ Built-ins and trusted extensions share this path. Dynamic modules cross a locali
 A run follows the test lifecycle in [Writing Cases](cases.md#the-test-model): set up the environment, act, collect observations, assert, tear down. Teardown runs even after failure. Today the runner stops its processes and the engine removes the single runtime root; components added later, such as mocks, pair their own setup and teardown.
 
 1. **Load.** Resolve one case and preserve its declaration/reference metadata. Select definitions; obtain referenced values from the invocation `.env`, validate schemas, create instances and validate the fixture. The engine never interprets provider/key names. [Configuration](configuration.md#values-from-env) owns reference semantics.
-2. **Set up.** Make an atomic temporary root. The engine copies the fixture into `workspace` or starts empty, captures an initial `baseline`, and prepares independent `home`, `config` and `scratch`; source fixtures remain unchanged. The runner assembles its harness configuration, for Pi by staging selected skills with discovery disabled. The platform module builds the Seatbelt policy.
+2. **Set up.** Make an atomic temporary root. The engine copies the fixture into `workspace` or starts empty, places each `files` entry on top, captures an initial `baseline`, and prepares independent `home`, `config` and `scratch`; source fixtures remain unchanged. The runner assembles its harness configuration, for Pi by staging selected skills with discovery disabled. The platform module builds the Seatbelt policy.
 3. **Act.** The runner receives the input, directories, deadline and cancellation signal, and drives the harness. Pi runs its isolated RPC session under Seatbelt, with autonomous tool calls after one initial message.
 4. **Collect.** Await supported runner teardown before checks; the runner returns its final text. Timeouts, cancellation and execution failures are not negative judgments. See [M1 limits](m1-plan.md#known-limitations).
 5. **Assert.** Checkers inspect the still-live workspace/baseline. File regex work runs in a terminable worker; the judge reads selected evidence and starts a separate tool-free Pi invocation.
@@ -103,7 +103,7 @@ Judge Checker -> evidence ----+    (separate invocation, no tools)
 
 The judge reuses Pi transport/session mechanics, not the evaluated runner's session or the engine's full execution loop. The supervisor and shell wrapper cover tracked shell-process teardown inside the same Seatbelt instance. Registry files writable by the agent never authorize unsandboxed host signals.
 
-The standalone ACP `config` and `login` preparation helpers live in [`runners/acp/`](../src/runners/acp/). Their Zod schema and HOME/login assembly are implementation-owned; generic authoring/value-source/schema utilities are shared with cases. macOS system read roots, default command paths, terminal discovery and Seatbelt policy preparation stay in `platform/macos/`. These helpers use a sandbox-wide supervisor with a private completion pipe, not the native Pi shell registry. They do not yet provide an ACP evaluation runner.
+The ACP runner and the standalone `config` and `login` preparation helpers live in [`runners/acp/`](../src/runners/acp/) and share one agent schema, HOME/login assembly and ACP session setup. These are implementation-owned; generic authoring/value-source/schema utilities are shared with cases. macOS system read roots, default command paths, terminal discovery and Seatbelt policy preparation stay in `platform/macos/`. Both use a sandbox-wide supervisor with a private completion pipe, not the native Pi shell registry. The runner assembles into the engine's run HOME and workspace; the helpers allocate their own temporary directory.
 
 The host sandbox is a deliberate execution choice: real platform behavior is part of the subject being measured. Seatbelt is the current backend, not a claim that every OS has identical isolation guarantees.
 
@@ -125,6 +125,6 @@ Observations come from three sources defined in [Writing Cases](cases.md#why-the
 | Preparation and lifecycle     | [`params.ts`](../src/engine/params.ts), [`env-source.ts`](../src/engine/env-source.ts), [`run.ts`](../src/engine/run.ts)         |
 | Files and retained records    | [`workspace.ts`](../src/engine/workspace.ts), [`results.ts`](../src/engine/results.ts)                                           |
 | Harness adapter and transport | [`runners/pi/`](../src/runners/pi/)                                                                                              |
-| ACP preparation helpers       | [`runners/acp/`](../src/runners/acp/) (not a registered evaluation runner)                                                       |
+| ACP runner and helpers        | [`runners/acp/`](../src/runners/acp/)                                                                                            |
 | Assertions and model judgment | [`checkers/file/`](../src/checkers/file/), [`checkers/judge/`](../src/checkers/judge/)                                           |
 | OS enforcement and packaging  | [`platform/macos/`](../src/platform/macos/), [`build.mjs`](../scripts/build.mjs)                                                 |
