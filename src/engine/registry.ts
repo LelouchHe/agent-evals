@@ -23,11 +23,21 @@ export interface RunnerOutcome {
   readonly diagnostics: readonly string[];
 }
 
+/**
+ * One step of a run in order of first appearance: joined message or reasoning text, or one tool
+ * call in its final state with the harness's own fields.
+ */
+export type TraceEntry =
+  | { readonly type: "message" | "thought"; readonly text: string }
+  | { readonly type: "tool"; readonly toolCallId: string; readonly [field: string]: unknown };
+
 /** A prepared runner instance; its factory already captured validated parameters. */
 export interface Runner {
   readonly run: (context: RunnerContext) => Promise<RunnerOutcome>;
   /** Stop the harness and its owned processes. Must be idempotent. */
   readonly stop: () => Promise<void>;
+  /** What the run recorded so far, also after a failed run; absent when the runner records no trace. */
+  readonly trace?: () => readonly TraceEntry[];
 }
 
 export interface ImplementationContext {

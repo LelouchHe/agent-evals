@@ -2,7 +2,7 @@ import { mkdir, rename, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { randomUUID } from "node:crypto";
 import type { CaseConfig, EnvReference } from "./config.ts";
-import type { CheckResult } from "./registry.ts";
+import type { CheckResult, TraceEntry } from "./registry.ts";
 
 export type RunStatus = "pass" | "fail" | "error" | "timeout" | "cancelled";
 export type RunnerStatus = "completed" | "error" | "timeout" | "cancelled";
@@ -47,7 +47,14 @@ export async function createResultDirectory(resultsRoot: string, runId: string):
   return { directory, result: join(directory, "result.json") };
 }
 
-export async function writeResult(paths: ResultPaths, record: EvaluationRecord): Promise<void> {
+export async function writeResult(
+  paths: ResultPaths,
+  record: EvaluationRecord,
+  trace?: readonly TraceEntry[],
+): Promise<void> {
+  if (trace !== undefined) {
+    await writeFile(join(paths.directory, "trace.json"), JSON.stringify(trace, null, 2) + "\n", { mode: 0o600 });
+  }
   const temporary = `${paths.result}.tmp`;
   await writeFile(temporary, JSON.stringify(record, null, 2) + "\n", { mode: 0o600 });
   await rename(temporary, paths.result);

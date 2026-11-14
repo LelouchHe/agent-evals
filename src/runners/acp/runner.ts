@@ -8,6 +8,7 @@ import { spawnSupervised, type SupervisedProcess } from "../../platform/macos/su
 import { agentSchema } from "./agent.ts";
 import { assembleEnvironment, resolveHome, type HarnessHome } from "./environment.ts";
 import { withSession } from "./session.ts";
+import { AcpTrace } from "./trace.ts";
 
 const acpRunnerParamsSchema = z.strictObject({
   /** Inline agent startup object, or a path to a standalone file holding the same object. */
@@ -43,6 +44,7 @@ class AcpRunner implements Runner {
   #process: SupervisedProcess | undefined;
   #copyBack: (() => Promise<void>) | undefined;
   #stopped: Promise<void> | undefined;
+  readonly #trace = new AcpTrace();
 
   constructor(command: readonly [string, ...string[]], home: HarnessHome, config: SessionConfig) {
     this.#command = command;
@@ -71,17 +73,10 @@ class AcpRunner implements Runner {
     context.signal.addEventListener("abort", onAbort, { once: true });
     try {
       context.signal.throwIfAborted();
-      // Step A.1 output: the agent's text after its last tool call.
-      let text = "";
       await withSession(
         this.#process,
         context.workspaceDir,
-        (update) => {
-          if (update.sessionUpdate === "tool_call") text = "";
-          else if (update.sessionUpdate === "agent_message_chunk" && update.content.type === "text") {
-            text += update.content.text;
-          }
-        },
+        (update) => this.#trace.add(update),
         async (agent, _initialized, session) => {
           const { sessionId } = session;
           let options = session.configOptions ?? [];
@@ -98,11 +93,13 @@ class AcpRunner implements Runner {
           if (stopReason !== "end_turn") throw new Error(`ACP turn stopped with ${stopReason}`);
         },
       );
-      return { finalText: text === "" ? null : text, diagnostics: [] };
+      return { finalText: this.#trace.finalText(), diagnostics: [] };
     } finally {
       context.signal.removeEventListener("abort", onAbort);
     }
   };
+
+  readonly trace = () => this.#trace.entries;
 
   /** Stop the whole sandbox, then keep login changes the harness made to its original files. */
   readonly stop = async (): Promise<void> => {
