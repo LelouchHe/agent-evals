@@ -1,37 +1,35 @@
 # M2: Observable Runs
 
-Status: partial implementation. Step A.1 is implemented: the preparation helpers and the ACP evaluation runner. The ACP runner retains a merged trace that the judge can take as evidence, and runs Claude Code from declared data alone; mocks remain planned. [Writing Cases](cases.md#the-test-model) defines the trace, interaction and side-effect sources this milestone makes real. Current usage is documented in [Configuration Reference](configuration.md#acp-runner-type-acp); a full installation walkthrough is not yet verified.
+Status: implemented. The preparation helpers and the generic ACP evaluation runner are implemented, retain a merged trace that the judge can take as evidence, and run Pi and Claude Code from declared data alone. Mocks and interaction checks moved to [M3](m3-plan.md). [Writing Cases](cases.md#the-test-model) defines the trace, interaction and side-effect sources; current usage is documented in [Configuration Reference](configuration.md#acp-runner-type-acp). A full clean-machine installation walkthrough is not yet verified.
 
 ## Scope
 
-Two independent parts. Neither depends on the other's mechanism.
+One generic ACP runner records a normalized trace of each run; output is the trace's user-facing view. Checks can assert on trace evidence. Delivered in three steps:
 
-- **A. Trace.** One generic ACP runner records a normalized trace of each run; output is the trace's user-facing view. Checks can assert on output and trace. Delivered in three steps:
-  1. The generic ACP runner with a caller-prepared harness home (`deps` and `login`), ACP config validation, the standalone `config` and `login` preparation commands; Pi through pi-acp reproduces the native runner's example results.
-  2. The runner assembles and retains the trace; the judge can take it as evidence (done).
-  3. Claude Code runs through the same runner with only its own `deps` and `login`, proving no harness-specific code is needed.
-- **B. Mocks.** Case-owned mocks replace collaborators at the environment boundary and record the calls that reach them. Checks can assert on those records.
+1. The generic ACP runner with a caller-prepared harness home (`deps` and `login`), ACP config validation, and the standalone `config` and `login` preparation commands; Pi through pi-acp reproduces the native runner's example results.
+2. The runner assembles and retains the trace; the judge can take it as evidence.
+3. Claude Code runs through the same runner with only its own `deps` and `login`, proving no harness-specific code is needed.
 
-Not in scope: multi-turn authoring beyond what ACP gives for free, network mocks, Linux. Deferred: the credential proxy and sandbox network restriction (see [Decisions](#decisions)).
+Not in scope: multi-turn authoring beyond what ACP gives for free, Linux. Moved to [M3](m3-plan.md): collaborators/mocks and interaction checks. Deferred: the credential proxy and sandbox network restriction (see [Decisions](#decisions)).
 
 ## Delivered Preparation Slice
 
-[PR #2](https://github.com/LelouchHe/agent-evals/pull/2), merged as `858d8e2` on 2026-11-13, delivered the standalone `config` and `login` helpers, their shared Zod configuration, isolated HOME assembly and supervised process cleanup. This is part of step A.1, not completion of that step. [Configuration Reference](configuration.md#acp-preparation-helpers) owns the current command contract.
+[PR #2](https://github.com/LelouchHe/agent-evals/pull/2), merged as `858d8e2` on 2026-11-13, delivered the standalone `config` and `login` helpers, their shared Zod configuration, isolated HOME assembly and supervised process cleanup. [Configuration Reference](configuration.md#acp-preparation-helpers) owns the current command contract.
 
 - **Verification:** 157 model-free tests passed with no failures or skips; the external production-only package installation verified dependency isolation and installed helper execution. Independent reviews and closure checks completed.
 - **Live Pi checks:** the checked-in agent configuration returned actual ACP options. A separate temporary configuration using `command: [/usr/bin/env, PI_OFFLINE=1, pi]` opened Pi's native `/login` menu and exited normally. No new authentication or model prompt was performed, credential contents were unchanged and no runtime directory remained. This does not verify the default interactive startup path; neither the repository example nor the toolkit has a default offline mode.
 
 ## Delivered ACP Runner
 
-The registered `acp` runner completes step A.1. It reuses the helpers' HOME assembly, sandbox policy and supervisor inside the engine's run directories; [Configuration Reference](configuration.md#acp-runner-type-acp) owns its contract.
+The registered `acp` runner reuses the helpers' HOME assembly, sandbox policy and supervisor inside the engine's run directories; [Configuration Reference](configuration.md#acp-runner-type-acp) owns its contract.
 
 - **Verification:** model-free tests cover a full run (path-referenced agent, session config, fixture workspace, output, login copy-back, runtime removal), rejection of an unoffered config value before prompting, and cancellation of a hung turn.
 - **Live Pi check (2026-11-13):** The ACP example (now [`deploy-runbook`](../examples/cases/deploy-runbook/case.yml)) through pi-acp with `opencode-go/deepseek-v4.1-flash` reproduced the native example: `with-skill` passed all three checks after loading the skill from the workspace's `.agents/skills/`; `without-skill` failed the pattern and judge checks. One run each.
-- **Trace (A.2, first part):** the runner merges session updates into `trace.json` ([format](configuration.md#inspecting-and-recording)). A live Pi `with-skill` run produced a 7 KB trace showing the log read, the `SKILL.md` read and the written diagnosis.
-- **Claude Code (A.3, live 2026-11-14):** the same evaluation through `claude-agent-acp` 0.107.0 with `haiku`, the skill placed at `.claude/skills/`, the [Claude example](../examples/agents/claude.yml) unchanged and nothing Claude-specific in code. `with-skill` passed all three checks and its trace shows a `Load skill: deploy-runbook` tool call; `without-skill` failed the pattern and judge checks. One run each; no token appeared in results or traces.
+- **Trace (first part):** the runner merges session updates into `trace.json` ([format](configuration.md#inspecting-and-recording)). A live Pi `with-skill` run produced a 7 KB trace showing the log read, the `SKILL.md` read and the written diagnosis.
+- **Claude Code (live 2026-11-14):** the same evaluation through `claude-agent-acp` 0.107.0 with `haiku`, the skill placed at `.claude/skills/`, the [Claude example](../examples/agents/claude.yml) unchanged and nothing Claude-specific in code. `with-skill` passed all three checks and its trace shows a `Load skill: deploy-runbook` tool call; `without-skill` failed the pattern and judge checks. One run each; no token appeared in results or traces.
 - **Examples (2026-11-14):** [`deploy-runbook`](../examples/cases/deploy-runbook/case.yml) now holds the Pi and Claude ACP cases; [`deploy-runbook-native`](../examples/cases/deploy-runbook-native/case.yml) is the native-runner version with the same assets. One live run of each ACP case: both `with-skill` cases passed all three checks; both `without-skill` cases failed the pattern and judge checks. The native `with-skill` case still passes.
-- **Trace evidence (A.2, 2026-11-14):** `judge` takes `trace: true`; the `deploy-runbook` example adds a trace judge. One live run of each case: the same rubric statement recognized Pi reading `SKILL.md` and Claude's `Load skill` call in both `with-skill` cases and found no skill use in both `without-skill` cases; no case ran a deployment-changing command.
-- **Still planned:** mocks (B). The native Pi runner stays.
+- **Trace evidence (2026-11-14):** `judge` takes `trace: true`; the `deploy-runbook` example adds a trace judge. One live run of each case: the same rubric statement recognized Pi reading `SKILL.md` and Claude's `Load skill` call in both `with-skill` cases and found no skill use in both `without-skill` cases; no case ran a deployment-changing command.
+- **Native runner:** the native Pi runner stays alongside `acp`.
 
 ## Runner Configuration
 
@@ -81,7 +79,6 @@ A relative path in either source appears at the same path under the temporary HO
 - Sessions, caches, locks and other new runtime files are discarded. Ordinary copy-back never adds files to login; the explicit login helper can populate the declared login file list after successful native exit.
 - Initially available commands come from the system and deps, not the operator's everyday installation. Each configuration declares its own software and login sources.
 - Versions are whatever the caller installed; the operator's everyday installation is neither used nor affected.
-- Planned command mocks need nothing in deps: their per-run command directory goes ahead of `home.path`.
 - Project-level configuration and skills belong to the workspace: `fixture` supplies the base and a case's `files` entry places the rest, for example `.agents/skills/` for Pi or `.claude/skills/` for Claude Code. `with-skill` places the skill directory there; `without-skill` places nothing.
 
 #### What the directories hold
@@ -144,14 +141,13 @@ Directories are real, so the harness can create files beside the linked ones. De
 
 - **One generic ACP runner, no per-harness profiles.** The runner knows ACP, not harnesses; everything harness-specific is data the caller prepares for the [harness home](#harness-home). Pi runs through the local [pi-acp fork](https://github.com/LelouchHe/pi-acp); the native Pi runner stays until the ACP runner covers it.
 - **The trace is assembled from ACP updates.** Message and thought chunks are joined; every update for one `toolCallId` is merged into one tool-call record holding its final state. Pi resends cumulative tool output in every update, so keeping intermediate states would grow with output length and add nothing. Runners declare which detail they provide; a check needing missing detail is an error.
-- **No field-level tool checks.** Harnesses shape the same action differently: Claude sends an empty `rawInput` first and fills it later, `kind` varies for the same tool, and agents read files through shell commands as often as through read tools. Process questions go to a judge reading the trace; deterministic evidence of what ran comes from mocks.
-- **Mocks live at the environment boundary, not in ACP.** ACP session updates are reports, not requests, so they cannot intercept a call. Command mocks are `PATH` shims with the real executable denied by Seatbelt; service mocks are MCP servers injected through `session/new`. Mock behavior and call records live outside the sandbox.
+- **No field-level tool checks.** Harnesses shape the same action differently: Claude sends an empty `rawInput` first and fills it later, `kind` varies for the same tool, and agents read files through shell commands as often as through read tools. Process questions go to a judge reading the trace; deterministic evidence of external calls belongs to [M3](m3-plan.md).
 - **The environment is built only from directories the evaluation owns.** The sandbox reads the system directories, `deps` and the run, and nothing else under the operator's home. Granting read access to existing installations was rejected: they sit beside the operator's credentials, and no rule derives a safe installation root for every installer.
 - **Credentials sit in `login`.** They reach the sandbox and the agent can read them, as recorded in [M1 limits](m1-plan.md#known-limitations). Keep only what a run needs there; for example, Pi's `login` holds just the one provider's key, not the operator's whole `auth.json`.
 - **Login files are copied, not linked.** How a harness rewrites a file is outside our control, so ACP setup copies `login` in and copies its original files back.
 - **Credential proxy: verified, deferred.** A proxy outside the sandbox can hold an API key while the harness sees a placeholder and a local model endpoint, letting sandbox network shrink to one local port. It must not carry Claude subscription tokens (see [Credentials for Claude](#credentials-for-claude)). Network stays open for now.
 - **Process cleanup is sandbox-wide, not harness-specific.** An in-sandbox supervisor launches the workload and sends `SIGKILL` to all signalable processes on completion or a stop request. Seatbelt's `(allow signal (target same-sandbox))` rule limits this to that instance, including orphaned processes and new sessions. The helpers implement this with a private workload-completion pipe, not an agent-writable status file or the supervisor's SIGKILL exit status. The ACP runner reuses it for completion, timeout and cancellation. The native Pi runner and its tracked-group cleanup are unchanged.
-- **The case is not the environment.** Case files, mock implementations, control configuration and results stay outside everything the agent can read. The environment is the fixture and the run's `HOME`.
+- **The case is not the environment.** Case files, control configuration and results stay outside everything the agent can read. The environment is the fixture and the run's `HOME`.
 
 ## Verified Constraints
 
@@ -194,7 +190,6 @@ The implemented helpers now use ACP SDK 2.6.0 and its stable ACP v1 app API (`cl
 
 ### Pi through pi-acp
 
-- Injected MCP tools need `_meta.directTools: true` on the server entry; a `--tools` allowlist must include `mcp__<server>__*`.
 - `models.json` `baseUrl` plus a placeholder `apiKey` routes Pi through a credential proxy; `env` inside the sandbox then shows no key.
 
 ### Sandbox
@@ -217,14 +212,9 @@ The broadcast also killed the prototype supervisor, so its OS exit status could 
 
 This verifies the helper components on the tested macOS host, not the future evaluation runner's engine integration or recovery from forced supervisor death.
 
-### Mocks
-
-- A `make` shim recorded direct calls and calls from inside a script, in both harnesses. `/usr/bin/make` by absolute path was denied by Seatbelt (exit 126).
-- An MCP mock server was called through the harness tool in both harnesses; tool names were `mcp__<server>__<tool>` in both.
-
 ### Agent behavior that shapes the design
 
-Without being asked, an agent listed its run directory, read a control file that contained a key, read mock logs and source, identified the mocks, and ran a mock server by hand, which created a false call record. Hence: nothing but the environment is readable, mock records are kept by the engine, and mocks are not assumed undetectable.
+Without being asked, an agent listed its run directory and read a control file that contained a key (as well as mock files during the [M3](m3-plan.md#verified-constraints) spikes). Hence: nothing but the environment is readable inside the sandbox.
 
 ### Credentials for Claude
 
@@ -236,12 +226,9 @@ The example uses `claude setup-token` ([steps](configuration.md#claude-code-toke
 
 - Pi's default interactive path with `fd` and `rg` prepared in deps, using the checked-in agent YAML unchanged. The successful live UI check used the temporary offline command above; fresh authentication was not repeated.
 - Reporting the paths Seatbelt denied when an agent fails to start; a first query of the system log returned nothing.
-- HTTP service mocks and model-provider fault injection, which would also need the proxy.
 
 ## Open Questions
 
 - Concurrent runs sharing one `login`: two token refreshes would overwrite each other. Claude's setup token avoids this; Pi's `auth.json` does not refresh.
 - Permission answering: the runner currently approves every request; whether and how a case configures this is open.
-- Mock syntax, where call expectations live, and the default for unmatched calls. Command mocks sit in a per-run directory ahead of `home.path`.
-- MCP server names: a mock must use the real server's name to look the same, and harnesses may format tool names differently.
 - Large traces: `trace.json` and the judge prompt keep tool output whole. Cutting it for the judge, or giving the judge read-only tools to search the file, waits for a trace that does not fit; a tool-using judge would widen what untrusted trace content can steer.
