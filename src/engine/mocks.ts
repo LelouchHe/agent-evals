@@ -11,36 +11,34 @@ const CLOSE_GRACE_MS = 5_000;
 /** Any sandboxed process can connect and send; argv itself is limited to about 256 KiB. */
 const MAX_CALL_BYTES = 1_000_000;
 
-// One forwarder for every mocked command: it reports the call over the run's socket and
-// prints the reply. The name under which it was executed selects the target.
+// One forwarder for every mocked command: it sends the call over the run's socket, then
+// reads the reply line by line. The name it was executed under selects the target.
+// The reply is read from the pipe rather than captured, because command substitution strips
+// the trailing newlines that make an empty stdout or stderr distinguishable.
 const FORWARDER = `#!/bin/sh
-# Report this call to the run service and print the result it returns.
 self=$0
 socket=__SOCKET__
 encode() {
   printf '%s' "$1" | /usr/bin/base64 | /usr/bin/tr -d '\\n'
   printf '\\n'
 }
-reply=$(
-  {
-    encode "$self"
-    for argument in "$@"; do
-      encode "$argument"
-    done
-  } | /usr/bin/nc -U "$socket"
-) || {
-  printf '%s: Service unavailable\\n' "\${self##*/}" >&2
-  exit 126
+{
+  encode "$self"
+  for argument in "$@"; do
+    encode "$argument"
+  done
+} | /usr/bin/nc -U "$socket" | {
+  IFS= read -r code || {
+    printf '%s: Service unavailable\\n' "\${self##*/}" >&2
+    exit 126
+  }
+  IFS= read -r out
+  IFS= read -r err
+  if [ -n "$out" ]; then printf '%s' "$out" | /usr/bin/base64 -D; fi
+  if [ -n "$err" ]; then printf '%s' "$err" | /usr/bin/base64 -D >&2; fi
+  exit "$code"
 }
-newline='
-'
-code=\${reply%%"$newline"*}
-rest=\${reply#*"$newline"}
-out=\${rest%%"$newline"*}
-err=\${rest#*"$newline"}
-if [ -n "$out" ]; then printf '%s' "$out" | /usr/bin/base64 -D; fi
-if [ -n "$err" ]; then printf '%s' "$err" | /usr/bin/base64 -D >&2; fi
-exit "$code"
+exit $?
 `;
 
 export interface MockHost {

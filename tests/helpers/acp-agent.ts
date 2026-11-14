@@ -104,7 +104,7 @@ printf '%s' "$fwd" >where-id
 root=$(dirname "$(dirname "$fwd")")
 id 'arg with space' >call-out 2>call-err
 printf '%s' $? >call-status
-publish '' x >call-binary
+publish '' x >call-binary 2>call-binary-err
 printf '%s' $? >call-binary-status
 od -An -tx1 call-binary >call-binary-hex
 ls "$root" >/dev/null 2>&1; printf '%s' $? >probe-list

@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { readFile, readdir, writeFile } from "node:fs/promises";
+import type { Readable } from "node:stream";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { test } from "node:test";
@@ -10,6 +11,7 @@ import { z } from "zod";
 import { fileChecker } from "../src/checkers/file/checker.ts";
 import { loadCase } from "../src/engine/authoring.ts";
 import { ConfigError } from "../src/engine/config.ts";
+import { startMockHost } from "../src/engine/mocks.ts";
 import { addChecker, addRunner, createRegistry } from "../src/engine/registry.ts";
 import { runEvaluation } from "../src/engine/run.ts";
 import { acpRunner } from "../src/runners/acp/runner.ts";
@@ -26,6 +28,7 @@ const PROBE_CHECKS = [
   { path: "call-status", matches: "^7$" },
   { path: "call-binary-hex", matches: "41 +00 +42 +c3 +bf" },
   { path: "call-binary-status", matches: "^0$" },
+  { path: "call-binary-err", matches: "^$" },
   { path: "probe-list", matches: "^[1-9][0-9]?$" },
   { path: "probe-read", matches: "^0$" },
   { path: "probe-write", matches: "^[1-9][0-9]?$" },
@@ -284,3 +287,55 @@ test("unsupported mock syntax is rejected at load time instead of ignored", asyn
     shell: { make: { exitCode: 0, stdout: "", stderr: "" }, deploy: { exitCode: 0, stdout: "done\n", stderr: "" } },
   });
 });
+
+test(
+  "a fixed result keeps stdout, stderr and the exit code separate in every combination",
+  { skip: process.platform !== "darwin" },
+  async (t) => {
+    const root = await makeTempDir(t, "ae-mocks-streams-");
+    const host = await startMockHost({
+      runRootDir: root,
+      shell: {
+        both: { exitCode: 3, stdout: "OUT\n", stderr: "ERR\n" },
+        onlyout: { exitCode: 0, stdout: "OUT\n", stderr: "" },
+        onlyerr: { exitCode: 1, stdout: "", stderr: "ERR\n" },
+        neither: { exitCode: 0, stdout: "", stderr: "" },
+      },
+    });
+    const names = ["both", "onlyout", "onlyerr", "neither"];
+    const results: Record<string, unknown> = {};
+    for (const name of names) {
+      results[name] = await callForwarder(join(host.wiring.forwarderDir, name));
+    }
+    const interactions = await host.close();
+
+    assert.deepEqual(results, {
+      both: { status: 3, stdout: "OUT\n", stderr: "ERR\n" },
+      onlyout: { status: 0, stdout: "OUT\n", stderr: "" },
+      onlyerr: { status: 1, stdout: "", stderr: "ERR\n" },
+      neither: { status: 0, stdout: "", stderr: "" },
+    });
+    assert.deepEqual(
+      interactions.map((interaction) => interaction.target),
+      names,
+    );
+  },
+);
+
+/** Run one forwarder directly and keep both streams and the exit status apart. */
+async function callForwarder(path: string): Promise<{ status: number | null; stdout: string; stderr: string }> {
+  const child = spawn(path, [], { stdio: ["ignore", "pipe", "pipe"] });
+  const exited = new Promise<number | null>((resolve, reject) => {
+    child.once("close", resolve);
+    child.once("error", reject);
+  });
+  const [stdout, stderr] = await Promise.all([collect(child.stdout), collect(child.stderr)]);
+  return { status: await exited, stdout, stderr };
+}
+
+async function collect(stream: Readable | null): Promise<string> {
+  if (stream === null) return "";
+  const chunks: Buffer[] = [];
+  for await (const chunk of stream) chunks.push(chunk as Buffer);
+  return Buffer.concat(chunks).toString("utf8");
+}
