@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
-import { readFile, readdir, writeFile } from "node:fs/promises";
+import { execFile, spawn } from "node:child_process";
+import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { test } from "node:test";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { stringify } from "yaml";
 import { runCliProcess } from "./helpers/cli-process.ts";
 import { createFakePi, makeTempDir } from "./helpers/fake-pi-control.ts";
@@ -42,6 +44,7 @@ test("package metadata and built runtime assets point at the sole CLI implementa
   assert.ok(cli.startsWith("#!/usr/bin/env node\n"), "dist/cli.js must keep its executable shebang");
   for (const asset of [
     "dist/checkers/file/regex-worker.js",
+    "dist/engine/forwarder.sh",
     "dist/engine/runtime-assets.js",
     "dist/runners/pi/supervisor.js",
     "dist/runners/pi/safe-process-group.js",
@@ -150,3 +153,64 @@ test("built CLI runs packaged supervisor, wrapper, regex worker, and judge asset
   );
   assert.ok(record.checks.some((check) => check.checker === "judge"));
 });
+
+/** Run one command to completion, keeping its last stderr line for the failure message. */
+async function run(command: string, args: readonly string[], cwd: string): Promise<void> {
+  await new Promise<void>((resolve, reject) => {
+    execFile(command, args, { cwd, maxBuffer: 10 * 1024 * 1024 }, (error, _stdout, stderr) => {
+      if (error === null) resolve();
+      else reject(new Error(`${command} ${args[0] ?? ""} failed: ${stderr.trim() || error.message}`));
+    });
+  });
+}
+
+test(
+  "the packed artifact carries the forwarder its own host loads",
+  { skip: process.platform !== "darwin" },
+  async (t) => {
+    const packDir = await makeTempDir(t, "ae-pack-");
+    await run("npm", ["pack", "--ignore-scripts", "--pack-destination", packDir], root);
+    const [tarball] = (await readdir(packDir)).filter((name) => name.endsWith(".tgz"));
+    assert.ok(tarball !== undefined, "npm pack produced a tarball");
+    await run("/usr/bin/tar", ["-xzf", join(packDir, tarball), "-C", packDir], packDir);
+    const packageRoot = join(packDir, "package");
+    const mocksModule = pathToFileURL(join(packageRoot, "dist", "engine", "mocks.js"));
+    // The host must resolve the asset beside itself inside the package, not from this worktree.
+    assert.equal(
+      fileURLToPath(new URL("./forwarder.sh", mocksModule)),
+      join(packageRoot, "dist", "engine", "forwarder.sh"),
+    );
+    await readFile(join(packageRoot, "dist", "engine", "forwarder.sh"), "utf8");
+
+    const { startMockHost } = (await import(mocksModule.href)) as typeof import("../src/engine/mocks.ts");
+    const runRoot = join(packDir, "run");
+    await mkdir(runRoot);
+    const host = await startMockHost({
+      runRootDir: runRoot,
+      shell: { release: { exitCode: 4, stdout: "packed out\n", stderr: "packed err\n" } },
+    });
+    const calls = [];
+    for (const args of [["--now", ""], ["next"]]) {
+      const child = spawn(join(host.wiring.forwarderDir, "release"), args, { stdio: ["ignore", "pipe", "pipe"] });
+      const chunks: [Buffer[], Buffer[]] = [[], []];
+      child.stdout.on("data", (chunk: Buffer) => chunks[0].push(chunk));
+      child.stderr.on("data", (chunk: Buffer) => chunks[1].push(chunk));
+      const status = await new Promise<number | null>((resolve) => child.on("close", resolve));
+      calls.push({
+        status,
+        stdout: Buffer.concat(chunks[0]).toString("utf8"),
+        stderr: Buffer.concat(chunks[1]).toString("utf8"),
+      });
+    }
+    const mockRecords = await host.close();
+
+    assert.deepEqual(calls, [
+      { status: 4, stdout: "packed out\n", stderr: "packed err\n" },
+      { status: 4, stdout: "packed out\n", stderr: "packed err\n" },
+    ]);
+    assert.deepEqual(mockRecords, [
+      { target: "release", arguments: ["--now", ""] },
+      { target: "release", arguments: ["next"] },
+    ]);
+  },
+);

@@ -11,9 +11,11 @@ await rm(dist, { recursive: true, force: true });
 execFileSync(process.execPath, [tsc, "-p", join(root, "tsconfig.build.json")], { cwd: root, stdio: "inherit" });
 
 // Non-TypeScript runtime assets are copied unchanged into their compiled location.
-const shellWrapper = join(dist, "runners", "pi", "shell-wrapper.sh");
-await mkdir(dirname(shellWrapper), { recursive: true });
-await cp(join(root, "src", "runners", "pi", "shell-wrapper.sh"), shellWrapper);
+for (const asset of ["engine/forwarder.sh", "runners/pi/shell-wrapper.sh"]) {
+  const target = join(dist, asset);
+  await mkdir(dirname(target), { recursive: true });
+  await cp(join(root, "src", asset), target);
+}
 
 const cli = join(dist, "cli.js");
 const source = await readFile(cli, "utf8");

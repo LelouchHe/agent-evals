@@ -19,7 +19,7 @@ These were settled with the mock design and are not reopened here:
 - **One record shape.** A call record holds the target and its arguments, with no output or exit code.
 - **The engine stays assertion-agnostic.** The engine exposes raw records on `CheckerContext` and writes `mocks.json` beside `trace.json`. Checking lives in a replaceable `$type` checker.
 - **Asserting on an unmocked target is a checker `error`, not a vacuous pass.**
-- **`judge` is unchanged.** It does not take `interactions` unless a real case later needs qualitative judgment over indirect script calls absent from `trace.json`.
+- **`judge` is unchanged.** It does not take `mockRecords` unless a real case later needs qualitative judgment over indirect script calls absent from `trace.json`.
 
 ## Open Questions
 

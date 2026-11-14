@@ -312,7 +312,7 @@ test(
     for (const name of names) {
       results[name] = await callForwarder(join(host.wiring.forwarderDir, name));
     }
-    const interactions = await host.close();
+    const mockRecords = await host.close();
 
     assert.deepEqual(results, {
       both: { status: 3, stdout: "OUT\n", stderr: "ERR\n" },
@@ -321,7 +321,7 @@ test(
       neither: { status: 0, stdout: "", stderr: "" },
     });
     assert.deepEqual(
-      interactions.map((interaction) => interaction.target),
+      mockRecords.map((mockRecord) => mockRecord.target),
       names,
     );
   },

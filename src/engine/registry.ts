@@ -43,7 +43,7 @@ export type TraceEntry =
   | { readonly type: "tool"; readonly toolCallId: string; readonly [field: string]: unknown };
 
 /** One call that reached a mocked collaborator: what was asked for and with which arguments. */
-export interface InteractionRecord {
+export interface MockRecord {
   readonly target: string;
   readonly arguments: readonly string[];
 }

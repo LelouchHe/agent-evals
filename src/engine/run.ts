@@ -14,7 +14,7 @@ import {
   requireRunner,
   type CheckResult,
   type Checker,
-  type InteractionRecord,
+  type MockRecord,
   type Registry,
   type Runner,
   type RunnerOutcome,
@@ -100,7 +100,7 @@ export async function runEvaluation(request: RunRequest): Promise<EvaluationReco
   };
   let checks: CheckResult[] = [];
   let trace: readonly TraceEntry[] | undefined;
-  let interactions: readonly InteractionRecord[] | undefined;
+  let mockRecords: readonly MockRecord[] | undefined;
   let mockHost: MockHost | undefined;
   const diagnostics: string[] = [];
   let error: string | undefined;
@@ -176,7 +176,7 @@ export async function runEvaluation(request: RunRequest): Promise<EvaluationReco
       // Closing the host must not depend on the runner's trace, and vice versa.
       try {
         if (mockHost !== undefined) {
-          interactions = await mockHost.close();
+          mockRecords = await mockHost.close();
         }
       } finally {
         trace = runner.trace?.();
@@ -272,7 +272,7 @@ export async function runEvaluation(request: RunRequest): Promise<EvaluationReco
   };
 
   const paths = await createResultDirectory(request.resultsDir, runId);
-  await writeResult(paths, record, trace, interactions);
+  await writeResult(paths, record, trace, mockRecords);
   return record;
 }
 

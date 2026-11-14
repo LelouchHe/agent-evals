@@ -1,51 +1,27 @@
-import { link, mkdir, rm, writeFile } from "node:fs/promises";
+import { link, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { createServer, type Server, type Socket } from "node:net";
 import { basename, join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { tmpdir } from "node:os";
 import type { MockResult, ShellMocks } from "./config.ts";
-import type { InteractionRecord, MockWiring } from "./registry.ts";
+import type { MockRecord, MockWiring } from "./registry.ts";
 
 /** How long closing waits for already connected callers before dropping them. */
 const CLOSE_GRACE_MS = 5_000;
 /** Any sandboxed process can connect and send; argv itself is limited to about 256 KiB. */
 const MAX_CALL_BYTES = 1_000_000;
 
-// One forwarder for every mocked command: it sends the call over the run's socket, then
-// reads the reply line by line. The name it was executed under selects the target.
-// The reply is read from the pipe rather than captured, because command substitution strips
-// the trailing newlines that make an empty stdout or stderr distinguishable.
-const FORWARDER = `#!/bin/sh
-self=$0
-socket=__SOCKET__
-encode() {
-  printf '%s' "$1" | /usr/bin/base64 | /usr/bin/tr -d '\\n'
-  printf '\\n'
-}
-{
-  encode "$self"
-  for argument in "$@"; do
-    encode "$argument"
-  done
-} | /usr/bin/nc -U "$socket" | {
-  IFS= read -r code || {
-    printf '%s: Service unavailable\\n' "\${self##*/}" >&2
-    exit 126
-  }
-  IFS= read -r out
-  IFS= read -r err
-  if [ -n "$out" ]; then printf '%s' "$out" | /usr/bin/base64 -D; fi
-  if [ -n "$err" ]; then printf '%s' "$err" | /usr/bin/base64 -D >&2; fi
-  exit "$code"
-}
-exit $?
-`;
+// The forwarder is a POSIX shell asset beside this module, copied unchanged by the build, so
+// source and built runs read one text. It reports the call over the run's socket and reads the
+// reply line by line: capturing the reply would strip the trailing newlines that make an empty
+// stdout or stderr distinguishable. The name it is executed under selects the target.
+const FORWARDER_ASSET = new URL("./forwarder.sh", import.meta.url);
 
 export interface MockHost {
   /** What the runner places in its environment. */
   readonly wiring: MockWiring;
   /** Stop accepting and answering calls, then return every call that arrived. */
-  readonly close: () => Promise<readonly InteractionRecord[]>;
+  readonly close: () => Promise<readonly MockRecord[]>;
 }
 
 /**
@@ -61,16 +37,14 @@ export async function startMockHost(options: {
   const socketPath = join(tmpdir(), `${basename(options.runRootDir)}.sock`);
   const scriptPath = join(options.runRootDir, "forward");
   await mkdir(forwarderDir, { mode: 0o700 });
-  await writeFile(scriptPath, FORWARDER.replace("__SOCKET__", quote(socketPath)), {
-    mode: 0o500,
-    flag: "wx",
-  });
+  const forwarder = (await readFile(FORWARDER_ASSET, "utf8")).replace("__SOCKET__", quote(socketPath));
+  await writeFile(scriptPath, forwarder, { mode: 0o500, flag: "wx" });
   for (const target of Object.keys(options.shell).sort()) {
     await link(scriptPath, join(forwarderDir, target));
   }
 
   const results = new Map(Object.entries(options.shell));
-  const interactions: InteractionRecord[] = [];
+  const mockRecords: MockRecord[] = [];
   const sockets = new Set<Socket>();
   const server = createServer((socket) => {
     sockets.add(socket);
@@ -86,7 +60,7 @@ export async function startMockHost(options: {
       }
       chunks.push(chunk);
     });
-    socket.on("end", () => answer(socket, Buffer.concat(chunks), results, interactions));
+    socket.on("end", () => answer(socket, Buffer.concat(chunks), results, mockRecords));
   });
   await listen(server, socketPath);
 
@@ -103,7 +77,7 @@ export async function startMockHost(options: {
       for (const socket of sockets) socket.destroy();
       await closed;
       await rm(socketPath, { force: true });
-      return [...interactions];
+      return [...mockRecords];
     },
   };
 }
@@ -116,7 +90,7 @@ function answer(
   socket: Socket,
   message: Buffer,
   results: ReadonlyMap<string, MockResult>,
-  interactions: InteractionRecord[],
+  mockRecords: MockRecord[],
 ): void {
   const lines = message.toString("utf8").split("\n");
   if (lines.pop() !== "" || lines.length === 0) {
@@ -129,7 +103,7 @@ function answer(
     socket.end(denied(target));
     return;
   }
-  interactions.push({ target, arguments: lines.slice(1).map(decode) });
+  mockRecords.push({ target, arguments: lines.slice(1).map(decode) });
   socket.end(`${result.exitCode}\n${encode(result.stdout)}\n${encode(result.stderr)}\n`);
 }
 
