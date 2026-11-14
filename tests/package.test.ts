@@ -189,20 +189,18 @@ test(
       runRootDir: runRoot,
       shell: { release: { exitCode: 4, stdout: "packed out\n", stderr: "packed err\n" } },
     });
+    // Close once, however the test ends: a failed call must not leave the host listening.
+    let closing: ReturnType<typeof host.close> | undefined;
+    const closeHost = (): ReturnType<typeof host.close> => (closing ??= host.close());
+    t.after(async () => {
+      await closeHost().catch(() => {});
+    });
+
     const calls = [];
     for (const args of [["--now", ""], ["next"]]) {
-      const child = spawn(join(host.wiring.forwarderDir, "release"), args, { stdio: ["ignore", "pipe", "pipe"] });
-      const chunks: [Buffer[], Buffer[]] = [[], []];
-      child.stdout.on("data", (chunk: Buffer) => chunks[0].push(chunk));
-      child.stderr.on("data", (chunk: Buffer) => chunks[1].push(chunk));
-      const status = await new Promise<number | null>((resolve) => child.on("close", resolve));
-      calls.push({
-        status,
-        stdout: Buffer.concat(chunks[0]).toString("utf8"),
-        stderr: Buffer.concat(chunks[1]).toString("utf8"),
-      });
+      calls.push(await callForwarder(join(host.wiring.forwarderDir, "release"), args));
     }
-    const mockRecords = await host.close();
+    const mockRecords = await closeHost();
 
     assert.deepEqual(calls, [
       { status: 4, stdout: "packed out\n", stderr: "packed err\n" },
@@ -214,3 +212,32 @@ test(
     ]);
   },
 );
+
+/**
+ * Run one generated forwarder to completion, keeping both streams and the exit status apart.
+ * A spawn failure rejects instead of surfacing as an unhandled error, and no child survives it.
+ */
+async function callForwarder(
+  path: string,
+  args: readonly string[],
+): Promise<{ status: number | null; stdout: string; stderr: string }> {
+  const child = spawn(path, args, { stdio: ["ignore", "pipe", "pipe"] });
+  const exited = new Promise<number | null>((resolve, reject) => {
+    child.once("close", resolve);
+    child.once("error", reject);
+  });
+  const collect = async (stream: NodeJS.ReadableStream | null): Promise<string> => {
+    if (stream === null) return "";
+    const chunks: Buffer[] = [];
+    for await (const chunk of stream) chunks.push(chunk as Buffer);
+    return Buffer.concat(chunks).toString("utf8");
+  };
+  try {
+    const [stdout, stderr] = await Promise.all([collect(child.stdout), collect(child.stderr)]);
+    return { status: await exited, stdout, stderr };
+  } catch (error) {
+    child.kill("SIGKILL");
+    await exited.catch(() => {});
+    throw error;
+  }
+}
