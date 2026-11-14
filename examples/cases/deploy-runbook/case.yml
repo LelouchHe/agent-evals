@@ -6,9 +6,10 @@ input: Our deploy failed. Read deploy.log, confirm the release state with `deplo
 fixture: fixture
 timeoutMs: 120000
 # A read-only release-state command answered by a fixed result on the host. The
-# call is recorded in mocks.json and the real command never runs. Only PATH
-# lookups are intercepted, so this controls the task, not every possible call
-# (docs/mocks.md#current-limitations).
+# call is recorded in mocks.json and the real command never runs. It reports the
+# release state and certificate serial only: the cause and the fix stay private
+# to the skill. Only PATH lookups are intercepted, so this controls the task,
+# not every possible call (docs/mocks.md#current-limitations).
 mocks:
   shell:
     deployctl:
@@ -16,7 +17,7 @@ mocks:
         stdout: |
           release 2.8.1
           state: failed at publish
-          signing-cert: expired (serial 41A7)
+          signing-cert: serial 41A7
 checks:
   - $type: file
     path: diagnosis.md
