@@ -1,6 +1,6 @@
 # M3: Controlled Collaborators
 
-Status: planned. Mocks and interaction checks moved out of [M2](m2-plan.md) into this milestone so M2 closes cleanly on ACP execution and trace evidence. Nothing here is implemented yet; syntax below records agreed structure where settled and leaves matching grammar open.
+Status: planned. Mocks and interaction checks moved out of [M2](m2-plan.md) into this milestone so M2 closes cleanly on ACP execution and trace evidence. Nothing here is implemented yet; syntax below records agreed structure where settled, including shell argument matching; the call checker and MCP input matching stay open.
 
 ## Scope
 
@@ -27,6 +27,21 @@ Not in scope: harness-internal tools (`Read`, `Edit`, `WebFetch` and similar bui
 - **Runners without mock support fail at load time.** Running a case that declares `mocks` on a runner that cannot wire them (such as the native `pi` runner) is a `ConfigError`, never a silent run against real commands.
 - **Engine stays assertion-agnostic; `judge` is unchanged.** The engine exposes raw interaction records on `CheckerContext` and writes `interactions.json` beside `trace.json`. Checking lives in a replaceable `$type` checker; asserting on an unmocked target is a checker `error` rather than a vacuous pass. `judge` does not take `interactions` unless a real case later needs qualitative judgment over indirect script calls absent from `trace.json`.
 
+### Shell argument matching
+
+A rule's optional `args` decides whether the rule applies to a call. It compares whole argv tokens and knows nothing about a particular CLI's grammar.
+
+- **Array for fixed positions, map for any position.** `args` is an array whose scalars match `argv[0]`, `argv[1]`, ... in order; positions not written accept anything, so the scalars are a prefix. The last element may be one map, matched without order against the arguments after that prefix. A bare map is the same as an array holding only that map.
+- **Map entries are options.** A key names a token. `true` requires it, `false` forbids it, and a string requires it with that value, given either as the next token (`--repo foo/bar`) or after `=` (`--repo=foo/bar`).
+- **Literal by default, `/…/` for a regex.** A scalar, key or string value is compared for equality unless the whole string starts and ends with `/`; then it is a regular expression anchored to the whole token, so `/-f|--force/` does not match `--force-with-lease`. No flags. A literal that itself starts and ends with `/`, such as `/tmp/`, must be written as a regex.
+- **No `and` / `or` / `not` operators.** Entries written together must all hold; alternatives are a regex alternation or another rule with the same action; exclusion is `false` or an earlier rule that takes the exception.
+- **Options before the subcommand break the prefix.** `gh --repo foo/bar pr create` does not match `[pr, create]`, and no generic rule can tell an option's value from a positional. The author falls back to a bare map (`{ pr: true, create: true }`), which gives up the order between those tokens.
+- **Regexes run on a linear-time engine.** Argv is agent-controlled and matching runs on the host during the run, so a pattern must not be able to backtrack catastrophically. Patterns compile with `re2js` (RE2 syntax: no lookaround or backreferences), and an unsupported pattern is a `ConfigError` at load time. The `file` checker's `matches` switches to the same engine so there is one regex dialect, which removes its worker and timeout. Not yet run in this project; verify against the existing `file` checker tests when adopting it.
+
+Not expressible yet, added only for a real case: repeated options (`-e A=1 -e B=2`), exact argument lists (a bare `make`), combined short options (`-rf`) and regex flags.
+
+Rejected: regex over the joined argument string (no token boundaries, so `--draft` matches inside another option's value); a second `has`-style field or container keywords; anchored glob arrays needing `["**", "--flag", "**"]` and boolean operators for unordered options; `$`-operator trees; unordered or order-only arrays, since an array reads as positional; every pattern as a regex, since values such as URLs and globs then fail to match without an error.
+
 ### Agreed outer shape
 
 ```yaml
@@ -41,11 +56,20 @@ mocks:
     npm:
       pass: true
     git:
-      - args: ... # argument-matching syntax still open
+      - args: [push, { /-f|--force/: true }]
+        return:
+          exitCode: 1
+          stderr: "force push is disabled\n"
+      - args: [push]
         return:
           exitCode: 0
           stdout: "Everything up-to-date\n"
       - pass: true
+    gh:
+      - args: [pr, create, { /-R|--repo/: foo/bar, --web: false }]
+        return:
+          exitCode: 0
+          stdout: "https://example.test/foo/bar/pull/1\n"
 ```
 
 ## Verified Constraints
@@ -58,12 +82,8 @@ From the M2 spikes on Pi 1.5.2 (`pi-acp` fork 0.0.34) and Claude Code 2.1.318 (`
 
 ## Open Questions
 
-- **Argument and value matching syntax (primary blocker).** How `args` in `mocks.shell` rules and parameters in the deterministic call checker express exact sequences, subcommand prefixes, unordered flags (including multi-token flags such as `--repo foo/bar`) and future structured MCP object inputs. Explored and rejected so far:
-  - Plain regex over flattened argument strings: loses array/object structure and gives poor failure reasons.
-  - Ad hoc container keywords (`prefix`, `contains`, `has`, `some`): feel patchwork or CLI-specific and collide with real object keys unless prefixed.
-  - Anchored glob arrays (`*`, `**`) with `and` / `or` / `not`: clean for prefixes, but unordered flags require awkward `["**", "--flag", "**"]` wrappers.
-  - Default-partial vs default-exact `$`-operator trees: neither felt natural enough yet.
-- **Call checker `$type` name and schema.** Naming (`call` vs `interactions`), count constraints (`times: 0`, exact count, bounds) and whether one generic matcher checker later spans calls, JSON files and output or stays per-evidence-source first.
+- **Call checker `$type` name and schema.** Naming (`call` vs `interactions`), whether it takes the same `args` as a mock rule, count constraints (`times: 0`, exact count, bounds) and whether one generic matcher checker later spans calls, JSON files and output or stays per-evidence-source first.
+- **MCP input matching.** How a `mocks.mcp` rule matches a tool's JSON object input. Shell `args` does not have to cover it; argv and objects are different shapes.
 - **Sandbox-to-host transport and forwarder runtime.** Which IPC channel Seatbelt permits cleanly (per-run Unix domain socket vs localhost TCP) and what minimal runtime implements the in-sandbox forwarder cleanly (separating stdout, stderr and exit code without assuming Node is on `PATH`), plus whether stdin is forwarded or ignored initially.
 - **Workspace-script mocks vs `file` `unchanged` checks.** Placing a forwarder at `scripts/deploy.sh` changes what sits in the workspace if not accounted for in baseline/workspace handling.
 - **MCP mock configuration and spy behavior.** Exact `mocks.mcp` syntax, server naming and harness-specific `_meta` (such as Pi's `_meta.directTools: true`), whether MCP supports `pass` to a real server, and HTTP service mocks / model-provider fault injection (which depend on the deferred proxy).
