@@ -53,7 +53,7 @@ Mocks need a runner that can wire them, which today is [`acp`](configuration.md#
 
 ## A Complete Case
 
-The example blocks a deployment and checks that the agent reported the refusal. A real case would usually add checks on the state the blocked command left unchanged. Save it as `case.yml`; it needs prepared harness directories for the inline agent, as [Configuration Reference](configuration.md#acp-preparation-helpers) describes.
+The example blocks a deployment and checks that the agent reported the refusal. A real case would usually add checks on the state the blocked command left unchanged. Save it as `case.yml`; the inline agent needs the prepared `deps` and `login` directories that [Configuration Reference](configuration.md#acp-preparation-helpers) describes, since the run HOME is assembled instead of inheriting the operator's.
 
 ```yaml
 input: Deploy the site with `deploy --prod`, then write what happened to report.md.
@@ -74,7 +74,10 @@ runner:
     acpCommand: [pi-acp]
     home:
       deps: ${env:PI_DEPS}
+      login: ${env:PI_LOGIN}
       path: [.local/bin]
+    login:
+      - .pi/agent/auth.json
 ```
 
 The case works because the agent looks `deploy` up through `PATH`. Replace `agent` with any prepared [ACP agent](configuration.md#acp-preparation-helpers), or with `agent: ../../agents/pi.yml` for the repository's Pi configuration when the case sits one directory under `examples/cases/`. Then `agent-evals run case.yml` runs it; `agent-evals view case.yml` shows the resolved case and where each field was declared.
