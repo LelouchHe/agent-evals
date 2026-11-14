@@ -75,12 +75,12 @@ Built-ins and trusted extensions share this path. Dynamic modules cross a locali
 
 ## One Run, in Order
 
-A run follows the test lifecycle in [Writing Cases](cases.md#the-test-model): set up the environment, act, collect observations, assert, tear down. Teardown runs even after failure. Today the runner stops its processes and the engine removes the single runtime root; components added later, such as mocks, pair their own setup and teardown.
+A run follows the test lifecycle in [Writing Cases](cases.md#the-test-model): set up the environment, act, collect observations, assert, tear down. Teardown runs even after failure. Today the runner stops its processes and the engine removes the single runtime root; the engine also starts and stops the mock host that answers declared collaborator substitutes.
 
 1. **Load.** Resolve one case and preserve its declaration. Choose the run root's path without creating it. Select definitions; substitute placeholders from the invocation `.env` and the chosen run directories, validate schemas, create instances and validate the fixture. The engine never interprets provider/key names. [Configuration](configuration.md#placeholders) owns placeholder semantics.
-2. **Set up.** Create the chosen root exclusively; an existing path is an error. The engine copies the fixture into `workspace` or starts empty, places each `files` entry on top, captures an initial `baseline`, and prepares independent `home`, `config` and `scratch`; source fixtures remain unchanged. The runner assembles its harness configuration, for Pi by staging selected skills with discovery disabled. The platform module builds the Seatbelt policy.
-3. **Act.** The runner receives the input, directories, deadline and cancellation signal, and drives the harness. Pi runs its isolated RPC session under Seatbelt, with autonomous tool calls after one initial message.
-4. **Collect.** Await supported runner teardown before checks; the runner returns its final text. Timeouts, cancellation and execution failures are not negative judgments. See [M1 limits](m1-plan.md#known-limitations).
+2. **Set up.** Create the chosen root exclusively; an existing path is an error. The engine copies the fixture into `workspace` or starts empty, places each `files` entry on top, captures an initial `baseline`, and prepares independent `home`, `config` and `scratch`; source fixtures remain unchanged. The runner assembles its harness configuration, for Pi by staging selected skills with discovery disabled. For a case declaring [`mocks`](configuration.md#mocks), the engine writes the forwarders and starts the host service that answers them. The platform module builds the Seatbelt policy; a runner that wires mocks adds the forwarder directory as a readable, non-writable root and first on `PATH`.
+3. **Act.** The runner receives the input, directories, deadline, cancellation signal and optional mock wiring, and drives the harness. Pi runs its isolated RPC session under Seatbelt, with autonomous tool calls after one initial message.
+4. **Collect.** Await supported runner teardown before checks; the runner returns its final text. The mock host closes only after that teardown, so a call from a process that outlived the turn is still answered and recorded. Timeouts, cancellation and execution failures are not negative judgments. See [M1 limits](m1-plan.md#known-limitations).
 5. **Assert.** Checkers inspect the still-live workspace/baseline. File regex work runs in a terminable worker; the judge reads selected evidence and starts a separate tool-free Pi invocation.
 6. **Tear down and record.** Remove runtime state, then save outcomes, declared configuration and cleanup status. Early load errors need not produce a run record.
 
@@ -114,17 +114,17 @@ The host sandbox is a deliberate execution choice: real platform behavior is par
 - **Observations:** directory identity and path/symlink containment are checked before file reads. Non-regular and oversized evidence is an error, not a vacuous pass. A missing observation cannot prove a restraint was respected.
 - **Results:** declarations, source/case identity, outcomes, diagnostics and cleanup. Expanded parameters do not replace the declaration; runtime outputs remain the implementation's responsibility. No full resource snapshot is retained.
 
-Observations come from three sources defined in [Writing Cases](cases.md#why-the-trace-matters): the runner's trace (with output as its user-facing view), mock interaction records, and environment side effects. Today the ACP runner retains `trace.json` (which `judge` can take as evidence) and `file`/`judge` inspect workspace files; collaborator mocks are planned in [M3](m3-plan.md) and interaction checks in [M4](m4-plan.md).
+Observations come from three sources defined in [Writing Cases](cases.md#why-the-trace-matters): the runner's trace (with output as its user-facing view), mock interaction records, and environment side effects. Today the ACP runner retains `trace.json` (which `judge` can take as evidence), a case declaring shell mocks retains `interactions.json`, and `file`/`judge` inspect workspace files. Interaction checks and the other M3 steps are planned in [M3](m3-plan.md) and [M4](m4-plan.md).
 
 ## Source Map
 
-| Area                          | Main source                                                                                                                      |
-| ----------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
-| Entry point and display       | [`cli.ts`](../src/cli.ts), [`view.ts`](../src/engine/view.ts)                                                                    |
-| Resolution and contracts      | [`authoring.ts`](../src/engine/authoring.ts), [`config.ts`](../src/engine/config.ts), [`registry.ts`](../src/engine/registry.ts) |
-| Preparation and lifecycle     | [`params.ts`](../src/engine/params.ts), [`env-source.ts`](../src/engine/env-source.ts), [`run.ts`](../src/engine/run.ts)         |
-| Files and retained records    | [`workspace.ts`](../src/engine/workspace.ts), [`results.ts`](../src/engine/results.ts)                                           |
-| Harness adapter and transport | [`runners/pi/`](../src/runners/pi/)                                                                                              |
-| ACP runner and helpers        | [`runners/acp/`](../src/runners/acp/)                                                                                            |
-| Assertions and model judgment | [`checkers/file/`](../src/checkers/file/), [`checkers/judge/`](../src/checkers/judge/)                                           |
-| OS enforcement and packaging  | [`platform/macos/`](../src/platform/macos/), [`build.mjs`](../scripts/build.mjs)                                                 |
+| Area                          | Main source                                                                                                                                                    |
+| ----------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Entry point and display       | [`cli.ts`](../src/cli.ts), [`view.ts`](../src/engine/view.ts)                                                                                                  |
+| Resolution and contracts      | [`authoring.ts`](../src/engine/authoring.ts), [`config.ts`](../src/engine/config.ts), [`registry.ts`](../src/engine/registry.ts)                               |
+| Preparation and lifecycle     | [`params.ts`](../src/engine/params.ts), [`env-source.ts`](../src/engine/env-source.ts), [`run.ts`](../src/engine/run.ts), [`mocks.ts`](../src/engine/mocks.ts) |
+| Files and retained records    | [`workspace.ts`](../src/engine/workspace.ts), [`results.ts`](../src/engine/results.ts)                                                                         |
+| Harness adapter and transport | [`runners/pi/`](../src/runners/pi/)                                                                                                                            |
+| ACP runner and helpers        | [`runners/acp/`](../src/runners/acp/)                                                                                                                          |
+| Assertions and model judgment | [`checkers/file/`](../src/checkers/file/), [`checkers/judge/`](../src/checkers/judge/)                                                                         |
+| OS enforcement and packaging  | [`platform/macos/`](../src/platform/macos/), [`build.mjs`](../scripts/build.mjs)                                                                               |

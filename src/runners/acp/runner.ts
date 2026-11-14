@@ -23,6 +23,7 @@ type SessionConfig = AcpRunnerParams["config"];
 export const acpRunner: RunnerDefinition<AcpRunnerParams> = {
   type: "acp",
   params: acpRunnerParamsSchema,
+  mocks: true,
   async create(params, context) {
     const { params: agent, dir } =
       typeof params.agent === "string"
@@ -55,7 +56,10 @@ class AcpRunner implements Runner {
     const environment = await assembleEnvironment(
       this.#home,
       { home: context.homeDir, workspace: context.workspaceDir, scratch: context.scratchDir },
-      false,
+      {
+        interactive: false,
+        ...(context.mocks === undefined ? {} : { mocks: context.mocks }),
+      },
     );
     this.#copyBack = environment.copyBack;
     this.#process = await spawnSupervised({

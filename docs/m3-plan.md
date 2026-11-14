@@ -1,6 +1,6 @@
 # M3: Controlled Collaborators
 
-Status: planned. Mocks and interaction checks moved out of [M2](m2-plan.md) into this milestone so M2 closes cleanly on ACP execution and trace evidence. This milestone now covers shell collaborators only; the call checker moved to [M4](m4-plan.md). Nothing here is implemented yet; syntax below records agreed structure where settled, including shell argument matching, which stays open.
+Status: step 1 implemented, later steps planned. Mocks and interaction checks moved out of [M2](m2-plan.md) into this milestone so M2 closes cleanly on ACP execution and trace evidence. This milestone now covers shell collaborators only; the call checker moved to [M4](m4-plan.md). Step 1 delivers `PATH` commands with one `return` rule each, the forwarder wiring, the host service and `interactions.json`; `run`/`pass`, argument matching, rule lists, workspace scripts, unmatched-call behavior, MCP and Seatbelt denial remain planned. The syntax below records agreed structure where settled, including shell argument matching, which stays open.
 
 ## Scope
 
@@ -91,13 +91,25 @@ mocks:
           stdout: "https://example.test/foo/bar/pull/1\n"
 ```
 
+## Implemented Step
+
+[Configuration Reference](configuration.md#mocks) owns the supported subset, defaults and `interactions.json`; only the parts this step verified are repeated here.
+
+- **Engine and runner split.** The engine parses `mocks`, writes one forwarder under `<run>/forward`, hard-links it once per target into `<run>/bin`, runs the host service and records calls. The `acp` runner declares `mocks: true`, puts that directory first on the process `PATH` and adds it to the policy's readable roots, never to the writable ones. The native `pi` runner does not, so `mocks` there is a `ConfigError` before any run directory exists.
+- **Lifecycle.** The host starts before `Runner.run` and closes after `Runner.stop` resolves, so a call from a process that outlives the turn is still answered and recorded.
+- **Socket location.** The per-run socket lives directly in the temporary directory as `run-<id>.sock`, not beside the run directories: a Unix socket path is limited to about 104 bytes and the run root's own path plus the socket name can exceed it. The forwarder receives the path in its text. The engine removes the socket when it closes the host.
+- **Defaults.** `return` defaults to `exitCode: 0` with empty `stdout` and `stderr`.
+- **Not yet enforced.** Seatbelt denial of real binaries, `run`/`pass` faults ending the run, and unmatched-call denial are later steps, so an absolute-path call still reaches the real command.
+
 ## Verified Constraints
 
 From the M2 spikes on Pi 1.5.2 (`pi-acp` fork 0.0.34) and Claude Code 2.1.318 (`claude-agent-acp` 0.101.0) under macOS Seatbelt:
 
 - **Command shim and Seatbelt deny:** a `PATH` shim for `make` ahead of `home.path` recorded both direct shell calls and calls made from inside a script in both harnesses; direct execution of `/usr/bin/make` by absolute path was denied by Seatbelt with exit code `126`. Needs nothing in `deps`.
 - **MCP injection:** an MCP mock server injected through `session/new` was called through the harness tool in both harnesses; tool names surfaced as `mcp__<server>__<tool>` in both. Pi through `pi-acp` needed `_meta.directTools: true` on the injected server entry, and any `--tools` allowlist had to include `mcp__<server>__*`.
-- **Forwarder transport:** in a standalone Seatbelt test, a `/bin/sh` forwarder using `nc -U` and `base64` returned separate stdout, stderr and exit code from a host process, and an argument containing a space reached the host intact. Allowing only the socket path with `(allow network-outbound (literal ...))` was enough; without a network rule the call failed. The sandbox could neither read the host's record nor write into the forwarder directory. Not covered: `pass`, `run`, stdin, binary output, empty arguments, and the real harnesses.
+- **Forwarder transport:** in a standalone Seatbelt test, a `/bin/sh` forwarder using `nc -U` and `base64` returned separate stdout, stderr and exit code from a host process, and an argument containing a space reached the host intact. Allowing only the socket path with `(allow network-outbound (literal ...))` was enough; without a network rule the call failed. The sandbox could neither read the host's record nor write into the forwarder directory.
+- **Step 1 in the real runner (2026-11-14):** the same transport now runs inside the `acp` runner's own environment and generated policy: a delegated shell call to a mocked `PATH` command received the declared stdout, stderr and exit code; both calls reached the host as target plus arguments outside the sandbox; an argument containing a space arrived intact, and so did an empty argument; output containing a NUL and a non-ASCII character arrived byte for byte; the command's real binary did not run. The sandbox could neither list the run root nor write to the forwarder, but could read the forwarder itself. Under this project's policy the reply works with the existing `(allow network-outbound)` rule, not a socket-literal rule.
+- **Still unverified:** `pass`, `run`, stdin forwarding, workspace-script targets, Seatbelt denial of real binaries, MCP input matching, and any call made through a real harness (all step-1 evidence uses the model-free ACP peer).
 - **Observed agent probing:** during spikes, an unprompted agent listed its run directory, read mock logs and source, recognized the mocks and ran a mock server by hand, producing a false call record when logs lived inside the sandbox.
 
 ## Open Questions

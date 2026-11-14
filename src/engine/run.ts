@@ -14,6 +14,7 @@ import {
   requireRunner,
   type CheckResult,
   type Checker,
+  type InteractionRecord,
   type Registry,
   type Runner,
   type RunnerOutcome,
@@ -29,6 +30,7 @@ import {
 } from "./results.ts";
 import { createEnvSource, type EnvSource } from "./env-source.ts";
 import { placeCaseFiles } from "./files.ts";
+import { startMockHost, type MockHost } from "./mocks.ts";
 import { parseImplementationParams } from "./params.ts";
 import { truncate, truncateNullable } from "./truncate.ts";
 import { substituteValues, type ValueSource } from "./values.ts";
@@ -98,6 +100,8 @@ export async function runEvaluation(request: RunRequest): Promise<EvaluationReco
   };
   let checks: CheckResult[] = [];
   let trace: readonly TraceEntry[] | undefined;
+  let interactions: readonly InteractionRecord[] | undefined;
+  let mockHost: MockHost | undefined;
   const diagnostics: string[] = [];
   let error: string | undefined;
   let status: RunStatus;
@@ -124,6 +128,12 @@ export async function runEvaluation(request: RunRequest): Promise<EvaluationReco
     const workspaceRoot = await openRunRoot(workspaceDir);
     const baselineRoot = await openRunRoot(baselineDir);
 
+    // The host answers calls before the runner starts and stays up past its stop.
+    const mocks = request.case.config.mocks;
+    if (mocks !== undefined) {
+      mockHost = await startMockHost({ runRootDir: root, shell: mocks.shell });
+    }
+
     runner = registered.runner;
     const started = performance.now();
     let outcome: RunnerOutcome | undefined;
@@ -144,6 +154,7 @@ export async function runEvaluation(request: RunRequest): Promise<EvaluationReco
         input: request.case.config.input,
         timeoutMs,
         signal: abort.signal,
+        ...(mockHost === undefined ? {} : { mocks: mockHost.wiring }),
       });
     } catch (caught) {
       if (!abort.signal.aborted) {
@@ -163,6 +174,9 @@ export async function runEvaluation(request: RunRequest): Promise<EvaluationReco
         error ??= `failed to stop runner: ${errorMessage(caught)}`;
       }
       trace = runner.trace?.();
+      if (mockHost !== undefined) {
+        interactions = await mockHost.close();
+      }
     }
 
     const runnerStatus: RunnerStatus = stopFailed
@@ -254,7 +268,7 @@ export async function runEvaluation(request: RunRequest): Promise<EvaluationReco
   };
 
   const paths = await createResultDirectory(request.resultsDir, runId);
-  await writeResult(paths, record, trace);
+  await writeResult(paths, record, trace, interactions);
   return record;
 }
 
@@ -268,6 +282,9 @@ async function prepareImplementations(
 }> {
   const context = { authoringDir: request.case.dir, values };
   const runnerDefinition = requireRunner(request.registry, request.case.config.runner.$type);
+  if (request.case.config.mocks !== undefined && runnerDefinition.mocks !== true) {
+    throw new ConfigError(`runner "${runnerDefinition.type}" does not support mocks`);
+  }
   const runnerParams = await parseImplementationParams(
     runnerDefinition.params,
     await substituteValues(paramsOf(request.case.config.runner), "runner", values),

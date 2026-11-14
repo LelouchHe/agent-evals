@@ -37,7 +37,7 @@ export async function runAgentCommand(command: "config" | "login", path: string,
   let supervised: SupervisedProcess | undefined;
   try {
     await Promise.all(Object.values(dirs).map((path) => mkdir(path, { mode: 0o700 })));
-    environment = await assembleEnvironment(home, dirs, command === "login");
+    environment = await assembleEnvironment(home, dirs, { interactive: command === "login" });
     const operationSignal = command === "config" ? AbortSignal.any([signal, AbortSignal.timeout(30_000)]) : signal;
     operationSignal.throwIfAborted();
     const process = await spawnSupervised({

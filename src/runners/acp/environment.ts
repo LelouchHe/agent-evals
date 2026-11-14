@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { lstat, mkdir, open, readdir, realpath, rename, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
 import { ConfigError, errorMessage } from "../../engine/config.ts";
+import type { MockWiring } from "../../engine/registry.ts";
 import { isMissing, isWithin, openRunRoot, resolveWorkspacePath, type RunRoot } from "../../engine/workspace.ts";
 import { assertSeatbeltAvailable, createSandboxPolicy, SYSTEM_PATH } from "../../platform/macos/policy.ts";
 import type { AgentConfig } from "./agent.ts";
@@ -57,10 +58,11 @@ export async function resolveHome(agent: AgentConfig, declaringDir: string): Pro
 export async function assembleEnvironment(
   source: HarnessHome,
   dirs: { readonly home: string; readonly workspace: string; readonly scratch: string },
-  interactive: boolean,
+  options: { readonly interactive: boolean; readonly mocks?: MockWiring },
 ) {
   const { deps, login, loginRoot } = source;
   const { home } = dirs;
+  const mocks = options.mocks;
   if (isWithin(deps, await realpath(home))) throw new ConfigError("deps must not contain the temporary run directory");
   await mirror(deps, home);
   const homeRoot = await openRunRoot(home);
@@ -82,16 +84,21 @@ export async function assembleEnvironment(
   }
   const policy = createSandboxPolicy({
     writableRoots: [home, dirs.workspace, dirs.scratch],
-    readableRoots: [deps],
+    // A mocked command's forwarder is readable and executable, never writable.
+    readableRoots: mocks === undefined ? [deps] : [deps, mocks.forwarderDir],
     allowNetwork: true,
-    interactive,
+    interactive: options.interactive,
   });
   const env: NodeJS.ProcessEnv = {
     ...source.environment,
     ...(process.env.TERM === undefined ? {} : { TERM: process.env.TERM }),
     HOME: home,
     TMPDIR: dirs.scratch,
-    PATH: [...source.path.map((path) => join(home, path)), ...SYSTEM_PATH].join(":"),
+    PATH: [
+      ...(mocks === undefined ? [] : [mocks.forwarderDir]),
+      ...source.path.map((path) => join(home, path)),
+      ...SYSTEM_PATH,
+    ].join(":"),
   };
   const persist = async (selected: ReadonlyMap<string, Buffer>): Promise<void> => {
     if (login === undefined) throw new ConfigError("login requires home.login");

@@ -97,6 +97,22 @@ while (my $line = <STDIN>) {
     open(my $f, ">", "answer.txt") or die $!;
     print $f "$model: $request->{params}{prompt}[0]{text}"; close($f);
     if ($scenario eq "hang") { sleep 600; }
+    if ($scenario eq "mocks") {
+      my $probe = q{
+fwd=$(command -v id)
+printf '%s' "$fwd" >where-id
+root=$(dirname "$(dirname "$fwd")")
+id 'arg with space' >call-out 2>call-err
+printf '%s' $? >call-status
+publish '' x >call-binary
+printf '%s' $? >call-binary-status
+od -An -tx1 call-binary >call-binary-hex
+ls "$root" >/dev/null 2>&1; printf '%s' $? >probe-list
+cat "$fwd" >/dev/null 2>&1; printf '%s' $? >probe-read
+printf x >"$(dirname "$fwd")/added" 2>/dev/null; printf '%s' $? >probe-write
+};
+      system("/bin/sh", "-c", $probe);
+    }
     for my $update (
       {sessionUpdate => "agent_thought_chunk", content => {type => "text", text => "plan "}},
       {sessionUpdate => "agent_thought_chunk", content => {type => "text", text => "it"}},

@@ -9,12 +9,12 @@ Treat a case like a test: arrange an environment, send input, observe what happe
 | Input              | The user's prompts: the first message and any later turns.                                               | First message only.                    |
 | Output             | The messages the agent returns to the user. A view of the trace, not a separate record.                  | Final text retained, not checkable.    |
 | Trace              | How the agent ran: messages, reasoning, tool requests and results, skill loading, usage.                 | ACP runner; judge evidence.            |
-| Interactions       | Calls that reached a collaborator, recorded by its mock.                                                 | Planned.                               |
+| Interactions       | Calls that reached a collaborator, recorded by its mock.                                                 | Shell mocks on `acp`; no checks yet.   |
 | Side effects       | Changes to the environment: files, commands, network and other state.                                    | Files only.                            |
 | Fixture            | Fixed initial data, such as the files copied into the workspace. Part of the environment, not all of it. | `fixture`.                             |
 | Environment        | Everything the agent runs in: workspace, harness configuration (skills, settings), mocks and sandbox.    | Workspace, Pi configuration, Seatbelt. |
 | Setup / teardown   | Each environment component prepares and removes itself; YAML declares components, not procedures.        | Built-in components only.              |
-| Mock               | A case-owned substitute for a collaborator that controls its responses and records calls to it.          | Planned.                               |
+| Mock               | A case-owned substitute for a collaborator that controls its responses and records calls to it.          | `mocks.shell` fixed results.           |
 | Assertion          | A check of observed evidence.                                                                            | `checks`.                              |
 | Parameterized test | Named cases that share common fields.                                                                    | `cases`.                               |
 
@@ -68,7 +68,7 @@ Use deterministic checks for exact facts and a judge for qualitative criteria. A
 
 Do not create routing-versus-behavior pipelines. Skill loading, tool choices, restraint and result quality are concerns expressed through checks and evidence when those observations exist.
 
-Environment and interaction evidence is stronger than an agent's own account alone. Collaborator mocks are planned in [M3](m3-plan.md) and interaction checks in [M4](m4-plan.md); broader directions in [Roadmap](roadmap.md), not implemented by adding ad hoc Case fields.
+Environment and interaction evidence is stronger than an agent's own account alone. Shell collaborator mocks with fixed results are implemented in [M3](m3-plan.md), their remaining actions and interaction checks are planned in [M3](m3-plan.md) and [M4](m4-plan.md), and broader directions in [Roadmap](roadmap.md); none of this is added through ad hoc Case fields.
 
 ## Keep Validation Data Honest
 
