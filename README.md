@@ -8,7 +8,7 @@ Requirements: Node.js 24+; macOS with `sandbox-exec`. ACP runs need caller-prepa
 
 ## Quick Start
 
-[`examples/cases/deploy-runbook`](examples/cases/deploy-runbook/case.yml) asks an agent to diagnose a failed deploy. Its skill supplies private error-code knowledge the task and log do not reveal, so `with-skill` and `without-skill` cases are expected to differ; one run of each is a sample, not a pass rate. Names are labels, not built-in A/B modes. It has four cases: `pi-with-skill`, `pi-without-skill`, `claude-with-skill` and `claude-without-skill`, each using a standalone agent configuration from [`examples/agents/`](examples/agents/).
+[`examples/cases/deploy-runbook`](examples/cases/deploy-runbook/case.yml) asks an agent to diagnose a failed deploy. Its skill supplies private error-code knowledge the task and log do not reveal, so `with-skill` and `without-skill` cases are expected to differ; one run of each is a sample, not a pass rate. Names are labels, not built-in A/B modes. It has four cases: `pi-with-skill`, `pi-without-skill`, `claude-with-skill` and `claude-without-skill`, each using a standalone agent configuration from [`examples/agents/`](examples/agents/). It also exercises `mocks.shell`: the read-only `deployctl status` call is answered by a fixed result on the host, a file check asserts the certificate serial that only that answer contains, and the call is retained in `mocks.json` beside `result.json` and `trace.json`. [Mocks](docs/mocks.md) owns the semantics; only `PATH` lookups are intercepted.
 
 ```sh
 npm ci

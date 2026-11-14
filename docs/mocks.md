@@ -82,6 +82,8 @@ runner:
 
 The case works because the agent looks `deploy` up through `PATH`. Replace `agent` with any prepared [ACP agent](configuration.md#acp-preparation-helpers), or with `agent: ../../agents/pi.yml` for the repository's Pi configuration when the case sits one directory under `examples/cases/`. Then `agent-evals run case.yml` runs it; `agent-evals view case.yml` shows the resolved case and where each field was declared.
 
+The repository's [`deploy-runbook`](../examples/cases/deploy-runbook/case.yml) example applies this end to end: it mocks the read-only `deployctl status` call, a file check asserts a certificate serial that only the mocked answer contains, and the call is retained in `mocks.json`.
+
 ## `mocks.json`
 
 `run` writes `mocks.json` into the run's result directory, beside `result.json` and `trace.json`:
