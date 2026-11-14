@@ -77,7 +77,12 @@ test(
     );
     assert.equal(record.status, "pass", record.error);
     // The calls are recorded beside the trace, outside everything the sandbox reaches.
-    assert.deepEqual(JSON.parse(await readFile(join(resultsDir, record.runId, "interactions.json"), "utf8")), [
+    assert.deepEqual((await readdir(join(resultsDir, record.runId))).sort(), [
+      "mocks.json",
+      "result.json",
+      "trace.json",
+    ]);
+    assert.deepEqual(JSON.parse(await readFile(join(resultsDir, record.runId, "mocks.json"), "utf8")), [
       { target: "id", arguments: ["arg with space"] },
       { target: "publish", arguments: ["", "x"] },
     ]);
@@ -162,7 +167,7 @@ test("a runner that declares mocks receives the forwarder directory and socket",
   assert.equal(dirname(observed.socketPath), tmpdir());
 
   // Nothing was called, and an empty record is still written beside the run's other evidence.
-  assert.deepEqual(JSON.parse(await readFile(join(resultsDir, record.runId, "interactions.json"), "utf8")), []);
+  assert.deepEqual(JSON.parse(await readFile(join(resultsDir, record.runId, "mocks.json"), "utf8")), []);
 });
 
 test("calls that arrive while the runner stops are still recorded", async (t) => {
@@ -238,7 +243,7 @@ test("calls that arrive while the runner stops are still recorded", async (t) =>
   });
 
   assert.equal(record.status, "pass", record.error);
-  assert.deepEqual(JSON.parse(await readFile(join(resultsDir, record.runId, "interactions.json"), "utf8")), [
+  assert.deepEqual(JSON.parse(await readFile(join(resultsDir, record.runId, "mocks.json"), "utf8")), [
     { target: "id", arguments: ["after"] },
   ]);
   // The reply reached the lingering process, so the record and the result agree.

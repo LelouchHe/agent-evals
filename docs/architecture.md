@@ -114,7 +114,7 @@ The host sandbox is a deliberate execution choice: real platform behavior is par
 - **Observations:** directory identity and path/symlink containment are checked before file reads. Non-regular and oversized evidence is an error, not a vacuous pass. A missing observation cannot prove a restraint was respected.
 - **Results:** declarations, source/case identity, outcomes, diagnostics and cleanup. Expanded parameters do not replace the declaration; runtime outputs remain the implementation's responsibility. No full resource snapshot is retained.
 
-Observations come from three sources defined in [Writing Cases](cases.md#why-the-trace-matters): the runner's trace (with output as its user-facing view), mock interaction records, and environment side effects. Today the ACP runner retains `trace.json` (which `judge` can take as evidence), a case declaring shell mocks retains `interactions.json`, and `file`/`judge` inspect workspace files. Interaction checks and the other M3 steps are planned in [M3](m3-plan.md) and [M4](m4-plan.md).
+Observations come from three sources defined in [Writing Cases](cases.md#why-the-trace-matters): the runner's trace (with output as its user-facing view), mock interaction records, and environment side effects. Today the ACP runner retains `trace.json` (which `judge` can take as evidence), a case declaring shell mocks retains `mocks.json`, and `file`/`judge` inspect workspace files. Interaction checks and the other M3 steps are planned in [M3](m3-plan.md) and [M4](m4-plan.md).
 
 ## Source Map
 

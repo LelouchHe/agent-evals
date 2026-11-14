@@ -55,7 +55,7 @@ export async function writeResult(
     await writeFile(join(paths.directory, "trace.json"), JSON.stringify(trace, null, 2) + "\n", { mode: 0o600 });
   }
   if (interactions !== undefined) {
-    await writeFile(join(paths.directory, "interactions.json"), JSON.stringify(interactions, null, 2) + "\n", {
+    await writeFile(join(paths.directory, "mocks.json"), JSON.stringify(interactions, null, 2) + "\n", {
       mode: 0o600,
     });
   }

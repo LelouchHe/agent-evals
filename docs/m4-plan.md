@@ -17,7 +17,7 @@ These were settled with the mock design and are not reopened here:
 
 - **Arrange and Assert stay separate.** M3's top-level `mocks` records calls and never produces pass/fail judgments; a check inspects the records after the run.
 - **One record shape.** A call record holds the target and its arguments, with no output or exit code.
-- **The engine stays assertion-agnostic.** The engine exposes raw records on `CheckerContext` and writes `interactions.json` beside `trace.json`. Checking lives in a replaceable `$type` checker.
+- **The engine stays assertion-agnostic.** The engine exposes raw records on `CheckerContext` and writes `mocks.json` beside `trace.json`. Checking lives in a replaceable `$type` checker.
 - **Asserting on an unmocked target is a checker `error`, not a vacuous pass.**
 - **`judge` is unchanged.** It does not take `interactions` unless a real case later needs qualitative judgment over indirect script calls absent from `trace.json`.
 

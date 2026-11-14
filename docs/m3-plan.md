@@ -1,6 +1,6 @@
 # M3: Controlled Collaborators
 
-Status: step 1 implemented, later steps planned. Mocks and interaction checks moved out of [M2](m2-plan.md) into this milestone so M2 closes cleanly on ACP execution and trace evidence. This milestone now covers shell collaborators only; the call checker moved to [M4](m4-plan.md). Step 1 delivers `PATH` commands with one `return` rule each, the forwarder wiring, the host service and `interactions.json`; `run`/`pass`, argument matching, rule lists, workspace scripts, unmatched-call behavior and Seatbelt denial remain planned, and MCP collaborators are M5. The syntax below records agreed structure where settled, including shell argument matching, which stays open.
+Status: step 1 implemented, later steps planned. Mocks and interaction checks moved out of [M2](m2-plan.md) into this milestone so M2 closes cleanly on ACP execution and trace evidence. This milestone now covers shell collaborators only; the call checker moved to [M4](m4-plan.md). Step 1 delivers `PATH` commands with one `return` rule each, the forwarder wiring, the host service and `mocks.json`; `run`/`pass`, argument matching, rule lists, workspace scripts, unmatched-call behavior and Seatbelt denial remain planned, and MCP collaborators are M5. The syntax below records agreed structure where settled, including shell argument matching, which stays open.
 
 ## Scope
 
@@ -29,7 +29,7 @@ Not in scope: MCP collaborators, which are milestone M5, with their configuratio
 - **The engine owns mock behavior; the runner owns the wiring.** The engine parses `mocks`, runs the host service, matches rules, performs actions, keeps the records and generates forwarders, so that logic exists once. A runner receives an optional `mocks` value on `RunnerContext` (forwarder directory, socket path, targets whose real binaries to deny) and is responsible for `PATH` and sandbox policy. Forwarder generation stays in the engine until a second platform needs it elsewhere.
 - **Runners without mock support fail at load time.** A runner definition declares `mocks: true` when it can wire them. Running a case that declares `mocks` on a runner without it (such as the native `pi` runner) is a `ConfigError` before any run directory exists, never a silent run against real commands.
 - **A record holds the target and its arguments.** No output or exit code, since `pass` cannot observe one after `exec` and all three actions keep one record shape.
-- **Engine stays assertion-agnostic; `judge` is unchanged.** The engine writes `interactions.json` beside `trace.json` and, once [M4](m4-plan.md) adds the call checker, exposes raw interaction records on `CheckerContext`. Checking lives in a replaceable `$type` checker; asserting on an unmocked target is a checker `error` rather than a vacuous pass. `judge` does not take `interactions` unless a real case later needs qualitative judgment over indirect script calls absent from `trace.json`.
+- **Engine stays assertion-agnostic; `judge` is unchanged.** The engine writes `mocks.json` beside `trace.json` and, once [M4](m4-plan.md) adds the call checker, exposes raw interaction records on `CheckerContext`. Checking lives in a replaceable `$type` checker; asserting on an unmocked target is a checker `error` rather than a vacuous pass. `judge` does not take `interactions` unless a real case later needs qualitative judgment over indirect script calls absent from `trace.json`.
 
 ### Shell argument matching
 
@@ -93,7 +93,7 @@ mocks:
 
 ## Implemented Step
 
-[Configuration Reference](configuration.md#mocks) owns the supported subset, defaults and `interactions.json`; only the parts this step verified are repeated here.
+[Configuration Reference](configuration.md#mocks) owns the supported subset, defaults and `mocks.json`; only the parts this step verified are repeated here.
 
 - **Engine and runner split.** The engine parses `mocks`, writes one forwarder under `<run>/forward`, hard-links it once per target into `<run>/bin`, runs the host service and records calls. The `acp` runner declares `mocks: true`, puts that directory first on the process `PATH` and adds it to the policy's readable roots, never to the writable ones. The native `pi` runner does not, so `mocks` there is a `ConfigError` before any run directory exists.
 - **Lifecycle.** The host starts before `Runner.run` and closes after `Runner.stop` resolves, so a call from a process that outlives the turn is still answered and recorded.
