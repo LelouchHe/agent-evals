@@ -1,15 +1,16 @@
 # M3: Controlled Collaborators
 
-Status: planned. Mocks and interaction checks moved out of [M2](m2-plan.md) into this milestone so M2 closes cleanly on ACP execution and trace evidence. Nothing here is implemented yet; syntax below records agreed structure where settled, including shell argument matching; the call checker and MCP input matching stay open.
+Status: planned. Mocks and interaction checks moved out of [M2](m2-plan.md) into this milestone so M2 closes cleanly on ACP execution and trace evidence. This milestone now covers shell collaborators only; the call checker moved to [M4](m4-plan.md). Nothing here is implemented yet; syntax below records agreed structure where settled, including shell argument matching, which stays open.
 
 ## Scope
 
-Replace or observe external collaborators at the environment boundary, record every call that reaches them outside the sandbox, and assert on those records through deterministic checks.
+Replace or observe shell collaborators at the environment boundary and record every call that reaches them outside the sandbox.
 
 1. **Shell collaborators.** Intercept `PATH` programs and workspace scripts through thin forwarders, run mock actions or delegate to the real target, and retain structured interaction records.
-2. **Deterministic call checker.** Assert on recorded interactions through an ordinary `$type` checker without engine assertion magic.
 
-Not in scope: MCP collaborators, which move to the next milestone with their configuration, input matching and spy behavior still open (see [Open Questions](#open-questions)); harness-internal tools (`Read`, `Edit`, `WebFetch` and similar built-ins), shell builtins (`cd`, `export`), HTTP/network interception, model-provider fault injection, Linux.
+Asserting on those records is [M4](m4-plan.md).
+
+Not in scope: MCP collaborators, which belong to a later milestone that is not yet assigned, with their configuration, input matching and spy behavior still open (see [Open Questions](#open-questions)); harness-internal tools (`Read`, `Edit`, `WebFetch` and similar built-ins), shell builtins (`cd`, `export`), HTTP/network interception, model-provider fault injection, Linux.
 
 ## Decisions
 
@@ -28,7 +29,7 @@ Not in scope: MCP collaborators, which move to the next milestone with their con
 - **The engine owns mock behavior; the runner owns the wiring.** The engine parses `mocks`, runs the host service, matches rules, performs actions, keeps the records and generates forwarders, so that logic exists once. A runner receives an optional `mocks` value on `RunnerContext` (forwarder directory, socket path, targets whose real binaries to deny) and is responsible for `PATH` and sandbox policy. Forwarder generation stays in the engine until a second platform needs it elsewhere.
 - **Runners without mock support fail at load time.** A runner definition declares `mocks: true` when it can wire them. Running a case that declares `mocks` on a runner without it (such as the native `pi` runner) is a `ConfigError` before any run directory exists, never a silent run against real commands.
 - **A record holds the target and its arguments.** No output or exit code, since `pass` cannot observe one after `exec` and all three actions keep one record shape.
-- **Engine stays assertion-agnostic; `judge` is unchanged.** The engine exposes raw interaction records on `CheckerContext` and writes `interactions.json` beside `trace.json`. Checking lives in a replaceable `$type` checker; asserting on an unmocked target is a checker `error` rather than a vacuous pass. `judge` does not take `interactions` unless a real case later needs qualitative judgment over indirect script calls absent from `trace.json`.
+- **Engine stays assertion-agnostic; `judge` is unchanged.** The engine writes `interactions.json` beside `trace.json` and, once [M4](m4-plan.md) adds the call checker, exposes raw interaction records on `CheckerContext`. Checking lives in a replaceable `$type` checker; asserting on an unmocked target is a checker `error` rather than a vacuous pass. `judge` does not take `interactions` unless a real case later needs qualitative judgment over indirect script calls absent from `trace.json`.
 
 ### Shell argument matching
 
@@ -101,5 +102,4 @@ From the M2 spikes on Pi 1.5.2 (`pi-acp` fork 0.0.34) and Claude Code 2.1.318 (`
 
 ## Open Questions
 
-- **Call checker `$type` name and schema.** Naming (`call` vs `interactions`), whether it takes the same `args` as a mock rule, count constraints (`times: 0`, exact count, bounds) and whether one generic matcher checker later spans calls, JSON files and output or stays per-evidence-source first.
-- **MCP collaborators (next milestone).** Exact `mocks.mcp` syntax, how a rule matches a tool's JSON object input (shell `args` does not have to cover it), server naming and harness-specific `_meta` (such as Pi's `_meta.directTools: true`), whether MCP supports `pass` to a real server, and HTTP service mocks / model-provider fault injection (which depend on the deferred proxy).
+- **MCP collaborators (a later milestone, not yet assigned).** Exact `mocks.mcp` syntax, how a rule matches a tool's JSON object input (shell `args` does not have to cover it), server naming and harness-specific `_meta` (such as Pi's `_meta.directTools: true`), whether MCP supports `pass` to a real server, and HTTP service mocks / model-provider fault injection (which depend on the deferred proxy).
