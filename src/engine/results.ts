@@ -1,7 +1,7 @@
 import { mkdir, rename, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { randomUUID } from "node:crypto";
-import type { CaseConfig, EnvReference } from "./config.ts";
+import type { CaseConfig } from "./config.ts";
 import type { CheckResult, TraceEntry } from "./registry.ts";
 
 export type RunStatus = "pass" | "fail" | "error" | "timeout" | "cancelled";
@@ -20,10 +20,8 @@ export interface EvaluationRecord {
   readonly startedAt: string;
   readonly finishedAt: string;
   readonly case: { readonly path: string; readonly name?: string };
-  /** The declared configuration; `$env` references remain unresolved. */
+  /** The declared configuration; placeholders remain unsubstituted. */
   readonly resolvedConfig: CaseConfig;
-  /** Declared parameter references, without resolved environment values. */
-  readonly references?: readonly EnvReference[];
   readonly status: RunStatus;
   readonly runner: RunnerRecord;
   readonly checks: readonly CheckResult[];

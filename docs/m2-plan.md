@@ -1,6 +1,6 @@
 # M2: Observable Runs
 
-Status: partial implementation. Step A.1 is implemented: the preparation helpers and the ACP evaluation runner. The ACP runner retains a merged trace; trace evidence for the judge, Claude Code and mocks remain planned. [Writing Cases](cases.md#the-test-model) defines the trace, interaction and side-effect sources this milestone makes real. Current usage is documented in [Configuration Reference](configuration.md#acp-runner-type-acp); a full installation walkthrough is not yet verified.
+Status: partial implementation. Step A.1 is implemented: the preparation helpers and the ACP evaluation runner. The ACP runner retains a merged trace and runs Claude Code from declared data alone; trace evidence for the judge, a checked-in Claude case and mocks remain planned. [Writing Cases](cases.md#the-test-model) defines the trace, interaction and side-effect sources this milestone makes real. Current usage is documented in [Configuration Reference](configuration.md#acp-runner-type-acp); a full installation walkthrough is not yet verified.
 
 ## Scope
 
@@ -28,7 +28,8 @@ The registered `acp` runner completes step A.1. It reuses the helpers' HOME asse
 - **Verification:** model-free tests cover a full run (path-referenced agent, session config, fixture workspace, output, login copy-back, runtime removal), rejection of an unoffered config value before prompting, and cancellation of a hung turn.
 - **Live Pi check (2026-11-13):** [`deploy-runbook-acp`](../examples/cases/deploy-runbook-acp/case.yml) through pi-acp with `opencode-go/deepseek-v4.1-flash` reproduced the native example: `with-skill` passed all three checks after loading the skill from the workspace's `.agents/skills/`; `without-skill` failed the pattern and judge checks. One run each.
 - **Trace (A.2, first part):** the runner merges session updates into `trace.json` ([format](configuration.md#inspecting-and-recording)). A live `deploy-runbook-acp` `with-skill` run produced a 7 KB trace showing the log read, the `SKILL.md` read and the written diagnosis.
-- **Still planned:** trace evidence for the judge (A.2), Claude Code (A.3), mocks (B). The native Pi runner stays.
+- **Claude Code (A.3, live 2026-11-14):** the same `deploy-runbook-acp` cases through `claude-agent-acp` 0.107.0 with `haiku`, the skill placed at `.claude/skills/`, the [Claude example](../examples/agents/claude.yml) unchanged and nothing Claude-specific in code. `with-skill` passed all three checks and its trace shows a `Load skill: deploy-runbook` tool call; `without-skill` failed the pattern and judge checks. One run each; no token appeared in results or traces.
+- **Still planned:** trace evidence for the judge (A.2), a checked-in Claude case, mocks (B). The native Pi runner stays.
 
 ## Runner Configuration
 
@@ -50,14 +51,14 @@ The standalone format, shared with the [preparation helpers](configuration.md#ac
 command: [pi]
 acpCommand: [pi-acp]
 home:
-  deps: $env:PI_DEPS
-  login: $env:PI_LOGIN
+  deps: ${env:PI_DEPS}
+  login: ${env:PI_LOGIN}
   path: [.local/bin]
 login:
   - .pi/agent/auth.json
 ```
 
-`acpCommand` starts the adapter; `command` starts the native interactive program. `home.login` is the persistent directory, and the top-level `login` list describes its HOME-relative file composition. Loading the configuration never performs login. There is no agent `env` field; `$env:NAME` remains a configuration-value source. The same object can ultimately be inlined in a case; a standalone file is optional, reusable or disposable after preparation. Nothing is selected from file or directory names.
+`acpCommand` starts the adapter; `command` starts the native interactive program. `home.login` is the persistent directory, and the top-level `login` list describes its HOME-relative file composition. Loading the configuration never performs login. `environment` declares extra process variables for both commands; [placeholders](configuration.md#placeholders) fill them from `.env` or the run's directories. The same object can ultimately be inlined in a case; a standalone file is optional, reusable or disposable after preparation. Nothing is selected from file or directory names.
 
 Per-case `runner.config` remains separate: keys match an ACP option's category, otherwise its ID. Set model first because other choices may depend on it. Offered values are validated after session creation and before prompting.
 
@@ -97,10 +98,12 @@ agent-evals-home/
       .pi/agent/auth.json        only the provider the cases use
   claude/
     deps/
-      .claude/settings.json      software not installed yet
+      .local/bin/                node, claude-agent-acp, claude (the package's bundled binary)
+      .local/share/node/         official Node.js
+      .local/share/pkgs/         npm install of @agentclientprotocol/claude-agent-acp
+      .claude/settings.json
     login/
-      .claude.json
-      .claude/.credentials.json
+      .claude.json               the token comes from .env, not a file
 ```
 
 Settings that make a harness usable for unattended, isolated runs:
@@ -183,7 +186,7 @@ The implemented helpers now use ACP SDK 2.6.0 and its stable ACP v1 app API (`cl
 
 - `claude` run interactively in the sandbox with a fresh `HOME` logged in to the operator's subscription and wrote `.claude/.credentials.json` and `.claude.json` into that `HOME`. The keychain was not touched, so the operator's normal login stayed separate. Runs from that login authenticated.
 - A subscription login brings account content into every run: about 15 claude.ai skills and claude.ai MCP connectors such as Claude Docs. Connectors run on Anthropic's side, outside our sandbox. `"disableClaudeAiConnectors": true` and `"syncClaudeAiSkills": false` in `deps`'s `.claude/settings.json` removed both; the environment variable `ENABLE_CLAUDEAI_MCP_SERVERS=false` also removes connectors.
-- It needs `CLAUDE_CODE_TMPDIR`, because it otherwise uses the shared `/tmp/claude-<uid>`; it ignores `TMPDIR`. It also refuses to start in an unreadable working directory.
+- It needs `CLAUDE_CODE_TMPDIR`, because it otherwise uses the shared `/tmp/claude-<uid>`; it ignores `TMPDIR`. Without it, `claude-agent-acp` 0.107.0 fails `session/new` with `EPERM` on `/tmp/claude-501`. The [Claude example](../examples/agents/claude.yml) declares `CLAUDE_CODE_TMPDIR: ${TMPDIR}`; the runner stays harness-agnostic. It also refuses to start in an unreadable working directory.
 - Seatbelt cannot nest: `sandbox-exec` inside Seatbelt fails with `sandbox_apply: Operation not permitted`. Claude Code's own sandbox is off by default; with `sandbox.enabled: true` it fails to start, refuses that command, then disables itself for the session. A fixture's `.claude/settings.json` or managed settings under `/Library/Application Support/ClaudeCode/` can turn it on. Claude Code's own sandbox cannot be evaluated inside ours.
 - No `mach-lookup` is needed. The keychain is unreachable from the sandbox because the login keychain file under the real `HOME` is unreadable.
 
@@ -223,19 +226,19 @@ Without being asked, an agent listed its run directory, read a control file that
 
 ### Credentials for Claude
 
-Anthropic's [legal and compliance terms](https://code.claude.com/docs/en/legal-and-compliance.md) reserve subscription OAuth for ordinary use of Claude Code and native apps and forbid intermediating Claude.ai credentials or session tokens; a proxy that swaps a subscription token does exactly that. Logging in to the unmodified Claude Code with the operator's own subscription, as `login` does, involves no intermediary. Subscription limits assume ordinary individual use; heavy automated evaluation should use a Console API key.
+Anthropic's [legal and compliance terms](https://code.claude.com/docs/en/legal-and-compliance.md) reserve subscription OAuth for ordinary use of Claude Code and native apps and forbid intermediating Claude.ai credentials or session tokens; a proxy that swaps a subscription token does exactly that. Logging in to the unmodified Claude Code with the operator's own subscription involves no intermediary.
+
+The example uses `claude setup-token`: the operator's subscription, a long-lived token that is never refreshed, passed as `CLAUDE_CODE_OAUTH_TOKEN` from a keychain lookup in `.env`. A `/login` credential instead needs regular refreshes and rotates its refresh token; one left unused since the spikes could no longer be refreshed, and Claude cleared it. Reusing the everyday keychain login was rejected: a refresh inside the sandbox would invalidate the operator's own session. The token is readable by the agent, like any credential in a run. Subscription limits assume ordinary individual use; heavy automated evaluation should use a Console API key.
 
 ## Not Yet Verified
 
 - Pi's default interactive path with `fd` and `rg` prepared in deps, using the checked-in agent YAML unchanged. The successful live UI check used the temporary offline command above; fresh authentication was not repeated.
-- A Claude Code `deps` directory: the runs above still read `claude-agent-acp` from the operator's Node installation, and whether it needs a separate `claude` command is unchecked.
 - Reporting the paths Seatbelt denied when an agent fails to start; a first query of the system log returned nothing.
 - HTTP service mocks and model-provider fault injection, which would also need the proxy.
 
 ## Open Questions
 
-- `CLAUDE_CODE_TMPDIR`: a generic way to point Claude Code at the run's temporary directory, or an accepted documented exception.
-- Concurrent runs sharing one `login`: two token refreshes would overwrite each other.
+- Concurrent runs sharing one `login`: two token refreshes would overwrite each other. Claude's setup token avoids this; Pi's `auth.json` does not refresh.
 - Permission answering: the runner currently approves every request; whether and how a case configures this is open.
 - Mock syntax, where call expectations live, and the default for unmatched calls. Command mocks sit in a per-run directory ahead of `home.path`.
 - MCP server names: a mock must use the real server's name to look the same, and harnesses may format tool names differently.

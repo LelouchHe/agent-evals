@@ -133,16 +133,18 @@ test("engine preparation passes each parsed implementation shape to its bound in
   assert.deepEqual(await readdir(tempParent), []);
 });
 
-test("a declaration record distinguishes references from quoted literal strings", async (t) => {
+test("the factory receives substituted placeholders and the record keeps declarations", async (t) => {
   const registry = createRegistry();
   let received:
     | {
         reference: string;
         literal: string;
+        home: string;
         items: string[];
         details: { value: string };
       }
     | undefined;
+  let homeDir: string | undefined;
   addRunner(
     registry,
     {
@@ -150,6 +152,7 @@ test("a declaration record distinguishes references from quoted literal strings"
       params: z.strictObject({
         reference: z.string(),
         literal: z.string(),
+        home: z.string(),
         items: z.array(z.string()),
         details: z.strictObject({ value: z.string() }),
       }),
@@ -157,6 +160,7 @@ test("a declaration record distinguishes references from quoted literal strings"
         received = params;
         return {
           run: async (context) => {
+            homeDir = context.homeDir;
             await writeFile(join(context.workspaceDir, "hello.txt"), "Hello, world!\n");
             return { finalText: "ok", diagnostics: [] };
           },
@@ -177,13 +181,14 @@ test("a declaration record distinguishes references from quoted literal strings"
       "input: task",
       "runner:",
       "  $type: record-values",
-      "  reference: $env:VALUE",
-      '  literal: "$env:VALUE"',
+      "  reference: ${env:VALUE}",
+      "  literal: $${env:VALUE}",
+      "  home: ${HOME}/x",
       "  items:",
-      "    - $env:VALUE",
+      "    - ${env:VALUE}",
       "    - plain",
       "  details:",
-      "    value: $env:VALUE",
+      "    value: ${env:VALUE}",
       "checks:",
       "  - $type: file",
       "    path: hello.txt",
@@ -201,24 +206,23 @@ test("a declaration record distinguishes references from quoted literal strings"
   });
 
   assert.equal(record.status, "pass", record.error);
+  // ${HOME} is the directory the runner later runs with.
+  assert.equal(received?.home, `${homeDir}/x`);
   assert.deepEqual(received, {
     reference: "resolved-value",
-    literal: "$env:VALUE",
+    literal: "${env:VALUE}",
+    home: received?.home,
     items: ["resolved-value", "plain"],
     details: { value: "resolved-value" },
   });
   assert.deepEqual(record.resolvedConfig.runner, {
     $type: "record-values",
-    reference: "$env:VALUE",
-    literal: "$env:VALUE",
-    items: ["$env:VALUE", "plain"],
-    details: { value: "$env:VALUE" },
+    reference: "${env:VALUE}",
+    literal: "$${env:VALUE}",
+    home: "${HOME}/x",
+    items: ["${env:VALUE}", "plain"],
+    details: { value: "${env:VALUE}" },
   });
-  assert.deepEqual(record.references, [
-    { path: ["runner", "reference"], name: "VALUE" },
-    { path: ["runner", "items", 0], name: "VALUE" },
-    { path: ["runner", "details", "value"], name: "VALUE" },
-  ]);
   const resultText = await readFile(join(resultsDir, record.runId, "result.json"), "utf8");
   assert.doesNotMatch(resultText, /resolved-value/);
   assert.deepEqual(await readdir(tempParent), []);
@@ -273,8 +277,8 @@ export const checker = {
     casePath,
     stringify({
       input: "task",
-      checks: [{ $type: "receiver-checker", text: "$env:EXTERNAL_TEXT" }],
-      runner: { $type: "receiver-runner", text: "$env:EXTERNAL_TEXT" },
+      checks: [{ $type: "receiver-checker", text: "${env:EXTERNAL_TEXT}" }],
+      runner: { $type: "receiver-runner", text: "${env:EXTERNAL_TEXT}" },
     }),
   );
   const resultsDir = await makeTempDir(t, "ae-typed-external-results-");
@@ -291,7 +295,7 @@ export const checker = {
   assert.equal(record.status, "pass", record.error);
   assert.equal(record.runner.finalText, "external:expanded-value");
   assert.equal(record.checks[0]?.subject, "external:expanded-value");
-  assert.deepEqual(record.resolvedConfig.runner, { $type: "receiver-runner", text: "$env:EXTERNAL_TEXT" });
+  assert.deepEqual(record.resolvedConfig.runner, { $type: "receiver-runner", text: "${env:EXTERNAL_TEXT}" });
   assert.equal(record.checks[0]?.checker, "receiver-checker");
   assert.equal(record.cleanup.status, "removed");
   assert.deepEqual(await readdir(tempParent), []);
@@ -320,7 +324,7 @@ test("expanded values are validated by the implementation schema without coercio
     stringify({
       input: "task",
       checks: [{ $type: "file", path: "hello.txt", exists: true }],
-      runner: { $type: "typed-values", count: "$env:COUNT", enabled: "$env:ENABLED" },
+      runner: { $type: "typed-values", count: "${env:COUNT}", enabled: "${env:ENABLED}" },
     }),
   );
   const resultsDir = await makeTempDir(t, "ae-typed-values-results-");

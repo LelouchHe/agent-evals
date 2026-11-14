@@ -1,29 +1,15 @@
 import { readFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import type { ZodType } from "zod";
-import type { EnvSource } from "./env-source.ts";
 import { parseImplementationParams } from "./params.ts";
-import { expandReferences } from "./references.ts";
-import {
-  isAlias,
-  isMap,
-  isNode,
-  isScalar,
-  isSeq,
-  parseDocument,
-  Scalar,
-  type Node,
-  type Pair,
-  type YAMLMap,
-} from "yaml";
+import { checkPlaceholders, substituteValues, type ValueSource } from "./values.ts";
+import { isAlias, isMap, isNode, isScalar, isSeq, parseDocument, type Node, type Pair, type YAMLMap } from "yaml";
 import {
   CASES_KEY,
   CASE_FIELD_KEYS,
   ConfigError,
-  ENV_NAME_PATTERN,
   errorMessage,
   expectCaseConfig,
-  type EnvReference,
   type FieldOrigin,
   type ResolvedCase,
 } from "./config.ts";
@@ -93,33 +79,31 @@ export async function loadCase(path: string, selection: CaseSelection = {}): Pro
 
   const label = selected === undefined ? `case configuration ${file}` : `case "${selected.name}"`;
   const config = expectCaseConfig(final, label);
-  const references = collectReferences([...common, ...(selected?.fields ?? [])], file, text);
+  for (const [index, record] of [config.runner, ...config.checks].entries()) {
+    const { $type: _, ...params } = record;
+    checkPlaceholders(params, index === 0 ? `${label} runner` : `${label} checks[${index - 1}]`);
+  }
 
   return {
     path: file,
     dir: dirname(file),
     ...(selected === undefined ? {} : { name: selected.name }),
     config,
-    references,
     origins,
   };
 }
 
-/** Load a standalone implementation object using the same YAML and value-source rules as cases. */
+/** Load a standalone implementation object using the same YAML and placeholder rules as cases. */
 export async function loadImplementationParameters<P>(
   path: string,
   schema: ZodType<P>,
-  source: EnvSource,
+  source: ValueSource,
 ): Promise<{ params: P; dir: string }> {
-  const { file, text, fields } = await readMapping(path);
+  const { file, fields } = await readMapping(path);
   // Preserve every YAML key as data, including __proto__, for schema validation.
   const raw: Record<string, unknown> = Object.fromEntries(fields.map((field) => [field.key, fieldValue(field)]));
-  const references: EnvReference[] = [];
-  for (const field of fields) {
-    collectNodeReferences(field.node, [field.key], references, file, text);
-  }
   return {
-    params: await parseImplementationParams(schema, await expandReferences(raw, references, [], source), file),
+    params: await parseImplementationParams(schema, await substituteValues(raw, file, source), file),
     dir: dirname(file),
   };
 }
@@ -139,62 +123,6 @@ async function readMapping(path: string): Promise<{ file: string; text: string; 
   rejectForbiddenSyntax(document.contents, text, file);
   const root = expectMapNode(document.contents, "configuration", file);
   return { file, text, fields: readFields(root, "configuration", file, text) };
-}
-
-/**
- * Read only implementation parameter values, where an unquoted plain scalar
- * that is exactly `$env:NAME` is a reference. Quoted and block scalars are data.
- */
-function collectReferences(fields: readonly FieldEntry[], file: string, text: string): EnvReference[] {
-  const references: EnvReference[] = [];
-  for (const field of fields) {
-    if (field.key === "runner" || field.key === "checks") {
-      collectNodeReferences(field.node, [field.key], references, file, text);
-    }
-  }
-  return references;
-}
-
-function collectNodeReferences(
-  node: unknown,
-  path: readonly (string | number)[],
-  references: EnvReference[],
-  file: string,
-  text: string,
-): void {
-  if (isMap(node)) {
-    for (const pair of node.items) {
-      if (!isScalar(pair.key) || pair.key.value === "$type") {
-        continue;
-      }
-      collectNodeReferences(pair.value, [...path, String(pair.key.value)], references, file, text);
-    }
-    return;
-  }
-  if (isSeq(node)) {
-    for (const [index, item] of node.items.entries()) {
-      collectNodeReferences(item, [...path, index], references, file, text);
-    }
-    return;
-  }
-  if (!isScalar(node) || node.type !== Scalar.PLAIN || typeof node.value !== "string") {
-    return;
-  }
-  const value = node.value;
-  if (!value.startsWith("$env:")) {
-    return;
-  }
-  const name = value.slice("$env:".length);
-  if (!ENV_NAME_PATTERN.test(name)) {
-    throw new ConfigError(
-      `invalid environment reference "${value}" in implementation parameter ${formatPath(path)} of ${file} (line ${lineAt(node, text)})`,
-    );
-  }
-  references.push({ path, name });
-}
-
-function formatPath(path: readonly (string | number)[]): string {
-  return path.map(String).join(".");
 }
 
 async function readConfiguration(file: string): Promise<string> {

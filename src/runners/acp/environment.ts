@@ -8,6 +8,7 @@ import { assertSeatbeltAvailable, createSandboxPolicy, SYSTEM_PATH } from "../..
 import type { AgentConfig } from "./agent.ts";
 
 export interface HarnessHome {
+  readonly environment: Readonly<Record<string, string>>;
   readonly path: readonly string[];
   readonly deps: string;
   /** Canonical persistent login directory; it may not exist before the first login. */
@@ -41,6 +42,7 @@ export async function resolveHome(agent: AgentConfig, declaringDir: string): Pro
     throw new ConfigError("deps and login must be separate, non-overlapping directories");
   }
   return {
+    environment: agent.environment,
     path: agent.home.path,
     deps,
     ...(login === undefined ? {} : { login }),
@@ -85,6 +87,7 @@ export async function assembleEnvironment(
     interactive,
   });
   const env: NodeJS.ProcessEnv = {
+    ...source.environment,
     ...(process.env.TERM === undefined ? {} : { TERM: process.env.TERM }),
     HOME: home,
     TMPDIR: dirs.scratch,

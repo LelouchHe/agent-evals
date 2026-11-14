@@ -71,6 +71,7 @@ while (my $line = <STDIN>) {
   save(".auth/requests", encode_json(\\@methods));
   my $result;
   if ($request->{method} eq "initialize") {
+    save(".auth/environment", ($ENV{AGENT_EVALS_TEST} // "") . "|$ENV{TMPDIR}");
     if ($scenario eq "security") {
       my $deps_write = open(my $d, ">>", "$home/.local/share/agent.pl") ? 1 : 0;
       my $outside_read = open(my $o, "<", $data[0]) ? 1 : 0;
@@ -118,6 +119,7 @@ while (my $line = <STDIN>) {
   const config = {
     command: ["agent", "login", scenario],
     acpCommand: ["agent", "acp", scenario],
+    environment: { AGENT_EVALS_TEST: "${TMPDIR}/declared" },
     home: { deps, login, path: [".local/bin"] },
     login: [".auth/token"],
   };

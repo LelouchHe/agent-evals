@@ -94,7 +94,7 @@ test("the packed CLI installs and runs without source or development dependencie
     runner: {
       $type: "pi",
       model: "opencode-go/test-model",
-      apiKey: "$env:MY_KEY",
+      apiKey: "${env:MY_KEY}",
       executable: runner.executable,
     },
     checks: [
@@ -102,7 +102,7 @@ test("the packed CLI installs and runs without source or development dependencie
       {
         $type: "judge",
         model: "opencode-go/test-judge",
-        apiKey: "$env:MY_KEY",
+        apiKey: "${env:MY_KEY}",
         executable: judge.executable,
         file: "hello.txt",
         rubric: ["The file satisfies the task."],
@@ -134,7 +134,7 @@ test("the packed CLI installs and runs without source or development dependencie
   const built = await invoke(join(project, "dist/cli.js"), ["view", configPath]);
   assert.equal(viewed.code, 0, viewed.stderr);
   assert.equal(viewed.stdout, built.stdout);
-  assert.match(viewed.stdout, /apiKey: \$env:MY_KEY/);
+  assert.match(viewed.stdout, /apiKey: \${env:MY_KEY}/);
   assert.deepEqual(await readdir(runtime), []);
   assert.ok(!(await readdir(cwd)).includes("count"), "view executed the environment lookup command");
 
@@ -148,7 +148,6 @@ test("the packed CLI installs and runs without source or development dependencie
     status: string;
     cleanup: { status: string };
     resolvedConfig: unknown;
-    references: { path: (string | number)[]; name: string }[];
     runner: { finalText: string | null };
     checks: { status: string }[];
   };
@@ -159,10 +158,6 @@ test("the packed CLI installs and runs without source or development dependencie
   );
   assert.equal(record.cleanup.status, "removed");
   assert.deepEqual(record.resolvedConfig, config);
-  assert.deepEqual(record.references, [
-    { path: ["runner", "apiKey"], name: "MY_KEY" },
-    { path: ["checks", 1, "apiKey"], name: "MY_KEY" },
-  ]);
   const details = JSON.parse(record.runner.finalText ?? "") as { apiKeyPresent: boolean; models: string };
   assert.equal(details.apiKeyPresent, true);
   assert.deepEqual(JSON.parse(details.models), {

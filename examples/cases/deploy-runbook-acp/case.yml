@@ -17,7 +17,7 @@ checks:
     unchanged: true
   - $type: judge
     model: opencode-go/deepseek-v4.1-flash
-    apiKey: $env:OPENCODE_API_KEY
+    apiKey: ${env:OPENCODE_API_KEY}
     file: diagnosis.md
     rubric:
       - The diagnosis identifies an expired artifact signing certificate as the cause.

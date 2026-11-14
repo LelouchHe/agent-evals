@@ -3,6 +3,7 @@ import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import type { ZodType } from "zod";
 import { ConfigError, errorMessage } from "./config.ts";
+import type { ValueSource } from "./values.ts";
 import type { RunRoot } from "./workspace.ts";
 
 export interface RunnerContext {
@@ -42,6 +43,8 @@ export interface Runner {
 
 export interface ImplementationContext {
   readonly authoringDir: string;
+  /** The run's placeholder sources, for parameters an implementation loads itself. */
+  readonly values: ValueSource;
 }
 
 export interface RunnerDefinition<P> {

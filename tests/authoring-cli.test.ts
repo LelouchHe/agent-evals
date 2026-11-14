@@ -98,7 +98,7 @@ test("view succeeds without Pi or environment values and annotates common versus
   await assert.rejects(() => access(lookupMarker), /ENOENT/);
 });
 
-test("view distinguishes references from quoted and block literals without reading .env", async (t) => {
+test("view shows placeholders and escaped literals as declared without reading .env", async (t) => {
   const cwd = await makeTempDir(t, "ae-view-refs-cwd-");
   const directory = await makeTempDir(t, "ae-view-refs-");
   const configPath = join(directory, "case.yml");
@@ -109,10 +109,8 @@ test("view distinguishes references from quoted and block literals without readi
       "runner:",
       "  $type: pi",
       "  model: p/m",
-      "  apiKey: $env:MY_KEY",
-      '  literal: "$env:MY_KEY"',
-      "  block: |",
-      "    $env:MY_KEY",
+      "  apiKey: ${env:MY_KEY}",
+      "  literal: $${env:MY_KEY}",
       "checks:",
       "  - $type: file",
       "    path: hello.txt",
@@ -124,9 +122,8 @@ test("view distinguishes references from quoted and block literals without readi
 
   const result = await runCli(t, ["view", configPath], { cwd, TMPDIR: cwd });
   assert.equal(result.code, 0, result.stderr);
-  assert.match(result.stdout, /^ {4}apiKey: \$env:MY_KEY$/m);
-  assert.equal((result.stdout.match(/^ {4}literal: "\$env:MY_KEY"$/gm) ?? []).length, 1);
-  assert.equal((result.stdout.match(/^ {4}block: "\$env:MY_KEY\\n"$/gm) ?? []).length, 1);
+  assert.match(result.stdout, /^ {4}apiKey: \$\{env:MY_KEY\}$/m);
+  assert.match(result.stdout, /^ {4}literal: \$\$\{env:MY_KEY\}$/m);
   await assert.rejects(() => access(marker), /ENOENT/);
 });
 
@@ -208,7 +205,7 @@ test("a run records the resolved configuration, source, and metadata-only case n
     "    runner:",
     "      $type: pi",
     "      model: opencode-go/original-model",
-    "      apiKey: $env:MY_KEY",
+    "      apiKey: ${env:MY_KEY}",
     "      thinking: low",
     `      executable: ${fake.executable}`,
     "    checks:",
@@ -240,8 +237,7 @@ test("a run records the resolved configuration, source, and metadata-only case n
   assert.equal(record.case.name, "../retained-name");
   assert.equal(record.resolvedConfig.input, original[0]?.replace("input: ", ""));
   assert.equal(record.resolvedConfig.runner.model, "opencode-go/original-model");
-  assert.equal(record.resolvedConfig.runner.apiKey, "$env:MY_KEY");
-  assert.deepEqual(record.references, [{ path: ["runner", "apiKey"], name: "MY_KEY" }]);
+  assert.equal(record.resolvedConfig.runner.apiKey, "${env:MY_KEY}");
   assert.doesNotMatch(resultText, /value-that-must-not-be-retained/);
 
   // Editing the authoring file later must not rewrite the retained run parameters.

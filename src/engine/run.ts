@@ -1,4 +1,5 @@
-import { cp, mkdir, mkdtemp, rm, stat } from "node:fs/promises";
+import { randomBytes } from "node:crypto";
+import { cp, mkdir, rm, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import {
@@ -29,8 +30,8 @@ import {
 import { createEnvSource, type EnvSource } from "./env-source.ts";
 import { placeCaseFiles } from "./files.ts";
 import { parseImplementationParams } from "./params.ts";
-import { expandReferences } from "./references.ts";
 import { truncate, truncateNullable } from "./truncate.ts";
+import { substituteValues, type ValueSource } from "./values.ts";
 import { openRunRoot, type RunRoot } from "./workspace.ts";
 
 const DEFAULT_TIMEOUT_MS = 300_000;
@@ -65,22 +66,27 @@ export async function runEvaluation(request: RunRequest): Promise<EvaluationReco
   }
   request.signal?.addEventListener("abort", onAbort, { once: true });
 
-  let registered: Awaited<ReturnType<typeof prepareImplementations>>;
-  try {
-    const source = request.envSource ?? createEnvSource(process.cwd(), abort.signal);
-    registered = await prepareImplementations(request, source);
-    await validateAuthoringAssets(request.case);
-  } catch (error) {
-    request.signal?.removeEventListener("abort", onAbort);
-    throw error;
-  }
-
-  const root = await mkdtemp(join(request.tempParent ?? tmpdir(), "run-"));
+  // Placeholders need the run directories' paths; they are created only after validation.
+  const root = join(request.tempParent ?? tmpdir(), `run-${randomBytes(6).toString("hex")}`);
   const workspaceDir = join(root, "workspace");
   const homeDir = join(root, "home");
   const configDir = join(root, "config");
   const scratchDir = join(root, "scratch");
   const baselineDir = join(root, "baseline");
+
+  let registered: Awaited<ReturnType<typeof prepareImplementations>>;
+  try {
+    registered = await prepareImplementations(request, {
+      env: request.envSource ?? createEnvSource(process.cwd(), abort.signal),
+      run: { HOME: homeDir, TMPDIR: scratchDir },
+    });
+    await validateAuthoringAssets(request.case);
+    // Exclusive creation, like mkdtemp: an existing path is an error, not reused.
+    await mkdir(root, { mode: 0o700 });
+  } catch (error) {
+    request.signal?.removeEventListener("abort", onAbort);
+    throw error;
+  }
 
   let runner: Runner | undefined;
   let cleanup: EvaluationRecord["cleanup"] = { status: "removed" };
@@ -238,7 +244,6 @@ export async function runEvaluation(request: RunRequest): Promise<EvaluationReco
       ...(request.case.name === undefined ? {} : { name: request.case.name }),
     },
     resolvedConfig: request.case.config,
-    ...(request.case.references.length === 0 ? {} : { references: request.case.references }),
     status,
     runner: runnerRecord,
     checks,
@@ -254,17 +259,17 @@ export async function runEvaluation(request: RunRequest): Promise<EvaluationReco
 
 async function prepareImplementations(
   request: RunRequest,
-  source: EnvSource,
+  values: ValueSource,
 ): Promise<{
   runnerType: string;
   runner: Runner;
   checks: readonly { readonly type: string; readonly checker: Checker }[];
 }> {
-  const context = { authoringDir: request.case.dir };
+  const context = { authoringDir: request.case.dir, values };
   const runnerDefinition = requireRunner(request.registry, request.case.config.runner.$type);
   const runnerParams = await parseImplementationParams(
     runnerDefinition.params,
-    await expandReferences(paramsOf(request.case.config.runner), request.case.references, ["runner"], source),
+    await substituteValues(paramsOf(request.case.config.runner), "runner", values),
     `runner "${runnerDefinition.type}"`,
   );
   const runner = await runnerDefinition.create(runnerParams, context);
@@ -274,7 +279,7 @@ async function prepareImplementations(
     const definition = requireChecker(request.registry, record.$type);
     const params = await parseImplementationParams(
       definition.params,
-      await expandReferences(paramsOf(record), request.case.references, ["checks", index], source),
+      await substituteValues(paramsOf(record), `checks[${index}]`, values),
       `checker "${definition.type}"`,
     );
     checks.push({ type: definition.type, checker: await definition.create(params, context) });

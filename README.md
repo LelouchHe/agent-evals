@@ -51,10 +51,10 @@ Reference local values from runner/checker parameters:
 runner:
   $type: pi
   model: opencode-go/deepseek-v4.1-flash
-  apiKey: $env:OPENCODE_API_KEY
+  apiKey: ${env:OPENCODE_API_KEY}
 ```
 
-Only an unquoted, complete `$env:NAME` reads from `.env` in the invocation working directory; quoted or block strings stay literal. There is no host-environment fallback. See [value rules](docs/configuration.md#values-from-env) for scope and quoting.
+`${env:NAME}` reads from `.env` in the invocation working directory and can sit inside other text; `$${` writes a literal `${`. There is no host-environment fallback. See [placeholders](docs/configuration.md#placeholders) for scope and the built-in `${HOME}` and `${TMPDIR}`.
 
 Start from [`.env.example`](.env.example). Values can be plain strings or explicit trusted lookup commands:
 
@@ -68,7 +68,7 @@ The engine reads requested entries lazily and caches each name once per run. It 
 
 Lookup commands run as trusted operator code from that directory, with the operator environment. Node `execFile` applies a five-second timeout, 64 KiB output limit and direct-process cancellation; descendants are operator-owned. Failures report names/status, not raw command output, and are not retried.
 
-`$env` is a value source, not a secrecy flag. Implementations own their outputs; the engine does not redact by field name or source. Use references rather than literal real keys in YAML, because declared literals are retained in results. Keep `.env` private and out of Git; do not execute someone else's lookup commands without trusting them.
+`${env:NAME}` is a value source, not a secrecy flag. Implementations own their outputs; the engine does not redact by field name or source. Use placeholders rather than literal real keys in YAML, because declared literals are retained in results. Keep `.env` private and out of Git; do not execute someone else's lookup commands without trusting them.
 
 ## Development
 

@@ -31,14 +31,7 @@ export type FieldOrigin =
   | { readonly file: string; readonly line: number; readonly kind: "common" }
   | { readonly file: string; readonly line: number; readonly kind: "case"; readonly caseName: string };
 
-/** One unquoted plain `$env:NAME` in an implementation parameter value. */
-export interface EnvReference {
-  /** Path relative to the loaded configuration root. */
-  readonly path: readonly (string | number)[];
-  readonly name: string;
-}
-
-/** Basic environment-variable name grammar used by `$env:NAME` references. */
+/** Basic environment-variable name grammar used by placeholders and declared variables. */
 export const ENV_NAME_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
 /** One source file resolved to a single case, or to common fields plus a selected case. */
@@ -48,8 +41,6 @@ export interface ResolvedCase {
   /** The selected named case, or absent for an ordinary single-case document. */
   readonly name?: string;
   readonly config: CaseConfig;
-  /** Unquoted plain `$env:NAME` values in runner/checker parameters. */
-  readonly references: readonly EnvReference[];
   /** One annotation per final top-level field in `config`. */
   readonly origins: Readonly<Record<string, FieldOrigin>>;
 }

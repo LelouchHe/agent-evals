@@ -41,6 +41,7 @@ const checkerContext: CheckerContext = {
 
 const implementationContext: ImplementationContext = {
   authoringDir: "/authoring",
+  values: { env: { require: async (name) => name }, run: { HOME: "/run/home", TMPDIR: "/run/tmp" } },
 };
 
 const exampleRunner: RunnerDefinition<ExampleParams> = {

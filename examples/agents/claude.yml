@@ -1,11 +1,16 @@
-# Prepare deps first; an isolated Claude installation and its temporary-directory
-# requirements have not yet been verified end to end. See docs/m2-plan.md.
+# deps holds Node, @agentclientprotocol/claude-agent-acp and a `claude` link to its
+# bundled binary under .local/bin. Authentication is a `claude setup-token` token
+# (subscription, long-lived, never refreshed), so no credential file is copied in.
+# Claude Code ignores TMPDIR and otherwise writes to the shared /tmp/claude-<uid>,
+# which the sandbox denies. See docs/m2-plan.md.
 command: [claude]
 acpCommand: [claude-agent-acp]
+environment:
+  CLAUDE_CODE_OAUTH_TOKEN: ${env:CLAUDE_OAUTH_TOKEN}
+  CLAUDE_CODE_TMPDIR: ${TMPDIR}
 home:
-  deps: $env:CLAUDE_DEPS
-  login: $env:CLAUDE_LOGIN
+  deps: ${env:CLAUDE_DEPS}
+  login: ${env:CLAUDE_LOGIN}
   path: [.local/bin]
 login:
   - .claude.json
-  - .claude/.credentials.json
