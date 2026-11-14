@@ -59,7 +59,7 @@ CLI config/login
 Definitions expose a `type`, a Zod `params` schema, and `create(params, context)`. Runner and checker are separate contracts.
 
 1. The registry selects the definition by `$type`.
-2. The engine resolves explicit parameter value references, then runs the declared schema once.
+2. The engine substitutes parameter [placeholders](configuration.md#placeholders), then runs the declared schema once.
 3. The factory receives ordinary typed fields plus the YAML declaring directory. It does not receive an environment-source or credential-lookup interface.
 4. The instance keeps its parameters; execution receives only runtime state:
 
@@ -77,8 +77,8 @@ Built-ins and trusted extensions share this path. Dynamic modules cross a locali
 
 A run follows the test lifecycle in [Writing Cases](cases.md#the-test-model): set up the environment, act, collect observations, assert, tear down. Teardown runs even after failure. Today the runner stops its processes and the engine removes the single runtime root; components added later, such as mocks, pair their own setup and teardown.
 
-1. **Load.** Resolve one case and preserve its declaration/reference metadata. Select definitions; obtain referenced values from the invocation `.env`, validate schemas, create instances and validate the fixture. The engine never interprets provider/key names. [Configuration](configuration.md#values-from-env) owns reference semantics.
-2. **Set up.** Make an atomic temporary root. The engine copies the fixture into `workspace` or starts empty, places each `files` entry on top, captures an initial `baseline`, and prepares independent `home`, `config` and `scratch`; source fixtures remain unchanged. The runner assembles its harness configuration, for Pi by staging selected skills with discovery disabled. The platform module builds the Seatbelt policy.
+1. **Load.** Resolve one case and preserve its declaration. Choose the run root's path without creating it. Select definitions; substitute placeholders from the invocation `.env` and the chosen run directories, validate schemas, create instances and validate the fixture. The engine never interprets provider/key names. [Configuration](configuration.md#placeholders) owns placeholder semantics.
+2. **Set up.** Create the chosen root exclusively; an existing path is an error. The engine copies the fixture into `workspace` or starts empty, places each `files` entry on top, captures an initial `baseline`, and prepares independent `home`, `config` and `scratch`; source fixtures remain unchanged. The runner assembles its harness configuration, for Pi by staging selected skills with discovery disabled. The platform module builds the Seatbelt policy.
 3. **Act.** The runner receives the input, directories, deadline and cancellation signal, and drives the harness. Pi runs its isolated RPC session under Seatbelt, with autonomous tool calls after one initial message.
 4. **Collect.** Await supported runner teardown before checks; the runner returns its final text. Timeouts, cancellation and execution failures are not negative judgments. See [M1 limits](m1-plan.md#known-limitations).
 5. **Assert.** Checkers inspect the still-live workspace/baseline. File regex work runs in a terminable worker; the judge reads selected evidence and starts a separate tool-free Pi invocation.
@@ -112,7 +112,7 @@ The host sandbox is a deliberate execution choice: real platform behavior is par
 - **Authoring assets:** operator-owned YAML, fixtures, skills and extensions. Config-relative resources resolve from the declaring file; executable extensions are not discovered from the agent-writable workspace. Extension code and `.env` lookup commands are trusted host code, not sandboxed test subjects.
 - **Evaluated runtime:** writable workspace and explicitly permitted per-run state. The initial baseline, case/check definitions, rubric and retained results stay outside the evaluated agent's intended access.
 - **Observations:** directory identity and path/symlink containment are checked before file reads. Non-regular and oversized evidence is an error, not a vacuous pass. A missing observation cannot prove a restraint was respected.
-- **Results:** declarations/reference metadata, source/case identity, outcomes, diagnostics and cleanup. Expanded parameters do not replace the declaration; runtime outputs remain the implementation's responsibility. No full resource snapshot is retained.
+- **Results:** declarations, source/case identity, outcomes, diagnostics and cleanup. Expanded parameters do not replace the declaration; runtime outputs remain the implementation's responsibility. No full resource snapshot is retained.
 
 Observations come from three sources defined in [Writing Cases](cases.md#why-the-trace-matters): the runner's trace (with output as its user-facing view), mock interaction records, and environment side effects. Currently the runner returns only final text, retained in the result but not checkable, and checkers observe files only. Trace and mocks are planned in the [Roadmap](roadmap.md#evidence-and-measurements).
 

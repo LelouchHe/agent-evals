@@ -23,6 +23,7 @@ async function runCase(
   const fixture = await makeAcpAgent(t, scenario);
   await mkdir(join(fixture.login, ".auth"), { recursive: true });
   await writeFile(join(fixture.login, ".auth/requests"), "[]");
+  await writeFile(join(fixture.login, ".auth/environment"), "");
   const casePath = join(fixture.root, "case.yml");
   await writeFile(
     casePath,
@@ -72,6 +73,10 @@ test(
       { type: "message", text: "wrote answer" },
     ]);
     assert.deepEqual(requests, ["initialize", "session/new", "session/set_config_option", "session/prompt"]);
+    // The agent file's environment reaches the process; ${TMPDIR} is the process's TMPDIR.
+    const [declared, tmpdir] = (await readFile(join(fixture.login, ".auth/environment"), "utf8")).split("|");
+    assert.equal(declared, `${tmpdir}/declared`);
+    assert.match(tmpdir ?? "", /\/run-[0-9a-f]{12}\/scratch$/);
     assert.deepEqual(await readdir(fixture.runtime), []);
   },
 );

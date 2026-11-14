@@ -45,7 +45,7 @@ Develop a coherent observation responsibility rather than accumulating unrelated
 - Selected retained evidence can enable later inspection or regrading. Do not equate this with always retaining a whole environment.
 - Add behavior, usage, cost and latency measurements when the observations support them. Repetition and comparison should build on ordinary case runs, not skill-specific pipelines.
 
-The normalized event schema and trace retention layout are not defined yet. No tracer plugin lifecycle, observation-reference language, JSON Pointer language or general interpolation mechanism is approved. The narrow `.env` parameter reference is separate from evidence collection. M1's small result/configuration record cannot reconstruct the removed workspace or its earlier resource contents.
+The normalized event schema and trace retention layout are not defined yet. No tracer plugin lifecycle, observation-reference language or JSON Pointer language is approved. The narrow `.env` parameter reference is separate from evidence collection. M1's small result/configuration record cannot reconstruct the removed workspace or its earlier resource contents.
 
 ## Host Platforms
 
@@ -57,8 +57,8 @@ The intended coverage is macOS, Linux and Windows, beginning with macOS and then
 
 The following product-design questions are **pending**, not implementation requirements or approved syntax. Session progress and agent coordination do not belong in this document.
 
-- **Additional value sources.** Fixed `.env` parameter references are implemented. Whether other sources, field-to-field references or interpolation are needed remains undecided; no general resolver framework is planned without a concrete case.
-- **Retaining effective configuration.** Which effective/defaulted values, if any, should be recorded beyond declarations and implementation outputs? References alone do not identify their earlier contents. No second config record, resource snapshot or framework-level sensitivity classification is approved.
+- **Additional value sources.** Placeholders read `${env:NAME}` and the built-in `${HOME}` and `${TMPDIR}`. A new source extends `${source:NAME}` when a concrete case needs it; field-to-field references remain undecided.
+- **Retaining effective configuration.** Which effective/defaulted values, if any, should be recorded beyond declarations and implementation outputs? Placeholders alone do not identify their earlier values. No second config record, resource snapshot or framework-level sensitivity classification is approved.
 - **Credential-command unlock UX.** The current direct lookup budget is five seconds. A longer budget for Touch ID/secret-manager authorization was suggested but not measured or approved. Raw command stdout/stderr must remain private.
 - **ACP permissions and capabilities.** Define the permission-answering policy and supported session/capability coverage without assuming every harness exposes identical operations.
 - **Varying one nested field.** Any declared part can be the subject, but composition is a disjoint top-level union, so comparing only `runner.model` repeats the whole runner record per case. Revisit only if real cases make the duplication costly.

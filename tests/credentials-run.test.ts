@@ -73,7 +73,7 @@ test("runner and judge share one cached environment value without leaking it", a
         {
           $type: "judge",
           model: "opencode-go/test-judge",
-          apiKey: "$env:OPENCODE_API_KEY",
+          apiKey: "${env:OPENCODE_API_KEY}",
           file: "hello.txt",
           rubric: ["ok"],
           executable: judge.executable,
@@ -82,7 +82,7 @@ test("runner and judge share one cached environment value without leaking it", a
       runner: {
         $type: "pi",
         model: "opencode-go/test-model",
-        apiKey: "$env:OPENCODE_API_KEY",
+        apiKey: "${env:OPENCODE_API_KEY}",
         executable: runner.executable,
       },
     }),
@@ -101,12 +101,8 @@ test("runner and judge share one cached environment value without leaking it", a
   assert.equal(record.status, "pass", record.error);
   assert.equal(record.runner.finalText, "api-key-present");
   assert.equal(record.checks[0]?.reason, "api-key-present");
-  assert.deepEqual(record.references, [
-    { path: ["checks", 0, "apiKey"], name: "OPENCODE_API_KEY" },
-    { path: ["runner", "apiKey"], name: "OPENCODE_API_KEY" },
-  ]);
-  assert.equal(record.resolvedConfig.runner.apiKey, "$env:OPENCODE_API_KEY");
-  assert.equal(record.resolvedConfig.checks[0]?.apiKey, "$env:OPENCODE_API_KEY");
+  assert.equal(record.resolvedConfig.runner.apiKey, "${env:OPENCODE_API_KEY}");
+  assert.equal(record.resolvedConfig.checks[0]?.apiKey, "${env:OPENCODE_API_KEY}");
   assert.equal(await readFile(join(invocation, "count"), "utf8"), "x");
   await assert.rejects(() => readFile(join(invocation, "unused-ran")), /ENOENT/);
   const resultText = await readFile(join(resultsDir, record.runId, "result.json"), "utf8");
@@ -135,7 +131,7 @@ test("different environment values reach only their own runner and judge process
         {
           $type: "judge",
           model: "deepseek/test-judge",
-          apiKey: "$env:DEEPSEEK_API_KEY",
+          apiKey: "${env:DEEPSEEK_API_KEY}",
           file: "hello.txt",
           rubric: ["ok"],
           executable: judge.executable,
@@ -144,7 +140,7 @@ test("different environment values reach only their own runner and judge process
       runner: {
         $type: "pi",
         model: "opencode-go/test-model",
-        apiKey: "$env:OPENCODE_API_KEY",
+        apiKey: "${env:OPENCODE_API_KEY}",
         executable: runner.executable,
       },
     }),
@@ -188,7 +184,7 @@ test("a missing required environment value fails before runtime resources and mo
       runner: {
         $type: "pi",
         model: "opencode-go/test-model",
-        apiKey: "$env:OPENCODE_API_KEY",
+        apiKey: "${env:OPENCODE_API_KEY}",
         executable: runner.executable,
       },
     }),
@@ -226,7 +222,7 @@ test("CLI resolves .env only from the invocation working directory", async (t) =
         {
           $type: "judge",
           model: "opencode-go/test-judge",
-          apiKey: "$env:OPENCODE_API_KEY",
+          apiKey: "${env:OPENCODE_API_KEY}",
           file: "hello.txt",
           rubric: ["ok"],
           executable: judge.executable,
@@ -235,7 +231,7 @@ test("CLI resolves .env only from the invocation working directory", async (t) =
       runner: {
         $type: "pi",
         model: "opencode-go/test-model",
-        apiKey: "$env:OPENCODE_API_KEY",
+        apiKey: "${env:OPENCODE_API_KEY}",
         executable: runner.executable,
       },
     }),
@@ -278,7 +274,7 @@ test("natural apiKey fields receive ordinary values from arbitrary environment n
         {
           $type: "judge",
           model: "test/judge-model",
-          apiKey: "$env:MY_JUDGE_KEY",
+          apiKey: "${env:MY_JUDGE_KEY}",
           file: "hello.txt",
           rubric: ["ok"],
           executable: judge.executable,
@@ -287,7 +283,7 @@ test("natural apiKey fields receive ordinary values from arbitrary environment n
       runner: {
         $type: "pi",
         model: "test/model",
-        apiKey: "$env:MY_RUNNER_KEY",
+        apiKey: "${env:MY_RUNNER_KEY}",
         executable: runner.executable,
       },
     }),
@@ -304,19 +300,15 @@ test("natural apiKey fields receive ordinary values from arbitrary environment n
   assert.equal(record.status, "pass", record.error);
   assert.equal(record.runner.finalText, "custom:true");
   assert.equal(record.checks[0]?.reason, "custom:true");
-  assert.equal(record.resolvedConfig.runner.apiKey, "$env:MY_RUNNER_KEY");
-  assert.equal(record.resolvedConfig.checks[0]?.apiKey, "$env:MY_JUDGE_KEY");
-  assert.deepEqual(record.references, [
-    { path: ["checks", 0, "apiKey"], name: "MY_JUDGE_KEY" },
-    { path: ["runner", "apiKey"], name: "MY_RUNNER_KEY" },
-  ]);
+  assert.equal(record.resolvedConfig.runner.apiKey, "${env:MY_RUNNER_KEY}");
+  assert.equal(record.resolvedConfig.checks[0]?.apiKey, "${env:MY_JUDGE_KEY}");
   assert.deepEqual(await readdir(tempParent), []);
 });
 
 test("an environment value that resembles a reference is not expanded again", async (t) => {
   const runner = await createFakePi(t, "runner-echo-api-key");
   const invocation = await makeTempDir(t, "ae-credentials-echo-");
-  await writeFile(join(invocation, ".env"), "WRAPPED_KEY=$env:OTHER\nOTHER=second-value\n");
+  await writeFile(join(invocation, ".env"), "WRAPPED_KEY=${env:OTHER}\nOTHER=second-value\n");
   const directory = await makeTempDir(t, "ae-credentials-echo-case-");
   const configPath = join(directory, "case.yml");
   await writeFile(
@@ -327,7 +319,7 @@ test("an environment value that resembles a reference is not expanded again", as
       runner: {
         $type: "pi",
         model: "opencode-go/test-model",
-        apiKey: "$env:WRAPPED_KEY",
+        apiKey: "${env:WRAPPED_KEY}",
         executable: runner.executable,
       },
     }),
@@ -342,11 +334,11 @@ test("an environment value that resembles a reference is not expanded again", as
     envSource: createEnvSource(invocation),
   });
   assert.equal(record.status, "pass", record.error);
-  assert.equal(record.runner.finalText, "$env:OTHER");
+  assert.equal(record.runner.finalText, "${env:OTHER}");
   assert.deepEqual(await readdir(tempParent), []);
 });
 
-test("only the selected case's references are resolved", async (t) => {
+test("only the selected case's placeholders are resolved", async (t) => {
   const runner = await createFakePi(t, "runner-api-key-details");
   const invocation = await makeTempDir(t, "ae-credentials-selected-");
   await script(invocation, "selected.sh", "printf x >> selected-count\nprintf 'synthetic-runner-key\n'");
@@ -367,7 +359,7 @@ test("only the selected case's references are resolved", async (t) => {
           runner: {
             $type: "pi",
             model: "opencode-go/test-model",
-            apiKey: "$env:SELECTED_KEY",
+            apiKey: "${env:SELECTED_KEY}",
             executable: runner.executable,
           },
         },
@@ -376,7 +368,7 @@ test("only the selected case's references are resolved", async (t) => {
           runner: {
             $type: "pi",
             model: "opencode-go/test-model",
-            apiKey: "$env:UNUSED_KEY",
+            apiKey: "${env:UNUSED_KEY}",
             executable: runner.executable,
           },
         },
@@ -395,7 +387,6 @@ test("only the selected case's references are resolved", async (t) => {
   assert.equal(record.status, "pass", record.error);
   assert.equal(await readFile(join(invocation, "selected-count"), "utf8"), "x");
   await assert.rejects(() => readFile(join(invocation, "unused-ran")), /ENOENT/);
-  assert.deepEqual(record.references, [{ path: ["runner", "apiKey"], name: "SELECTED_KEY" }]);
   assert.deepEqual(await readdir(tempParent), []);
 });
 

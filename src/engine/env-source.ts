@@ -7,7 +7,7 @@ import { ConfigError, errorMessage } from "./config.ts";
 const COMMAND_TIMEOUT_MS = 5_000;
 const COMMAND_MAX_OUTPUT_BYTES = 64 * 1024;
 
-/** Run-scoped access to `$env:NAME` values from the invocation `.env`. */
+/** Run-scoped access to `${env:NAME}` values from the invocation `.env`. */
 export interface EnvSource {
   /** Resolve one named value from the invocation `.env`, caching it per run. */
   require(name: string): Promise<string>;

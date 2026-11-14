@@ -26,23 +26,32 @@ These commands do not take a case. `config` uses `acpCommand`, performs ACP init
 command: [pi]
 acpCommand: [pi-acp]
 home:
-  deps: $env:PI_DEPS
-  login: $env:PI_LOGIN
+  deps: ${env:PI_DEPS}
+  login: ${env:PI_LOGIN}
   path: [.local/bin]
 login:
   - .pi/agent/auth.json
 ```
 
-| Field        | Rule                                                                                                                 |
-| ------------ | -------------------------------------------------------------------------------------------------------------------- |
-| `acpCommand` | Required non-empty argv for the ACP entry point.                                                                     |
-| `command`    | Optional native argv; required by the login helper.                                                                  |
-| `home.deps`  | Required caller-prepared software/settings directory, laid out like HOME.                                            |
-| `home.login` | Optional persistent login directory; required by the login helper. A first login may start with a missing directory. |
-| `home.path`  | Required list of HOME-relative command directories, followed by system directories on PATH.                          |
-| `login`      | HOME-relative paths describing the login directory's file composition. The login helper requires a non-empty list.   |
+| Field         | Rule                                                                                                                 |
+| ------------- | -------------------------------------------------------------------------------------------------------------------- |
+| `acpCommand`  | Required non-empty argv for the ACP entry point.                                                                     |
+| `command`     | Optional native argv; required by the login helper.                                                                  |
+| `environment` | Optional mapping of extra variables for both commands. Names other than `HOME`, `TMPDIR`, `PATH` and `TERM`.         |
+| `home.deps`   | Required caller-prepared software/settings directory, laid out like HOME.                                            |
+| `home.login`  | Optional persistent login directory; required by the login helper. A first login may start with a missing directory. |
+| `home.path`   | Required list of HOME-relative command directories, followed by system directories on PATH.                          |
+| `login`       | HOME-relative paths describing the login directory's file composition. The login helper requires a non-empty list.   |
 
-The ACP implementation declares one strict Zod schema; unknown fields, invalid argv and unsafe HOME-relative paths are errors. Agent YAML does not support an `env` field; `$env:NAME` supplies configuration values, not process environment variables. Standalone files use the same YAML restrictions and unquoted `$env` rules as case parameters. Directory paths resolve from the agent file; `.env` remains rooted at the invocation directory. The [ACP runner](#acp-runner-type-acp) takes the same object inline or by path.
+The ACP implementation declares one strict Zod schema; unknown fields, invalid argv and unsafe HOME-relative paths are errors. Standalone files use the same YAML restrictions and [placeholders](#placeholders) as case parameters, with `${HOME}` and `${TMPDIR}` naming the command's own directories. Directory paths resolve from the agent file; `.env` remains rooted at the invocation directory. The [ACP runner](#acp-runner-type-acp) takes the same object inline or by path.
+
+The process sees only `HOME` (the assembled HOME), `TMPDIR` (the command's temporary directory), `PATH` (`home.path` entries, then `/usr/bin:/bin:/usr/sbin:/sbin`), `TERM` when the invoking terminal sets it, and the declared `environment`. Nothing else is inherited from the operator. A harness that needs a secret or its own temporary-directory variable declares it, for example the [Claude example](../examples/agents/claude.yml):
+
+```yaml
+environment:
+  CLAUDE_CODE_OAUTH_TOKEN: ${env:CLAUDE_OAUTH_TOKEN}
+  CLAUDE_CODE_TMPDIR: ${TMPDIR}
+```
 
 Each command builds a fresh HOME: directories from `deps` are real and their files are read-only links; login files are copied, not linked. Dependencies must be self-contained (directory symlinks and special files are unsupported); only declared software and system directories are readable. The operator's ambient PATH, HOME and credentials are not inherited. Keep login directories evaluation-owned, separate from everyday credentials.
 
@@ -64,7 +73,7 @@ timeoutMs: 120000
 runner:
   $type: pi
   model: opencode-go/deepseek-v4.1-flash
-  apiKey: $env:OPENCODE_API_KEY
+  apiKey: ${env:OPENCODE_API_KEY}
 checks:
   - $type: file
     path: hello.txt
@@ -80,13 +89,13 @@ cases:
     runner:
       $type: pi
       model: opencode-go/deepseek-v4.1-flash
-      apiKey: $env:OPENCODE_API_KEY
+      apiKey: ${env:OPENCODE_API_KEY}
       skills: [skill]
   without-skill:
     runner:
       $type: pi
       model: opencode-go/deepseek-v4.1-flash
-      apiKey: $env:OPENCODE_API_KEY
+      apiKey: ${env:OPENCODE_API_KEY}
       skills: []
 ```
 
@@ -106,7 +115,7 @@ Select a name explicitly, even with one entry. `cases` must be a non-empty mappi
 | `timeoutMs` | Optional positive integer milliseconds; defaults to 300000. Bounds runner execution and is also each check's budget, not the whole run's wall time. |
 | `cases`     | Optional document-level selection control; not passed to execution.                                                                                 |
 
-Unknown common fields, invalid shapes and duplicate YAML keys are errors. There is one document/file: no `extends`, imported collections, nested `cases` or string interpolation. Explicit parameter references follow the rule below. Null is a value, not omission or deletion.
+Unknown common fields, invalid shapes and duplicate YAML keys are errors. There is one document/file: no `extends`, imported collections or nested `cases`. Implementation parameters may contain [placeholders](#placeholders). Null is a value, not omission or deletion.
 
 Anchor declarations, alias nodes and the scalar mapping key `<<` are rejected at every depth, including quoted `<<` keys. Parser warnings, including unknown tags such as `!include`, are errors. Ordinary string values containing `&`, `*`, `<<` or tag-like text remain data; built-in YAML tags that parse without warnings are not categorically banned.
 
@@ -123,17 +132,19 @@ Authoring resources are relative to the YAML file; checker targets are relative 
 
 The engine only copies; it assigns no meaning to a destination and knows no harness paths. A project-level skill is one use: place its directory where the harness discovers it, for example `.agents/skills/` for Pi or `.claude/skills/` for Claude Code.
 
-## Values from .env
+## Placeholders
 
 ```yaml
-apiKey: $env:KEY # lookup
-# apiKey: "$env:KEY"   # literal alternative
+apiKey: ${env:OPENCODE_API_KEY} # a value from the invocation .env
+url: https://${env:HOST}/v1 # embedded in text
+cache: ${TMPDIR}/cache # a built-in variable
+note: write $${env:X} # $${ is a literal ${
 ```
 
-- Only an unquoted **plain scalar** that completely matches `$env:NAME` is a reference. Quoted and block scalars are literal; embedded text is not interpolated.
-- References apply to selected runner/checker parameter values, including nested objects and array elements—not keys, `$type`, or Case-level fields. Arrays remain arrays.
-- `run` resolves values once from the invocation `.env`, then applies the implementation schema. Invalid/missing names fail; returned values are not recursively expanded, and strings are not implicitly converted to numbers/booleans.
-- `view` does no lookup and preserves the reference/literal distinction. Result declarations stay unexpanded, with reference locations recorded separately.
+- `${env:NAME}` reads `NAME` from the invocation `.env` ([Credentials](../README.md#credentials)). `${NAME}` reads a built-in variable: `HOME` and `TMPDIR` are the run's HOME and temporary directory, the same directories the runner gives its process; a preparation helper uses its own. Other sources and names are errors; nothing falls back to the operator's environment.
+- Placeholders apply to every string in the selected runner/checker parameters, nested objects and arrays included, and in standalone agent files—not keys, `$type` or Case-level fields. YAML quoting does not change them.
+- The engine chooses the run directories' paths first, substitutes, applies the implementation schema, and only then creates the directories. Substituted text is not scanned again and is not converted to numbers or booleans. Malformed placeholders in the selected case fail at load, also for `view`; a missing `.env` name fails before any run resource exists.
+- `view` and result declarations show placeholders unsubstituted; the declared text itself says which parts are placeholders.
 
 These are value-source rules, not secrecy rules. Implementations decide how values are used and exposed; the engine does not redact based on parameter names or source. File and command behavior is documented in [Credentials](../README.md#credentials).
 
@@ -145,13 +156,13 @@ On `run`, the engine validates each record once, reports schema errors with fiel
 
 ### Pi Runner (`$type: pi`)
 
-| Parameter    | Contract                                                                                                                   |
-| ------------ | -------------------------------------------------------------------------------------------------------------------------- |
-| `model`      | Required non-empty Pi model selector.                                                                                      |
-| `thinking`   | `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, or `max`; default `medium`.                                            |
-| `skills`     | Explicit config-relative skill files/directories; default empty. Automatic discovery is disabled.                          |
-| `apiKey`     | Optional non-empty string; use `$env:NAME` for private storage. Current transport requires `provider/model` when supplied. |
-| `executable` | Pi executable name/path; default `pi`.                                                                                     |
+| Parameter    | Contract                                                                                                                     |
+| ------------ | ---------------------------------------------------------------------------------------------------------------------------- |
+| `model`      | Required non-empty Pi model selector.                                                                                        |
+| `thinking`   | `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, or `max`; default `medium`.                                              |
+| `skills`     | Explicit config-relative skill files/directories; default empty. Automatic discovery is disabled.                            |
+| `apiKey`     | Optional non-empty string; use `${env:NAME}` for private storage. Current transport requires `provider/model` when supplied. |
+| `executable` | Pi executable name/path; default `pi`.                                                                                       |
 
 The adapter, not the engine, handles Pi authentication and model requirements. The key is passed in the isolated process environment through a non-secret Pi config reference, not argv or a plaintext key file. This requires a compatible Pi build with `models.json` API-key environment interpolation (verified with Pi 1.5.1); custom providers need Pi configuration beyond this adapter.
 
@@ -169,10 +180,10 @@ runner:
 
 | Parameter | Contract                                                                                                                                                                       |
 | --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `agent`   | Required. An inline [agent object](#acp-preparation-helpers), or a config-relative path to a standalone file holding one. Only `acpCommand` and `home` are used.               |
+| `agent`   | Required. An inline [agent object](#acp-preparation-helpers), or a config-relative path to a standalone file holding one. `acpCommand`, `environment` and `home` are used.     |
 | `config`  | Optional mapping of session config values (string or boolean), applied in declaration order. A key names an option's category when exactly one has it, otherwise an option ID. |
 
-A path-referenced file resolves its own directories from its location and its `$env:NAME` values from the invocation `.env`; an inline object follows the case's rules. Missing deps or an invalid login root are configuration errors before any run resource exists.
+A path-referenced file resolves its own directories from its location and its placeholders like the case's own parameters; an inline object is part of them. Missing deps or an invalid login root are configuration errors before any run resource exists.
 
 Each run assembles the harness home in the run's own HOME exactly as the helpers do, starts `acpCommand` in the workspace under the same sandbox, creates one session, applies `config`, then sends the input as one prompt. `agent-evals config <agent.yml>` lists the offered options. A key matching no option, or a value the agent does not offer, fails the run before prompting; set `model` first because other choices may depend on it. Skills and project settings come from the prepared workspace (`fixture` and `files`), not runner parameters.
 
@@ -203,9 +214,9 @@ The judge receives the task, selected regular-file evidence (or an explicit miss
 
 ## Inspecting and Recording
 
-`view` uses the same authoring resolver as `run`, then prints the resolved declaration and each top-level field's source file, 1-based declaration line, and common/selected-case origin. Case labels are JSON-escaped. Unquoted references stay unquoted; literal strings resembling references stay quoted. It does not show implementation defaults or invoke implementation schemas, factories, environment lookups or harnesses; it is not a runtime-readiness check.
+`view` uses the same authoring resolver as `run`, then prints the resolved declaration and each top-level field's source file, 1-based declaration line, and common/selected-case origin. Case labels are JSON-escaped. Placeholders are shown unsubstituted. It does not show implementation defaults or invoke implementation schemas, factories, environment lookups or harnesses; it is not a runtime-readiness check.
 
-`run` writes `.agent-evals/<run-id>/result.json` in the invocation directory by default; `--results-dir` changes the root. This is retained report data, not the evaluated workspace. Schema version 1 retains source path/optional case name, declared `resolvedConfig`, runner outcome, individual checks, overall status, diagnostics and cleanup status. Optional `references: [{path, name}]` identifies which declaration strings were references rather than literals. Expanded and schema-normalized/defaulted values do not replace the declaration; implementation outputs are retained normally. A runner that records a trace (currently `acp`) also writes `trace.json` beside it, including for failed, timed-out or cancelled runs: an ordered list of `message` and `thought` entries (consecutive chunks joined) and `tool` entries. ACP updates replace the fields they carry, so each tool entry is one `toolCallId` in its final state with the harness's own fields (`title`, `kind`, `status`, `rawInput`, `content`, ...); intermediate states are not kept. Non-text content and other session updates are not recorded. The trace is retained, not yet checkable; field meanings differ between harnesses, so it is meant for people and a judge, not field-level assertions. Literal keys authored in YAML are declaration data and are not automatically masked. No resource hashes or workspace snapshots are retained, so old resource contents cannot be reconstructed from their unchanged paths.
+`run` writes `.agent-evals/<run-id>/result.json` in the invocation directory by default; `--results-dir` changes the root. This is retained report data, not the evaluated workspace. Schema version 1 retains source path/optional case name, declared `resolvedConfig`, runner outcome, individual checks, overall status, diagnostics and cleanup status. Substituted and schema-normalized/defaulted values do not replace the declaration; implementation outputs are retained normally. A runner that records a trace (currently `acp`) also writes `trace.json` beside it, including for failed, timed-out or cancelled runs: an ordered list of `message` and `thought` entries (consecutive chunks joined) and `tool` entries. ACP updates replace the fields they carry, so each tool entry is one `toolCallId` in its final state with the harness's own fields (`title`, `kind`, `status`, `rawInput`, `content`, ...); intermediate states are not kept. Non-text content and other session updates are not recorded. The trace is retained, not yet checkable; field meanings differ between harnesses, so it is meant for people and a judge, not field-level assertions. Literal keys authored in YAML are declaration data and are not automatically masked. No resource hashes or workspace snapshots are retained, so old resource contents cannot be reconstructed from their unchanged paths.
 
 Overall statuses are `pass`, `fail`, `error`, `timeout`, and `cancelled`; individual checks are `pass`, `fail`, or `error`. Pass/fail summarizes satisfaction of the configured checks, not model/skill quality or an improvement claim. A normal negative judgment is `fail`; inability to execute or evaluate is `error`, with timeout/cancellation reported separately. Exit codes are 0 for pass, 1 for failed checks, and 2 for configuration/execution/checker/timeout/cancellation errors. Early configuration errors need not produce a run record.
 

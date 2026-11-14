@@ -193,14 +193,14 @@ test(
         ...fixture.config,
         home: { ...fixture.config.home, deps: "../deps", login: "../login" },
         acpCommand: undefined,
-      }) + 'acpCommand:\n  - agent\n  - acp\n  - $env:SELECT\n  - $env:SELECT\n  - "$env:MISSING"\n',
+      }) + "acpCommand:\n  - agent\n  - acp\n  - ${env:SELECT}\n  - ${env:SELECT}\n  - $${env:MISSING}\n",
     );
     const result = await runCliProcess(t, cli, ["config", path], {
       cwd: fixture.root,
       env: { ...process.env, TMPDIR: fixture.runtime },
     });
     assert.equal(result.code, 0, result.stderr);
-    assert.match(result.stdout, /success:\$env:MISSING/);
+    assert.match(result.stdout, /success:\${env:MISSING}/);
     assert.equal(await readFile(join(fixture.root, "count"), "utf8"), "x");
   },
 );
@@ -212,6 +212,7 @@ test("helpers reject invalid schemas, YAML reuse and run-only flags before launc
     [stringify({ ...fixture.config, login: ["../escape"] }), /login/],
     [stringify({ ...fixture.config, unknown: true }), /unknown/],
     [stringify({ ...fixture.config, env: { EXTRA: "unsupported" } }), /Unrecognized key.*env/],
+    [stringify({ ...fixture.config, environment: { PATH: "/elsewhere" } }), /environment\.PATH.*set by ACP setup/],
     [
       "__proto__:\n" +
         stringify(fixture.config)
@@ -223,7 +224,7 @@ test("helpers reject invalid schemas, YAML reuse and run-only flags before launc
     ["acpCommand: &cmd [agent]\ncommand: *cmd\n", /anchors|aliases/],
     ["acpCommand: !include foo\n", /unsupported YAML/],
     ["acpCommand: [agent]\nacpCommand: [other]\n", /invalid YAML/],
-    ["acpCommand: [agent]\nhome: $env:MISSING\n", /not defined/],
+    ["acpCommand: [agent]\nhome: ${env:MISSING}\n", /not defined/],
   ] as const) {
     await writeFile(join(fixture.root, ".env"), "OTHER=value\n");
     await writeFile(fixture.path, source);

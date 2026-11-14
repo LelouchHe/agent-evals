@@ -1,4 +1,5 @@
-import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { randomBytes } from "node:crypto";
+import { mkdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { stringify } from "yaml";
@@ -12,22 +13,24 @@ import { withSession } from "./session.ts";
 
 /** Helpers share the same typed agent configuration and isolated lifecycle. */
 export async function runAgentCommand(command: "config" | "login", path: string, signal: AbortSignal): Promise<string> {
-  const { params: agent, dir } = await loadImplementationParameters(
-    path,
-    agentSchema,
-    createEnvSource(process.cwd(), signal),
-  );
-  if (command === "login" && (agent.command === undefined || agent.home.login === undefined || !agent.login?.length)) {
-    throw new ConfigError("login requires command, home.login and a non-empty login file list");
-  }
-  signal.throwIfAborted();
-  const home = await resolveHome(agent, dir);
-  const directory = await mkdtemp(join(tmpdir(), "ae-acp-"));
+  // Placeholders need the directories' paths; they are created only after validation.
+  const directory = join(tmpdir(), `ae-acp-${randomBytes(6).toString("hex")}`);
   const dirs = {
     home: join(directory, "home"),
     workspace: join(directory, "workspace"),
     scratch: join(directory, "tmp"),
   };
+  const { params: agent, dir } = await loadImplementationParameters(path, agentSchema, {
+    env: createEnvSource(process.cwd(), signal),
+    run: { HOME: dirs.home, TMPDIR: dirs.scratch },
+  });
+  if (command === "login" && (agent.command === undefined || agent.home.login === undefined || !agent.login?.length)) {
+    throw new ConfigError("login requires command, home.login and a non-empty login file list");
+  }
+  signal.throwIfAborted();
+  const home = await resolveHome(agent, dir);
+  // Exclusive creation, like mkdtemp: an existing path is an error, not reused.
+  await mkdir(directory, { mode: 0o700 });
   const failures: unknown[] = [];
   let output = "";
   let environment: Awaited<ReturnType<typeof assembleEnvironment>> | undefined;

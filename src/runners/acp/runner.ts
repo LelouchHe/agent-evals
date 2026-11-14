@@ -2,7 +2,6 @@ import { methods, type SessionConfigOption } from "@agentclientprotocol/sdk";
 import { z } from "zod";
 import { loadImplementationParameters } from "../../engine/authoring.ts";
 import { resolveAuthoringAsset } from "../../engine/config.ts";
-import { createEnvSource } from "../../engine/env-source.ts";
 import type { Runner, RunnerContext, RunnerDefinition, RunnerOutcome } from "../../engine/registry.ts";
 import { spawnSupervised, type SupervisedProcess } from "../../platform/macos/supervise.ts";
 import { agentSchema } from "./agent.ts";
@@ -30,7 +29,7 @@ export const acpRunner: RunnerDefinition<AcpRunnerParams> = {
         ? await loadImplementationParameters(
             resolveAuthoringAsset(context.authoringDir, params.agent, "acp runner agent"),
             agentSchema,
-            createEnvSource(process.cwd()),
+            context.values,
           )
         : { params: params.agent, dir: context.authoringDir };
     return new AcpRunner(agent.acpCommand, await resolveHome(agent, dir), params.config);

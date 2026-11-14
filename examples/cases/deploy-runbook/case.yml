@@ -14,7 +14,7 @@ checks:
   - $type: judge
     # Independent Pi invocation; omitted thinking uses the checker default.
     model: opencode-go/deepseek-v4.1-flash
-    apiKey: $env:OPENCODE_API_KEY
+    apiKey: ${env:OPENCODE_API_KEY}
     file: diagnosis.md
     rubric:
       - The diagnosis identifies an expired artifact signing certificate as the cause.
@@ -24,7 +24,7 @@ cases:
     runner:
       $type: pi
       model: opencode-go/deepseek-v4.1-flash
-      apiKey: $env:OPENCODE_API_KEY
+      apiKey: ${env:OPENCODE_API_KEY}
       # Resolved relative to this file and loaded explicitly. Discovered skills,
       # extensions, MCP servers, sessions, and global configuration stay disabled.
       skills:
@@ -35,5 +35,5 @@ cases:
     runner:
       $type: pi
       model: opencode-go/deepseek-v4.1-flash
-      apiKey: $env:OPENCODE_API_KEY
+      apiKey: ${env:OPENCODE_API_KEY}
       skills: []
