@@ -68,7 +68,7 @@ Use deterministic checks for exact facts and a judge for qualitative criteria. A
 
 Do not create routing-versus-behavior pipelines. Skill loading, tool choices, restraint and result quality are concerns expressed through checks and evidence when those observations exist.
 
-Environment and interaction evidence is stronger than an agent's own account alone. Shell collaborator mocks with fixed results are implemented in [M3](m3-plan.md), their remaining actions and interaction checks are planned in [M3](m3-plan.md) and [M4](m4-plan.md), and broader directions in [Roadmap](roadmap.md); none of this is added through ad hoc Case fields.
+Environment and interaction evidence is stronger than an agent's own account alone. Shell collaborator mocks with fixed results are implemented ([usage](mocks.md), [plan](m3-plan.md)), their remaining actions and interaction checks are planned in [M3](m3-plan.md) and [M4](m4-plan.md), and broader directions in [Roadmap](roadmap.md); none of this is added through ad hoc Case fields.
 
 ## Keep Validation Data Honest
 

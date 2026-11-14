@@ -152,7 +152,7 @@ The engine only copies; it assigns no meaning to a destination and knows no harn
 
 ## Mocks
 
-A case may replace a `PATH` command with a fixed result. The evaluated process still resolves and runs the command; the engine answers on the host and records the call.
+A case may replace a `PATH` command with a fixed result for one run:
 
 ```yaml
 mocks:
@@ -161,23 +161,9 @@ mocks:
       return:
         exitCode: 1
         stderr: "release commands are disabled\n"
-    npm:
-      return: {}
 ```
 
-| Field             | Contract                                                                                   |
-| ----------------- | ------------------------------------------------------------------------------------------ |
-| `shell`           | Required mapping from a bare command name to one rule. Names may not contain `/`.          |
-| `<name>.return`   | Required fixed result. `exitCode` defaults to `0`, `stdout` and `stderr` to empty strings. |
-| `return.exitCode` | Integer 0–255.                                                                             |
-| `return.stdout`   | String written to the call's standard output, used exactly as written.                     |
-| `return.stderr`   | String written to the call's standard error, used exactly as written.                      |
-
-Only this subset is implemented. `args`, `run`, `pass`, a list of rules and workspace-relative targets are configuration errors, as are unknown fields, so unsupported syntax never silently falls back to the real command. Mock text is literal data: [placeholders](#placeholders) are not expanded.
-
-Mocks need a runner that can wire them, which today is `acp` only; declaring them on the native `pi` runner is a configuration error before any run directory exists. Inside the sandbox each name is a thin forwarder ahead of `home.path` on `PATH`, and the result and the call records stay on the host. Only calls looked up through `PATH` are intercepted: absolute paths, shell builtins and a command already resolved to another path are not. Standard input is not forwarded. Standard output and error arrive after the call completes, not streamed, and their original interleaving is lost. A command whose forwarder cannot reach the host fails with exit code 126.
-
-Calls from scripts are intercepted because children inherit `PATH`. Undeclared commands resolve as usual and are not recorded. Nothing hides the forwarder: `which` and reading it reveal that the command is substituted, never the rules, results or records.
+[Mocks](mocks.md) owns what mocks do, the supported fields and defaults, a complete case, `mocks.json` and the current limitations.
 
 ## Placeholders
 

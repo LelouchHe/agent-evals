@@ -63,6 +63,8 @@ Interception relies on command lookup and on nothing else: no hook, injected lib
 
 ### Agreed outer shape
 
+The full agreed shape, only partly implemented: today one `return` rule for a bare `PATH` name runs, and the rest is planned ([current usage](mocks.md)).
+
 ```yaml
 mocks:
   shell:
@@ -93,12 +95,10 @@ mocks:
 
 ## Implemented Step
 
-[Configuration Reference](configuration.md#mocks) owns the supported subset, defaults and `mocks.json`; only the parts this step verified are repeated here.
+Step 1 is implemented: the engine writes the forwarders, runs the host service, records every call and retains `mocks.json` beside `trace.json`; the `acp` runner declares mock support and wires the forwarder directory into `PATH` and its sandbox policy, while the native `pi` runner refuses a case that declares mocks. [Mocks](mocks.md) owns current usage, defaults, `mocks.json` and limitations.
 
-- **Engine and runner split.** The engine parses `mocks`, writes one forwarder under `<run>/forward`, hard-links it once per target into `<run>/bin`, runs the host service and records calls. The `acp` runner declares `mocks: true`, puts that directory first on the process `PATH` and adds it to the policy's readable roots, never to the writable ones. The native `pi` runner does not, so `mocks` there is a `ConfigError` before any run directory exists.
 - **Lifecycle.** The host starts before `Runner.run` and closes after `Runner.stop` resolves, so a call from a process that outlives the turn is still answered and recorded.
 - **Socket location.** The per-run socket lives directly in the temporary directory as `run-<id>.sock`, not beside the run directories: a Unix socket path is limited to about 104 bytes and the run root's own path plus the socket name can exceed it. The forwarder receives the path in its text. The engine removes the socket when it closes the host.
-- **Defaults.** `return` defaults to `exitCode: 0` with empty `stdout` and `stderr`.
 - **Not yet enforced.** Seatbelt denial of real binaries, `run`/`pass` faults ending the run, and unmatched-call denial are later steps, so an absolute-path call still reaches the real command.
 
 ## Verified Constraints

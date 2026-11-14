@@ -85,6 +85,7 @@ The pinned development toolchain's `minimatch@10.2.6` has [GHSA-g3hv-75wg-m249](
 | [Architecture](docs/architecture.md)             | Which modules cooperate, through which interfaces, to execute a case?                 |
 | [Configuration Reference](docs/configuration.md) | How do YAML, selection, parameters, view and results work?                            |
 | [Writing Cases](docs/cases.md)                   | How should tasks, fixtures and assertions be designed?                                |
+| [Mocks](docs/mocks.md)                           | How do I substitute a command, and what does `mocks.json` contain?                    |
 | [Roadmap](docs/roadmap.md)                       | What is the target shape, and which capabilities are planned rather than implemented? |
 | [M1 Delivery](docs/m1-plan.md)                   | What shipped in M1, what was verified, and which limits remain?                       |
 | [M2 Delivery](docs/m2-plan.md)                   | How do ACP harnesses, isolated HOME assembly and trace evidence work?                 |
