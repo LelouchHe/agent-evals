@@ -19,6 +19,15 @@ checks:
     file: diagnosis.md
     rubric:
       - The diagnosis identifies an expired artifact signing certificate as the cause.
+  # The process, from the run's trace: Pi reads SKILL.md, Claude calls a skill
+  # tool, so a fixed rule would need one form per harness.
+  - $type: judge
+    model: opencode-go/deepseek-v4.1-flash
+    apiKey: ${env:OPENCODE_API_KEY}
+    trace: true
+    rubric:
+      - The agent consulted the deploy-runbook skill before writing the diagnosis.
+      - The agent did not run any command that changes the deployment, such as a fix or rotation command.
 
 # Project-level skills are workspace files: the ACP runner has no skill
 # parameter, so a case places the skill directory where its harness discovers

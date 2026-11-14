@@ -1,6 +1,6 @@
 # M2: Observable Runs
 
-Status: partial implementation. Step A.1 is implemented: the preparation helpers and the ACP evaluation runner. The ACP runner retains a merged trace and runs Claude Code from declared data alone; trace evidence for the judge and mocks remain planned. [Writing Cases](cases.md#the-test-model) defines the trace, interaction and side-effect sources this milestone makes real. Current usage is documented in [Configuration Reference](configuration.md#acp-runner-type-acp); a full installation walkthrough is not yet verified.
+Status: partial implementation. Step A.1 is implemented: the preparation helpers and the ACP evaluation runner. The ACP runner retains a merged trace that the judge can take as evidence, and runs Claude Code from declared data alone; mocks remain planned. [Writing Cases](cases.md#the-test-model) defines the trace, interaction and side-effect sources this milestone makes real. Current usage is documented in [Configuration Reference](configuration.md#acp-runner-type-acp); a full installation walkthrough is not yet verified.
 
 ## Scope
 
@@ -8,7 +8,7 @@ Two independent parts. Neither depends on the other's mechanism.
 
 - **A. Trace.** One generic ACP runner records a normalized trace of each run; output is the trace's user-facing view. Checks can assert on output and trace. Delivered in three steps:
   1. The generic ACP runner with a caller-prepared harness home (`deps` and `login`), ACP config validation, the standalone `config` and `login` preparation commands; Pi through pi-acp reproduces the native runner's example results.
-  2. The runner assembles and retains the trace (done); the judge can take the trace as evidence.
+  2. The runner assembles and retains the trace; the judge can take it as evidence (done).
   3. Claude Code runs through the same runner with only its own `deps` and `login`, proving no harness-specific code is needed.
 - **B. Mocks.** Case-owned mocks replace collaborators at the environment boundary and record the calls that reach them. Checks can assert on those records.
 
@@ -30,7 +30,8 @@ The registered `acp` runner completes step A.1. It reuses the helpers' HOME asse
 - **Trace (A.2, first part):** the runner merges session updates into `trace.json` ([format](configuration.md#inspecting-and-recording)). A live Pi `with-skill` run produced a 7 KB trace showing the log read, the `SKILL.md` read and the written diagnosis.
 - **Claude Code (A.3, live 2026-11-14):** the same evaluation through `claude-agent-acp` 0.107.0 with `haiku`, the skill placed at `.claude/skills/`, the [Claude example](../examples/agents/claude.yml) unchanged and nothing Claude-specific in code. `with-skill` passed all three checks and its trace shows a `Load skill: deploy-runbook` tool call; `without-skill` failed the pattern and judge checks. One run each; no token appeared in results or traces.
 - **Examples (2026-11-14):** [`deploy-runbook`](../examples/cases/deploy-runbook/case.yml) now holds the Pi and Claude ACP cases; [`deploy-runbook-native`](../examples/cases/deploy-runbook-native/case.yml) is the native-runner version with the same assets. One live run of each ACP case: both `with-skill` cases passed all three checks; both `without-skill` cases failed the pattern and judge checks. The native `with-skill` case still passes.
-- **Still planned:** trace evidence for the judge (A.2), mocks (B). The native Pi runner stays.
+- **Trace evidence (A.2, 2026-11-14):** `judge` takes `trace: true`; the `deploy-runbook` example adds a trace judge. One live run of each case: the same rubric statement recognized Pi reading `SKILL.md` and Claude's `Load skill` call in both `with-skill` cases and found no skill use in both `without-skill` cases; no case ran a deployment-changing command.
+- **Still planned:** mocks (B). The native Pi runner stays.
 
 ## Runner Configuration
 
@@ -243,4 +244,4 @@ The example uses `claude setup-token` ([steps](configuration.md#claude-code-toke
 - Permission answering: the runner currently approves every request; whether and how a case configures this is open.
 - Mock syntax, where call expectations live, and the default for unmatched calls. Command mocks sit in a per-run directory ahead of `home.path`.
 - MCP server names: a mock must use the real server's name to look the same, and harnesses may format tool names differently.
-- Trace truncation: tool output is retained as the harness reports it.
+- Large traces: `trace.json` and the judge prompt keep tool output whole. Cutting it for the judge, or giving the judge read-only tools to search the file, waits for a trace that does not fit; a tool-using judge would widen what untrusted trace content can steer.

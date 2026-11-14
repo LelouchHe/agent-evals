@@ -8,7 +8,7 @@ Treat a case like a test: arrange an environment, send input, observe what happe
 | ------------------ | -------------------------------------------------------------------------------------------------------- | -------------------------------------- |
 | Input              | The user's prompts: the first message and any later turns.                                               | First message only.                    |
 | Output             | The messages the agent returns to the user. A view of the trace, not a separate record.                  | Final text retained, not checkable.    |
-| Trace              | How the agent ran: messages, reasoning, tool requests and results, skill loading, usage.                 | ACP runner: retained, not checkable.   |
+| Trace              | How the agent ran: messages, reasoning, tool requests and results, skill loading, usage.                 | ACP runner; judge evidence.            |
 | Interactions       | Calls that reached a collaborator, recorded by its mock.                                                 | Planned.                               |
 | Side effects       | Changes to the environment: files, commands, network and other state.                                    | Files only.                            |
 | Fixture            | Fixed initial data, such as the files copied into the workspace. Part of the environment, not all of it. | `fixture`.                             |

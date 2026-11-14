@@ -345,3 +345,51 @@ test("expanded values are validated by the implementation schema without coercio
   assert.deepEqual(await readdir(resultsDir), []);
   assert.deepEqual(await readdir(tempParent), []);
 });
+
+test("checkers receive the runner's trace, and none when the runner records no trace", async (t) => {
+  const traces: (CheckerContext["trace"] | "unset")[] = [];
+  const directory = await makeTempDir(t, "ae-typed-trace-");
+  for (const recorded of [[{ type: "message" as const, text: "done" }], undefined]) {
+    const registry = createRegistry();
+    addRunner(
+      registry,
+      {
+        type: "tracing-runner",
+        params: z.strictObject({}),
+        create: () => ({
+          run: async () => ({ finalText: "done", diagnostics: [] }),
+          stop: async () => {},
+          ...(recorded === undefined ? {} : { trace: () => recorded }),
+        }),
+      },
+      "test",
+    );
+    addChecker(
+      registry,
+      {
+        type: "trace-recorder",
+        params: z.strictObject({}),
+        create: () => ({
+          check: async (context) => {
+            traces.push("trace" in context ? context.trace : "unset");
+            return [{ checker: "trace-recorder", subject: "trace", status: "pass", reason: "recorded" }];
+          },
+        }),
+      },
+      "test",
+    );
+    const casePath = join(directory, "case.yml");
+    await writeFile(
+      casePath,
+      stringify({ input: "task", runner: { $type: "tracing-runner" }, checks: [{ $type: "trace-recorder" }] }),
+    );
+    const record = await runEvaluation({
+      case: await loadCase(casePath),
+      registry,
+      resultsDir: join(directory, "results"),
+      tempParent: directory,
+    });
+    assert.equal(record.status, "pass", record.error);
+  }
+  assert.deepEqual(traces, [[{ type: "message", text: "done" }], "unset"]);
+});

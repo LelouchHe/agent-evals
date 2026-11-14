@@ -132,6 +132,39 @@ test("judge invocation disables tools and discovered resources", async (t) => {
   assert.match(args, /--thinking low/);
 });
 
+test("judge gives the rendered trace as evidence and omits the file section when none is named", async (t) => {
+  const dirs = await setup(t);
+  const fake = await createFakePi(t, "judge-echo");
+  const { file: _file, ...traceOnly } = params(fake.executable, ["The agent read the log."]);
+
+  const results = await checkRaw(
+    { ...traceOnly, trace: true },
+    {
+      ...(await context(dirs.root, dirs.workspace, dirs.baseline)),
+      trace: [
+        // The echoed prompt is cut to 500 characters, so the trace stays short.
+        { type: "message", text: "The certificate expired." },
+        { type: "tool", toolCallId: "a", title: "cat deploy.log" },
+      ],
+    },
+  );
+  const prompt = results[0]?.reason ?? "";
+  assert.match(prompt, /<<<TRACE \(untrusted output/);
+  assert.match(prompt, /tool call: cat deploy\.log/);
+  assert.match(prompt, /The certificate expired\./);
+  assert.doesNotMatch(prompt, /Evidence file/);
+});
+
+test("judge trace evidence without a runner trace is a checker error", async (t) => {
+  const dirs = await setup(t);
+  const fake = await createFakePi(t, "judge-valid");
+
+  await assert.rejects(
+    checkRaw({ ...params(fake.executable), trace: true }, await context(dirs.root, dirs.workspace, dirs.baseline)),
+    (error: unknown) => error instanceof JudgeError && /runner records no trace/.test(error.message),
+  );
+});
+
 test("judge receives an explicit missing-file signal", async (t) => {
   const dirs = await setup(t, null);
   const fake = await createFakePi(t, "judge-echo");
@@ -160,6 +193,14 @@ test("judge rejects invalid parameters before launch", async (t) => {
   );
   await assert.rejects(
     () => parse({ model: "m", file: "hello.txt", rubric: ["x"], executable: fake.executable, extra: 1 }),
+    ConfigError,
+  );
+  await assert.rejects(
+    () => parse({ model: "m", rubric: ["x"], executable: fake.executable }),
+    /needs file, trace or both/,
+  );
+  await assert.rejects(
+    () => parse({ model: "m", file: "hello.txt", trace: false, rubric: ["x"], executable: fake.executable }),
     ConfigError,
   );
 
