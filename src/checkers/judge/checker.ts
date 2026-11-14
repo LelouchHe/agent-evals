@@ -10,15 +10,23 @@ import { assertSeatbeltAvailable } from "../../platform/macos/policy.ts";
 import { invokePi, resolvePiExecutable, type PiSessionError } from "../../runners/pi/session.ts";
 import { nonEmptyTrimmedString, thinkingSchema } from "../../runners/pi/params.ts";
 import { buildJudgePrompt } from "./prompt.ts";
+import { renderTrace } from "./trace.ts";
 
-const judgeParamsSchema = z.strictObject({
-  model: nonEmptyTrimmedString,
-  thinking: thinkingSchema.default("medium"),
-  rubric: z.array(nonEmptyTrimmedString).min(1, "must contain at least one statement"),
-  file: runRelativePathSchema,
-  executable: nonEmptyTrimmedString.default("pi"),
-  apiKey: nonEmptyTrimmedString.optional(),
-});
+const judgeParamsSchema = z
+  .strictObject({
+    model: nonEmptyTrimmedString,
+    thinking: thinkingSchema.default("medium"),
+    rubric: z.array(nonEmptyTrimmedString).min(1, "must contain at least one statement"),
+    /** A workspace file given as evidence. */
+    file: runRelativePathSchema.optional(),
+    /** Give the run's trace as evidence; the runner must record one. */
+    trace: z.literal(true).optional(),
+    executable: nonEmptyTrimmedString.default("pi"),
+    apiKey: nonEmptyTrimmedString.optional(),
+  })
+  .refine((params) => params.file !== undefined || params.trace !== undefined, {
+    message: "needs file, trace or both as evidence",
+  });
 
 type JudgeParams = z.output<typeof judgeParamsSchema>;
 
@@ -38,7 +46,7 @@ export class JudgeError extends Error {
   }
 }
 
-/** Independent Pi invocation that evaluates task and file evidence against a rubric. */
+/** Independent Pi invocation that evaluates the task and file or trace evidence against a rubric. */
 export const judgeChecker: CheckerDefinition<JudgeParams> = {
   type: "judge",
   params: judgeParamsSchema,
@@ -58,16 +66,10 @@ class JudgeChecker implements Checker {
 
   readonly check = async (context: CheckerContext): Promise<readonly CheckResult[]> => {
     const parsed = this.#params;
-    let fileContent: string | null;
-    try {
-      fileContent = (await readRunFile(context.workspace, parsed.file)).toString("utf8");
-    } catch (error) {
-      if (isMissing(error)) {
-        fileContent = null;
-      } else {
-        throw new JudgeError(`could not read judge evidence ${parsed.file}: ${errorMessage(error)}`);
-      }
+    if (parsed.trace && context.trace === undefined) {
+      throw new JudgeError("trace evidence requested, but this runner records no trace");
     }
+    const file = parsed.file === undefined ? undefined : await readEvidence(context, parsed.file);
 
     const judgeDir = await mkdtemp(join(context.runRootDir, "judge-"));
     try {
@@ -92,8 +94,8 @@ class JudgeChecker implements Checker {
         },
         buildJudgePrompt({
           task: context.input,
-          file: parsed.file,
-          fileContent,
+          ...(file === undefined ? {} : { file }),
+          ...(parsed.trace ? { trace: renderTrace(context.trace!) } : {}),
           rubric: parsed.rubric,
         }),
         { timeoutMs: context.timeoutMs, signal: context.signal },
@@ -112,6 +114,19 @@ class JudgeChecker implements Checker {
       }
     }
   };
+}
+
+/** A workspace file's text, or null content when it does not exist. */
+async function readEvidence(
+  context: CheckerContext,
+  path: string,
+): Promise<{ readonly path: string; readonly content: string | null }> {
+  try {
+    return { path, content: (await readRunFile(context.workspace, path)).toString("utf8") };
+  } catch (error) {
+    if (isMissing(error)) return { path, content: null };
+    throw new JudgeError(`could not read judge evidence ${path}: ${errorMessage(error)}`);
+  }
 }
 
 function parseVerdict(text: string | null, rubric: readonly string[], diagnostics: readonly string[]): CheckResult[] {

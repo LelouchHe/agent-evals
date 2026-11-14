@@ -69,6 +69,8 @@ export interface CheckerContext {
   readonly baseline: RunRoot;
   readonly runRootDir: string;
   readonly input: string;
+  /** The runner's trace, when it records one. */
+  readonly trace?: readonly TraceEntry[];
   readonly timeoutMs: number;
   readonly signal: AbortSignal;
 }

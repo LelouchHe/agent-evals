@@ -221,19 +221,31 @@ At least one assertion is required; each produces its own result. Regex work run
 
 ### Judge Checker (`$type: judge`)
 
-| Parameter                                   | Contract                                                  |
-| ------------------------------------------- | --------------------------------------------------------- |
-| `model`, `thinking`, `executable`, `apiKey` | Same meanings as for Pi; judge invocation is independent. |
-| `file`                                      | Required workspace-relative evidence file.                |
-| `rubric`                                    | Required non-empty list of non-empty statements.          |
+| Parameter                                   | Contract                                                   |
+| ------------------------------------------- | ---------------------------------------------------------- |
+| `model`, `thinking`, `executable`, `apiKey` | Same meanings as for Pi; judge invocation is independent.  |
+| `file`                                      | Optional workspace-relative evidence file.                 |
+| `trace`                                     | Optional literal `true`: give the run's trace as evidence. |
+| `rubric`                                    | Required non-empty list of non-empty statements.           |
 
-The judge receives the task, selected regular-file evidence (or an explicit missing-file signal), and rubric. Its separate Pi invocation has no tools and no access to the evaluated workspace. Verdict JSON must have exactly one criterion per rubric item, each with boolean `pass` and non-empty `reason`. Extra fields/criterion labels are ignored. Valid negative judgments are `fail`; malformed, absent or wrong-count verdicts are checker errors.
+At least one of `file` and `trace` is required; with both, every statement is judged against both.
+
+```yaml
+- $type: judge
+  model: opencode-go/deepseek-v4.1-flash
+  apiKey: ${env:OPENCODE_API_KEY}
+  trace: true
+  rubric:
+    - The agent consulted the deploy-runbook skill before writing the diagnosis.
+```
+
+The judge receives the task, the selected regular-file evidence (or an explicit missing-file signal), the rendered trace, and the rubric. The trace is rendered in run order without cutting: messages, reasoning, and each tool call's title, kind, status, input and output. Use it for process questions a fixed rule cannot answer across harnesses, such as whether a skill was consulted (Pi reads `SKILL.md`; Claude calls a skill tool). A requested call shows what the agent asked for, not every effect, and harnesses differ in what they report (reasoning may be absent). `trace: true` with a runner that records no trace, such as the native Pi runner, is a checker error. Its separate Pi invocation has no tools and no access to the evaluated workspace. Verdict JSON must have exactly one criterion per rubric item, each with boolean `pass` and non-empty `reason`. Extra fields/criterion labels are ignored. Valid negative judgments are `fail`; malformed, absent or wrong-count verdicts are checker errors.
 
 ## Inspecting and Recording
 
 `view` uses the same authoring resolver as `run`, then prints the resolved declaration and each top-level field's source file, 1-based declaration line, and common/selected-case origin. Case labels are JSON-escaped. Placeholders are shown unsubstituted. It does not show implementation defaults or invoke implementation schemas, factories, environment lookups or harnesses; it is not a runtime-readiness check.
 
-`run` writes `.agent-evals/<run-id>/result.json` in the invocation directory by default; `--results-dir` changes the root. This is retained report data, not the evaluated workspace. Schema version 1 retains source path/optional case name, declared `resolvedConfig`, runner outcome, individual checks, overall status, diagnostics and cleanup status. Substituted and schema-normalized/defaulted values do not replace the declaration; implementation outputs are retained normally. A runner that records a trace (currently `acp`) also writes `trace.json` beside it, including for failed, timed-out or cancelled runs: an ordered list of `message` and `thought` entries (consecutive chunks joined) and `tool` entries. ACP updates replace the fields they carry, so each tool entry is one `toolCallId` in its final state with the harness's own fields (`title`, `kind`, `status`, `rawInput`, `content`, ...); intermediate states are not kept. Non-text content and other session updates are not recorded. The trace is retained, not yet checkable; field meanings differ between harnesses, so it is meant for people and a judge, not field-level assertions. Literal keys authored in YAML are declaration data and are not automatically masked. No resource hashes or workspace snapshots are retained, so old resource contents cannot be reconstructed from their unchanged paths.
+`run` writes `.agent-evals/<run-id>/result.json` in the invocation directory by default; `--results-dir` changes the root. This is retained report data, not the evaluated workspace. Schema version 1 retains source path/optional case name, declared `resolvedConfig`, runner outcome, individual checks, overall status, diagnostics and cleanup status. Substituted and schema-normalized/defaulted values do not replace the declaration; implementation outputs are retained normally. A runner that records a trace (currently `acp`) also writes `trace.json` beside it, including for failed, timed-out or cancelled runs: an ordered list of `message` and `thought` entries (consecutive chunks joined) and `tool` entries. ACP updates replace the fields they carry, so each tool entry is one `toolCallId` in its final state with the harness's own fields (`title`, `kind`, `status`, `rawInput`, `content`, ...); intermediate states are not kept. Non-text content and other session updates are not recorded. The [judge](#judge-checker-type-judge) can take the trace as evidence; field meanings differ between harnesses, so there are no field-level trace assertions. Literal keys authored in YAML are declaration data and are not automatically masked. No resource hashes or workspace snapshots are retained, so old resource contents cannot be reconstructed from their unchanged paths.
 
 Overall statuses are `pass`, `fail`, `error`, `timeout`, and `cancelled`; individual checks are `pass`, `fail`, or `error`. Pass/fail summarizes satisfaction of the configured checks, not model/skill quality or an improvement claim. A normal negative judgment is `fail`; inability to execute or evaluate is `error`, with timeout/cancellation reported separately. Exit codes are 0 for pass, 1 for failed checks, and 2 for configuration/execution/checker/timeout/cancellation errors. Early configuration errors need not produce a run record.
 

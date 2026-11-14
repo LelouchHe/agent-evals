@@ -188,6 +188,7 @@ export async function runEvaluation(request: RunRequest): Promise<EvaluationReco
         root,
         workspaceRoot,
         baselineRoot,
+        trace,
         timeoutMs,
         abort.signal,
         () => {
@@ -320,6 +321,7 @@ async function runChecks(
   root: string,
   workspaceRoot: RunRoot,
   baselineRoot: RunRoot,
+  trace: readonly TraceEntry[] | undefined,
   timeoutMs: number,
   signal: AbortSignal,
   markCancelled: () => void,
@@ -349,6 +351,7 @@ async function runChecks(
       baseline: baselineRoot,
       runRootDir: root,
       input: request.case.config.input,
+      ...(trace === undefined ? {} : { trace }),
       timeoutMs,
       signal: combined,
     });
