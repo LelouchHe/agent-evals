@@ -1,6 +1,7 @@
 # The same evaluation as ../deploy-runbook, run through the generic ACP runner.
 # Prepare the Pi deps and login directories first; see docs/configuration.md.
 input: Our deploy failed. Read deploy.log and write the cause and the commands to fix it into diagnosis.md.
+fixture: fixture
 timeoutMs: 120000
 runner:
   $type: acp
