@@ -9,7 +9,7 @@ One deterministic checker that reads the run's interaction records and asserts o
 1. **Interaction evidence reaches checkers.** `CheckerContext` carries the run's interaction records.
 2. **The deterministic call checker.** An ordinary `$type` checker without engine assertion magic, judging recorded calls and their arguments.
 
-Not in scope: MCP collaborators, which belong to a later milestone that is not yet assigned (their configuration, input matching and spy behavior stay open in [M3's open questions](m3-plan.md#open-questions)); harness-internal tools, shell builtins, HTTP/network interception, model-provider fault injection, Linux.
+Not in scope: MCP collaborators, which are milestone M5 (their configuration, input matching and spy behavior stay open in [M3's open questions](m3-plan.md#open-questions)); harness-internal tools, shell builtins, HTTP/network interception, model-provider fault injection, Linux.
 
 ## Decisions Carried From M3
 

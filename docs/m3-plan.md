@@ -1,6 +1,6 @@
 # M3: Controlled Collaborators
 
-Status: step 1 implemented, later steps planned. Mocks and interaction checks moved out of [M2](m2-plan.md) into this milestone so M2 closes cleanly on ACP execution and trace evidence. This milestone now covers shell collaborators only; the call checker moved to [M4](m4-plan.md). Step 1 delivers `PATH` commands with one `return` rule each, the forwarder wiring, the host service and `interactions.json`; `run`/`pass`, argument matching, rule lists, workspace scripts, unmatched-call behavior, MCP and Seatbelt denial remain planned. The syntax below records agreed structure where settled, including shell argument matching, which stays open.
+Status: step 1 implemented, later steps planned. Mocks and interaction checks moved out of [M2](m2-plan.md) into this milestone so M2 closes cleanly on ACP execution and trace evidence. This milestone now covers shell collaborators only; the call checker moved to [M4](m4-plan.md). Step 1 delivers `PATH` commands with one `return` rule each, the forwarder wiring, the host service and `interactions.json`; `run`/`pass`, argument matching, rule lists, workspace scripts, unmatched-call behavior and Seatbelt denial remain planned, and MCP collaborators are M5. The syntax below records agreed structure where settled, including shell argument matching, which stays open.
 
 ## Scope
 
@@ -10,7 +10,7 @@ Replace or observe shell collaborators at the environment boundary and record ev
 
 Asserting on those records is [M4](m4-plan.md).
 
-Not in scope: MCP collaborators, which belong to a later milestone that is not yet assigned, with their configuration, input matching and spy behavior still open (see [Open Questions](#open-questions)); harness-internal tools (`Read`, `Edit`, `WebFetch` and similar built-ins), shell builtins (`cd`, `export`), HTTP/network interception, model-provider fault injection, Linux.
+Not in scope: MCP collaborators, which are milestone M5, with their configuration, input matching and spy behavior still open (see [Open Questions](#open-questions)); harness-internal tools (`Read`, `Edit`, `WebFetch` and similar built-ins), shell builtins (`cd`, `export`), HTTP/network interception, model-provider fault injection, Linux.
 
 ## Decisions
 
@@ -109,9 +109,9 @@ From the M2 spikes on Pi 1.5.2 (`pi-acp` fork 0.0.34) and Claude Code 2.1.318 (`
 - **MCP injection:** an MCP mock server injected through `session/new` was called through the harness tool in both harnesses; tool names surfaced as `mcp__<server>__<tool>` in both. Pi through `pi-acp` needed `_meta.directTools: true` on the injected server entry, and any `--tools` allowlist had to include `mcp__<server>__*`.
 - **Forwarder transport:** in a standalone Seatbelt test, a `/bin/sh` forwarder using `nc -U` and `base64` returned separate stdout, stderr and exit code from a host process, and an argument containing a space reached the host intact. Allowing only the socket path with `(allow network-outbound (literal ...))` was enough; without a network rule the call failed. The sandbox could neither read the host's record nor write into the forwarder directory.
 - **Step 1 in the real runner (2026-11-14):** the same transport now runs inside the `acp` runner's own environment and generated policy: a delegated shell call to a mocked `PATH` command received the declared stdout, stderr and exit code; both calls reached the host as target plus arguments outside the sandbox; an argument containing a space arrived intact, and so did an empty argument; output containing a NUL and a non-ASCII character arrived byte for byte; the command's real binary did not run. The sandbox could neither list the run root nor write to the forwarder, but could read the forwarder itself. Under this project's policy the reply works with the existing `(allow network-outbound)` rule, not a socket-literal rule.
-- **Still unverified:** `pass`, `run`, stdin forwarding, workspace-script targets, Seatbelt denial of real binaries, MCP input matching, and any call made through a real harness (all step-1 evidence uses the model-free ACP peer).
+- **Still unverified:** `pass`, `run`, stdin forwarding, workspace-script targets, Seatbelt denial of real binaries, M5's MCP input matching, and any call made through a real harness (all step-1 evidence uses the model-free ACP peer).
 - **Observed agent probing:** during spikes, an unprompted agent listed its run directory, read mock logs and source, recognized the mocks and ran a mock server by hand, producing a false call record when logs lived inside the sandbox.
 
 ## Open Questions
 
-- **MCP collaborators (a later milestone, not yet assigned).** Exact `mocks.mcp` syntax, how a rule matches a tool's JSON object input (shell `args` does not have to cover it), server naming and harness-specific `_meta` (such as Pi's `_meta.directTools: true`), whether MCP supports `pass` to a real server, and HTTP service mocks / model-provider fault injection (which depend on the deferred proxy).
+- **MCP collaborators (M5).** Exact `mocks.mcp` syntax, how a rule matches a tool's JSON object input (shell `args` does not have to cover it), server naming and harness-specific `_meta` (such as Pi's `_meta.directTools: true`), whether MCP supports `pass` to a real server, and HTTP service mocks / model-provider fault injection (which depend on the deferred proxy).
