@@ -6,53 +6,53 @@ This page explains how the implemented modules cooperate. [Configuration](config
 
 ## Components and Connections
 
-Evaluation commands (`run` / `view`):
+Responsibility and wiring, not execution order ([One Run in Order](#one-run-in-order) covers that):
 
 ```text
-CLI: agent-evals / npm run eval (same dist/cli.js)
-  |
-  v
-Authoring resolver: YAML + optional case selection -> ResolvedCase + origins
-  |                                          |
-  | view                                     | run
-  v                                          v
-Resolved configuration display            Registry: select runner/checkers by $type
-(no harness or credentials)                  |
-                                             v
-                                   Engine: .env values -> Zod -> factories
-                                             |
-                                             v
-                                   Independent runtime directories
-                                             |
-                                             v
-                                   Runner -> harness -> file changes
-                                             |
-                                   Stop supported runtime processes
-                                             |
-                                             v
-                                   Checkers -> individual judgments
-                                             |
-                                   Remove runtime -> save run record
+                        agent-evals CLI  (agent-evals / npm run eval)
+           view /            |  run                \  config, login
+               v             v                      v
+   +------------------+  +---------------------+  +---------------------------+
+   | case resolver    |  | engine              |  | ACP preparation helpers   |
+   | YAML + selection |  | validate, prepare,  |  | agent schema, HOME/login  |
+   | field origins    |  | run, stop, check,   |  | assembly, queries         |
+   +--------+---------+  | record, clean up    |  +-------------+-------------+
+            |            +--+--------+--------++                |
+            v               |        |        |                 | shares the ACP
+   +------------------+     |        |        |                 | environment code
+   | resolved display |     |        |        |                 |
+   | no runtime       |     |        |        |                 |
+   +------------------+     |        |        |                 |
+                            v        v        v                 |
+               +------------+ +---------+ +-----------+         |
+               | runner     | | mock    | | checkers  |         |
+               | harness    | | host    | | file: RE2 |         |
+               +-----+------+ | rules,  | | judge: Pi |         |
+                     |        | actions,| +-----+-----+         |
+                     |        | records |       |               |
+       +-------------+--+     +----+----+       +--> separate, tool-free Pi run;
+       v                v          |                 never the evaluated session
+   native Pi          ACP         |
+   JSONL RPC +        generic     |
+   supervisor         harness     |
+       |                |          |
+       +--------+-------+          |
+                v                  v
+       harness under           authors' run programs and
+       Seatbelt, forwarder     the call records, on the host
+       dir first on PATH
+
+   retained per run: result.json, trace.json (ACP), mocks.json   (run root removed)
 ```
 
-Preparation commands (`config` / `login`) take standalone agent YAML and bypass case selection and the registry:
+- **CLI** parses commands and flags, registers built-ins, loads trusted extension directories and maps outcomes to exit codes. `view` stops at the resolver and prints the resolved declaration; it starts no runtime. `run` hands the resolved case to the engine. `config` and `login` take a standalone agent file and use the ACP preparation helpers instead.
+- **Engine** validates parameters, prepares the run root, sequences the runner, checks and cleanup, and retains the result. It owns the mock host's lifecycle and the retained records.
+- **Runner** drives one harness and stops its owned processes. The native Pi route is an isolated JSONL RPC session under Seatbelt; the generic route speaks ACP with a caller-prepared harness home.
+- **Mock host** owns mock rules, actions and call records, plus authors' `run` programs. It lives outside the evaluated sandbox; [Mocks](mocks.md#how-a-run-uses-mocks) owns the mechanism.
+- **Checkers** read evidence and produce judgments. The `file` checker evaluates RE2 patterns in-process; the judge starts its own tool-free Pi invocation from selected evidence and never shares the evaluated agent's session or tools.
+- **ACP preparation helpers** reuse the same agent schema and HOME/login assembly for `config` and `login`; they do not run a case.
 
-```text
-CLI config/login
-  -> Shared YAML + invocation .env expansion + ACP-owned Zod schema
-  -> ACP helpers: HOME/login assembly and workflow
-  -> macOS backend: policy, terminal permissions and supervised process
-```
-
-| Component          | Owns                                                                                             | Does not own                                                                  |
-| ------------------ | ------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------- |
-| CLI                | Commands, arguments, built-in registration, trusted extension paths, signals, exit codes.        | Harness protocols or checker logic.                                           |
-| Authoring resolver | Case selection, disjoint top-level composition, common structure, source annotations.            | Runtime readiness or provider authentication.                                 |
-| Registry           | Mapping `$type` to a trusted definition.                                                         | Skill-specific modes or parameter interpretation.                             |
-| Engine             | Parameter validation, preparation, runtime state, sequencing, cancellation, results and cleanup. | The business meaning of model, skill, rubric, or other implementation fields. |
-| Runner             | Driving a harness and stopping its supported owned processes.                                    | Judging whether the task succeeded.                                           |
-| Checker            | Reading available run evidence and producing checks.                                             | Driving the evaluated session.                                                |
-| Platform module    | Seatbelt policy and sandboxed process launch.                                                    | YAML, tasks or rubric semantics.                                              |
+The judge reuses Pi transport/session mechanics, not the evaluated runner's session or the engine's full execution loop. The supervisor and shell wrapper cover tracked shell-process teardown inside the same Seatbelt instance. Registry files writable by the agent never authorize unsandboxed host signals.
 
 ## Definitions, Factories, and Instances
 
@@ -84,37 +84,52 @@ A run follows the test lifecycle in [Writing Cases](cases.md#the-test-model): se
 5. **Assert.** Checkers inspect the still-live workspace/baseline. File patterns and mock argument patterns share the linear-time RE2 engine; the judge reads selected evidence and starts a separate tool-free Pi invocation.
 6. **Tear down and record.** Remove runtime state, then save outcomes, declared configuration and cleanup status. Early load errors need not produce a run record.
 
-## Pi and Platform Composition
-
-```text
-Pi Runner --------------------+
-                              v
-                         Pi session helper -> JSONL RPC client
-                              |
-Judge Checker -> evidence ----+    (separate invocation, no tools)
-                              |
-                              v
-                   macOS policy + sandbox-exec
-                              |
-                   in-sandbox supervisor -> Pi
-                                             |
-                                      shell wrapper -> shell tools
-```
-
-The judge reuses Pi transport/session mechanics, not the evaluated runner's session or the engine's full execution loop. The supervisor and shell wrapper cover tracked shell-process teardown inside the same Seatbelt instance. Registry files writable by the agent never authorize unsandboxed host signals.
-
 The ACP runner and the standalone `config` and `login` preparation helpers live in [`runners/acp/`](../src/runners/acp/) and share one agent schema, HOME/login assembly and ACP session setup. These are implementation-owned; generic authoring/value-source/schema utilities are shared with cases. macOS system read roots, default command paths, terminal discovery and Seatbelt policy preparation stay in `platform/macos/`. Both use a sandbox-wide supervisor with a private completion pipe, not the native Pi shell registry. The runner assembles into the engine's run HOME and workspace; the helpers allocate their own temporary directory.
 
 The host sandbox is a deliberate execution choice: real platform behavior is part of the subject being measured. Seatbelt is the current backend, not a claim that every OS has identical isolation guarantees.
 
 ## State and Trust Boundaries
 
+What the sandbox can reach, prepared before the evaluated agent starts and torn down after it stops:
+
+```text
+PREPARED BY THE HOST, BEFORE THE SANDBOX STARTS
+
+  fixture/   --copy--------->  run/workspace/     writable by the agent
+  files/     --place on top->  run/workspace/     fixture, then files
+  scripts    --replace------>  run/workspace/...  forwarder at the target path;
+                                                  the real script moves out, or
+                                                  to .name when a pass rule exists
+  deps/      --link--------->  run/home/          software entries, read-only
+  login/     --copy--------->  run/home/          credential files, private copies
+  workspace/ --snapshot----->  run/baseline/      taken AFTER forwarders/scripts
+  engine     --write-------->  run/config/        Seatbelt policy, unreadable
+  case, checks, rubric, .env   stay in the host process, never in the run root
+
+INSIDE THE SANDBOX (evaluated agent)     |  OUTSIDE THE SANDBOX (host)
+                                         |
+  run/workspace/   writable, including   |  engine: case, checks, rubric, policy,
+    a workspace forwarder and .name      |    run bookkeeping, cancellation
+  run/home/        writable, deps RO     |  mock host: rules, actions, call
+  run/scratch/     writable              |    records, authors' run programs
+  forwarder dir    readable, not writable|  platform: policy and sandbox launch
+    one script per PATH target           |  checkers: file/RE2 evidence reads;
+  run/baseline/    not readable          |    judge in its own Pi process
+  run/config/      not readable          |
+                                         |
+  forwarders --Unix socket only--------->|  mock host answers and records
+
+AFTER THE RUN
+  run/      workspace, home, config, scratch, baseline, forwarders, socket  removed
+  results/  result.json, trace.json (ACP), mocks.json, diagnostics.log      retained
+```
+
 - **Authoring assets:** operator-owned YAML, fixtures, skills and extensions. Config-relative resources resolve from the declaring file; executable extensions are not discovered from the agent-writable workspace. Extension code and `.env` lookup commands are trusted host code, not sandboxed test subjects.
 - **Evaluated runtime:** writable workspace and explicitly permitted per-run state. The initial baseline, case/check definitions, rubric and retained results stay outside the evaluated agent's intended access.
 - **Observations:** directory identity and path/symlink containment are checked before file reads. Non-regular and oversized evidence is an error, not a vacuous pass. A missing observation cannot prove a restraint was respected.
 - **Results:** declarations, source/case identity, outcomes, diagnostics and cleanup. Expanded parameters do not replace the declaration; runtime outputs remain the implementation's responsibility. No full resource snapshot is retained.
 
-Observations come from three sources defined in [Writing Cases](cases.md#why-the-trace-matters): the runner's trace (with output as its user-facing view), mock interaction records, and environment side effects. Today the ACP runner retains `trace.json` (which `judge` can take as evidence), a case declaring [shell mocks](mocks.md) retains `mocks.json`, and `file`/`judge` inspect workspace files. Interaction checks and the other M3 steps are planned in [M3](m3-plan.md) and [M4](m4-plan.md).
+Observations come from three sources defined in [Writing Cases](cases.md#why-the-trace-matters): the runner's trace (with output as its user-facing view), mock call records, and environment side effects. Today the ACP runner retains `trace.json` (which `judge` can take as evidence), a case declaring [shell mocks](mocks.md) retains `mocks.json`, and `file`/`judge` inspect workspace files. Interaction checks are planned in [M4](m4-plan.md); M3's shell-collaborator work is delivered.
 
 ## Source Map
 

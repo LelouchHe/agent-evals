@@ -24,6 +24,89 @@ For each declared target the engine writes a thin forwarder into the run. A bare
 
 Use a mock to control what a collaborator answers, to supply a fake implementation, and to keep real effects from happening; use a check on the workspace, the trace or a judge for the outcome that matters.
 
+## How a Run Uses Mocks
+
+Mocks are prepared with the other run state and answered while the harness runs; the host closes only after the harness has stopped:
+
+```text
+ 1. load      resolve the case; compile every mock rule and RE2 pattern
+              `-- a bad shape or pattern stops here: no run root, no result
+
+ 2. prepare   create the run root and prepare its directories
+              |-- fixture, then files         -> workspace/
+              |-- workspace-script forwarders -> at their target path;
+              |                                  real scripts moved out
+              |-- PATH forwarders, socket,    -> outside the workspace
+              |   fault marker
+              |-- host service listening      -> outside the sandbox
+              |-- baseline snapshot           -> after the forwarders,
+              |                                  before the harness
+              `-- runner starts the harness   -> forwarder dir first on PATH
+
+ 3. act       the harness works; every mocked call is answered and recorded
+              `-- calls from processes that outlive the turn are still answered
+
+ 4. stop      the harness sandbox is stopped first
+              `-- then the host closes and returns records and faults
+                  `-- any fault marks the run "error"
+
+ 5. assert    checks read workspace/ and baseline/ (no call checker yet: M4)
+
+ 6. teardown  the run root is removed
+              `-- retained: result.json, trace.json, mocks.json
+```
+
+## One Mocked Call
+
+```text
+ INSIDE THE SANDBOX (agent)                        |  OUTSIDE THE SANDBOX (host)
+                                                   |
+  agent shell or script                            |
+    $ make deploy                                  |
+        |                                          |
+        v                                          |
+  forwarder (PATH dir or workspace path)           |
+    canonicalise own path, base64 path + argv      |
+        |                                          |
+        +-- Unix socket, one per run ------------->|
+                                                   |  host service
+                                                   |   1. record {target, arguments}
+                                                   |      before choosing a rule
+                                                   |   2. first matching rule from
+                                                   |      the ordered list
+                                                   |      (no match -> reply 126)
+                                                   |
+                                                   |   3. action
+                                                   |      return -> fixed result
+                                                   |      run    -> author program
+                                                   |                on the host
+                                                   |      pass   -> hand the call
+                                                   |                back
+                                                   |      run+pass -> hand back only
+                                                   |      when the program's output
+                                                   |      is exactly its marker
+        <-- reply: result | pass | 126 ------------+
+        |
+        |-- result: write the reply's stdout/stderr,
+        |   exit with its code
+        |
+        |-- 126: "<target>: Operation not permitted"
+        |   (unmatched rule, or a mock fault that
+        |    also ends the run as error)
+        |
+        `-- pass: exec the real command here
+            * next PATH entry for the name, skipping
+              this forwarder
+            * or, for a workspace script, its .name
+              sibling
+            then stdin, output, signals and exit
+            status are the real command's own
+```
+
+The two regions are the trust boundary. Inside the sandbox there is only a forwarder — a readable `sh` script — plus, for a `pass`, the real command it starts; rules, actions, author programs and records stay on the host. `which` and `cat` reveal the forwarder, never the rules or the records.
+
+The host records the call **before** it chooses a rule, so evidence does not depend on which action ran or whether one matched. A `return` or `run` reply is data for the caller; a `run` program is trusted author code on the host, started without a shell with the call's arguments appended, never agent code and never executed in the sandbox. A `pass` reply is a decision: the real command runs only in the sandbox, from the forwarder, so its stdin, output, signals and exit status stay its own and the host never runs it. An unmatched call is refused with `126` and still recorded; a mock fault (transport failure, a program that cannot start, dies or overruns, or the reserved marker where no `pass` allows it) looks the same to the caller but also ends the run as `error`, so checks never judge an unreliable record. `mocks.json` holds these calls — target and arguments, in arrival order — as evidence: no output, exit status or judgment.
+
 ## Targets
 
 `mocks.shell` is a mapping from a target to one rule or an ordered list of rules.
