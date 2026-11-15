@@ -279,6 +279,8 @@ The engine validates `files` when the case loads, and the check sandbox copies i
 
 A shell check runs in the live workspace, in declaration order, so a `file` check that must see the agent's result unchanged belongs before it. Mocks are closed when checks run: a mocked `PATH` command is not on the check's `PATH`, and a mocked workspace script reaches only a closed host. The sandbox policy is fixed and has no case syntax; `judge` keeps its own network-enabled sandbox instead.
 
+Extensions get the same behavior through the engine interfaces: `ImplementationContext.validateFiles(files)` at load time and `CheckerContext.checkSandbox.run(run, { files })` at check time. An extension checker assembles no file-staging logic or sandbox policy of its own.
+
 ### Judge Checker (`$type: judge`)
 
 | Parameter                                   | Contract                                                   |
@@ -314,3 +316,5 @@ Overall statuses are `pass`, `fail`, `error`, `timeout`, and `cancelled`; indivi
 `run` registers the built-ins and can load `.ts`, `.js` or `.mjs` modules from explicitly supplied trusted directories. A runner module exports `runner`; a checker module exports `checker`. Duplicate/unknown types or malformed exports are errors, never fallback reasons.
 
 Extensions use the same schema/factory/instance contracts as built-ins; see [Definitions, Factories, and Instances](architecture.md#definitions-factories-and-instances) and [`registry.ts`](../src/engine/registry.ts). They execute as trusted host code. Never use an agent-writable workspace or generated result directory as an extension discovery root.
+
+Checker extensions receive the engine's check-time capabilities instead of rebuilding them. `create(params, context)` gets an `ImplementationContext` with the case directory, placeholder values, declared mock targets and `validateFiles`, which validates and stages a check's `files` at load time. `check(context)` gets a `CheckerContext` with the workspace, baseline, trace, mock records, abort signal and `checkSandbox`; `checkSandbox.run(command, { files })` stages those files into the workspace inside the sandbox and runs the command under the fixed Seatbelt policy. An extension adds no policy, path validation or staging code.

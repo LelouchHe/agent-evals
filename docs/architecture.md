@@ -28,8 +28,8 @@ Responsibility and wiring, not execution order ([One Run in Order](#one-run-in-o
                                v      v      v           |
                   +------------+ +--------+ +-----------+|
                   | runner     | | mock   | | checkers  ||
-                  | harness or | | host   | | file: RE2 ||
-                  | noop       | | rules, | | mock/shell||
+                  | harness or | | host   | | file/mock ||
+                  | noop       | | rules, | | shell     ||
                   +-----+------+ | actions| | judge: Pi ||
                         |        | records| +-----+-----+|
                         |        +--------+       |      |
@@ -65,12 +65,37 @@ Responsibility and wiring, not execution order ([One Run in Order](#one-run-in-o
   authors' run programs and the call records stay on the host, outside the sandbox
 ```
 
+The check-time path from the same checkers box, after the harness stopped:
+
+```text
+  CHECK TIME: checkers, after the harness stopped
+
+  $type: shell
+    |  CheckerContext.checkSandbox.run(run, { files })
+    v
+  engine: ImplementationContext.validateFiles at load
+    |     -> check-*/staged/, read-only inside the sandbox
+    v
+  HOST: sandbox-exec -f check-*/sandbox.sb -- /bin/sh -c <supervisor.sh>
+    |     open reads; writes only workspace/, private home/ and tmp/
+    v  Seatbelt boundary
+  SANDBOX: supervisor.sh starts check-runner.ts
+    |  1. place check-*/staged/ into workspace/ (files only at check time)
+    |     refuse symlinked ancestors; unlink a leaf before copying
+    |  2. spawn the command with exactly PATH, HOME and TMPDIR
+    |  3. report exit, signal or placement failure on private FD 5
+    v
+  HOST: engine reads FD 5: exit 0 pass, other exit fail, failure error
+
+  $type: judge -> separate tool-free Pi invocation in its own sandbox
+```
+
 - **CLI** parses commands and flags, registers built-ins, loads trusted extension directories and maps outcomes to exit codes. `view` stops at the resolver and prints the resolved declaration; it starts no runtime. `run` hands the resolved case to the engine. `config` and `login` take a standalone agent file and use the ACP preparation helpers instead.
 - **Engine** validates parameters, prepares the run root, sequences the runner, checks and cleanup, and retains the result. It owns the mock host's lifecycle and the retained records.
 - **Runner** drives one harness and stops its owned processes. The native Pi route is an isolated JSONL RPC session under Seatbelt; the generic route speaks ACP with a caller-prepared harness home.
 - **Mock host** owns mock rules, actions and call records, plus authors' `run` programs. It lives outside the evaluated sandbox; [Mocks](mocks.md#how-a-run-uses-mocks) owns the mechanism.
-- **Checkers** read evidence and produce judgments. The `file` checker evaluates RE2 patterns in-process; `mock` matches the run's recorded mock calls with the same argument grammar and RE2 engine the mock rules use; `shell` hands its authored check-time `files` to the engine, which validates them at load; the check sandbox stages them into the live workspace under its write policy and symlink refusal, then runs one program there; the judge starts its own tool-free Pi invocation from selected evidence and never shares the evaluated agent's session or tools.
-- **Check sandbox** is an engine capability on `CheckerContext`, not a checker's own policy. It gives a check-time program open reads, writes only beneath the workspace and a private HOME and temporary directory, no network, and a minimal environment; it validates and stages any `files` a checker hands it into the workspace under the same policy, and reuses the sandbox-wide cleanup supervisor. `judge` does not use it because it needs the network for its model.
+- **Checkers** read evidence and produce judgments. The `file` checker evaluates RE2 patterns in-process; `mock` matches the run's recorded mock calls with the same argument grammar and RE2 engine the mock rules use; `shell` passes its check-time `files` to `CheckerContext.checkSandbox.run(run, { files })`, and the engine stages them into the workspace inside the sandbox; the judge starts its own tool-free Pi invocation from selected evidence and never shares the evaluated agent's session or tools.
+- **Check sandbox** is an engine capability on `CheckerContext`, not a checker's own policy. `run(command, { files })` validates and stages any `files` (the same validation is offered at load through `ImplementationContext.validateFiles`), launches `sandbox-exec` -> `supervisor.sh` -> `check-runner.ts`, and that runner places `check-*/staged/` into the workspace before starting the command with open reads, writes only beneath the workspace and a private HOME and temporary directory, no network, and a minimal environment. `check-runner.ts` reports the exit status, signal or placement failure on a private FD 5 pipe back to the engine. `judge` does not use it because it needs the network for its model.
 - **ACP preparation helpers** reuse the same agent schema and HOME/login assembly for `config` and `login`; they do not run a case.
 
 The judge reuses Pi transport/session mechanics, not the evaluated runner's session or the engine's full execution loop. The supervisor and shell wrapper cover tracked shell-process teardown inside the same Seatbelt instance. Registry files writable by the agent never authorize unsandboxed host signals.
@@ -81,13 +106,17 @@ Definitions expose a `type`, a Zod `params` schema, and `create(params, context)
 
 1. The registry selects the definition by `$type`.
 2. The engine substitutes parameter [placeholders](configuration.md#placeholders), then runs the declared schema once.
-3. The factory receives ordinary typed fields plus the YAML declaring directory. It does not receive an environment-source or credential-lookup interface.
+3. The factory receives an `ImplementationContext`: the YAML declaring directory (`authoringDir`), the run's placeholder `values`, declared `mockTargets` when the case has mocks, and `validateFiles`, which validates and stages a checker's check-time `files` against `authoringDir`. It does not receive an environment-source or credential-lookup interface.
 4. The instance keeps its parameters; execution receives only runtime state:
 
 ```text
 Runner.run(RunnerContext)     -> RunnerOutcome
 Runner.stop()                -> completion, safe to call again
 Checker.check(CheckerContext) -> CheckResult[]
+
+ImplementationContext: authoringDir, values, mockTargets?, validateFiles
+CheckerContext:        workspace, baseline, trace?, mockRecords?,
+                       checkSandbox, input, runRootDir, timeoutMs, signal
 ```
 
 **The engine owns sourcing, declared-schema validation and lifecycle—not business meaning.** Schemas define parameter types, defaults and declared constraints. Implementations own their logic, operational requirements, authentication and outputs. The engine does not infer extra rules from names such as `apiKey`, proactively verify credentials, or automatically redact values.
@@ -153,7 +182,10 @@ RUN ROOT  <tempParent>/run-<id>/                       temporary, removed after
   forward                         the shared forwarder script text
   replaced/                       real workspace scripts moved out of reach
   files/       internal           transient files staging, gone before launch
-  check-*/     one per check      private HOME and TMPDIR, policy, removed after the check
+  check-*/     one per check      home/ and tmp/ private; sandbox.sb policy;
+                                  staged/ read-only check-time files, placed
+                                  into workspace/ by the sandboxed
+                                  check-runner; removed after the check
 
 HOST STATE OUTSIDE THE SANDBOX
   engine        case, checks, rubric, policy, run bookkeeping, cancellation
