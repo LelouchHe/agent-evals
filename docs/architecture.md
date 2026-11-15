@@ -35,16 +35,31 @@ Responsibility and wiring, not execution order ([One Run in Order](#one-run-in-o
       +-----------------+-+      +--------+       +--> separate, tool-free
       v                   v                             Pi run; never the
   native Pi             ACP                             evaluated session
-  JSONL RPC +           harness; mocks
-  supervisor            supported
-  no mocks:             (forwarder dir
-  rejects them          first on PATH)
+  route                 route
+  no mocks:             mocks supported
+  rejects them          (forwarder dir first on PATH)
       |                   |
       +---------+---------+
+                |
+  +-------------+----------------------------------------------------------+
+  | HOST: the engine starts the platform launcher                          |
+  |   sandbox-exec -f <policy> -- <supervisor> <harness> ...               |
+  |   policy file: native Pi in run/scratch/, ACP in run/config/           |
+  +-------------+----------------------------------------------------------+
+                |  Seatbelt boundary
+  +-------------+----------------------------------------------------------+
+  | SANDBOX: the cleanup supervisor starts the harness and its tools       |
+  |   ACP:  /bin/sh supervisor; the workload's exit status returns on      |
+  |         fd 3, a private pipe to the host; then it kills the sandbox    |
+  |   Pi:   node supervisor; Pi's shell wrapper records each process       |
+  |         group it starts, and the supervisor signals those at exit      |
+  |   control: harness stdio (ACP messages, or Pi JSONL RPC)               |
+  |   stop: the host signals the sandbox (native: its process group; ACP:  |
+  |   a stop the supervisor turns into a sandbox-wide kill)                |
+  +-------------+----------------------------------------------------------+
+                |
                 v
-        harness under Seatbelt
-        (native: policy in run/scratch/;
-         ACP: policy in run/config/)
+        harness + its tool processes
 
   authors' run programs and the call records stay on the host, outside the sandbox
 ```
