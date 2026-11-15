@@ -263,14 +263,19 @@ Runs an author's program after the run and judges its exit status; use it for ou
 
 ```yaml
 - $type: shell
-  run: [npm, test]
+  files:
+    tests/acceptance.test.js: checks/acceptance.test.js
+  run: [node, --test, tests/acceptance.test.js]
 ```
 
-| Parameter | Contract                                                                                                                               |
-| --------- | -------------------------------------------------------------------------------------------------------------------------------------- |
-| `run`     | Required non-empty list of non-empty strings: a program and its arguments, the same form as a mock's `run`. Never a shell interpreter. |
+| Parameter | Contract                                                                                                                                                                                                                                                             |
+| --------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `run`     | Required non-empty list of non-empty strings: a program and its arguments, the same form as a mock's `run`. Never a shell interpreter.                                                                                                                               |
+| `files`   | Optional mapping from a workspace-relative destination to an authoring file or directory, with the same destination rules as `case.files` but not `.` for the root. Sources resolve from the case file; `../shared/test.js` is allowed. Placed when this check runs. |
 
 The program starts in the workspace root in the engine's check sandbox: open reads, writes only beneath the workspace and a private HOME and temporary directory, no network, and only `PATH`, `HOME` and `TMPDIR` in its environment (`PATH` is the operator's). It is supervised like the harness, so its whole process tree ends with the check. Exit `0` passes; any other exit fails with the tail of its output as the reason; a program that cannot start, dies from a signal or exceeds the check deadline (`timeoutMs`) is an error, not a failed judgment.
+
+`files` is copied into the live workspace just before the program starts, after the agent stopped, so the agent never saw those bytes during the run. Placed files stay for later checks and disappear with the run root; they are not part of the baseline. When the case loads, the engine checks that every source exists and that two entries do not produce the same file, so a missing source is a configuration error rather than a check result. Placement never follows a destination symlink: a symlinked ancestor is a check error, and anything at a file's destination is removed before the copy, so an agent-planted symlink or hard link cannot redirect the write outside the workspace. A directory where a file goes is a check error.
 
 A shell check runs in the live workspace, in declaration order, so a `file` check that must see the agent's result unchanged belongs before it. Mocks are closed when checks run: a mocked `PATH` command is not on the check's `PATH`, and a mocked workspace script reaches only a closed host. The sandbox policy is fixed and has no case syntax; `judge` keeps its own network-enabled sandbox instead.
 

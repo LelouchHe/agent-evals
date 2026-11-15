@@ -68,14 +68,17 @@ checks:
     path: tests/cart.test.js
     unchanged: true
   - $type: shell
-    run: [npm, test]
+    files:
+      tests/acceptance.test.js: checks/acceptance.test.js
+    run: [node, --test, tests/acceptance.test.js]
 ```
 
 - **`shell` means a shell-level command, as in `mocks.shell`.** `run` is a program and its arguments, the same form as a mock's `run`, and is not handed to a shell interpreter; a pipeline is written as `[sh, -c, "…"]`.
 - **Exit status is the judgment.** The program starts in the workspace root. Exit `0` is `pass`; any other exit is `fail`, with the tail of its output as the reason. A program that cannot start, dies from a signal or exceeds the check's deadline is an `error`.
 - **It never runs on the host.** The workspace holds whatever the agent wrote, so the command is untrusted code. The checker starts it only through the engine's [check sandbox](#the-check-sandbox) and assembles no policy of its own.
 - **It does not share the evaluated agent's environment.** Like the judge, it never reuses the runner's HOME or session, so it works the same for every runner.
-- **Nothing protects the tests from the agent.** An agent can edit a test to make it pass; pair the check with `file` `unchanged` on the files that must stay as authored.
+- **`files` supplies tests the agent never saw.** An optional map of workspace-relative destination to authoring-relative source is placed into the live workspace when this check runs, before its program starts; the files stay for later checks and disappear with the run root. Sources must exist when the case loads; missing or inaccessible sources, invalid spellings and two entries producing one file are configuration errors.
+- **Placement never follows a destination symlink.** A symlinked ancestor is an error rather than a write outside the workspace, and anything at a file's destination is unlinked before the copy, so the agent cannot redirect the write or keep a fake at the path. A directory where a file goes is an error. The agent can still edit tests that are already in the workspace; use `files` for what it should never see, and `file` `unchanged` for anything it must not edit.
 - **Mocks are gone at check time.** The mock host is closed, so a command that reaches a mocked workspace script fails at its forwarder. Mocked `PATH` commands are not on the check's `PATH` at all.
 - **It runs in the live workspace.** Checks run in declaration order and a command may write caches or reports, so a `file` check that must see the agent's result unchanged is declared before it. A copy would cost a copy and break absolute paths written during the run.
 
@@ -154,5 +157,4 @@ Added only for a real case:
 - **A `kind` on `MockRecord`.** Decided with M5's MCP records.
 - **A scalar shorthand** for `shell: [git]`.
 - The argument grammar's M3 gaps: exact argument lists, repeated and combined options, regex flags.
-- **Hidden tests for `shell`**: files placed over the workspace only at check time, so the agent never sees them.
 - **Network access for `shell`.**

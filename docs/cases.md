@@ -66,7 +66,7 @@ Expose only the intended task, resources and environment to the agent. Case/chec
 
 ## Choose Evidence and Checks
 
-Use deterministic checks for exact facts and a judge for qualitative criteria. A file check need not become a new checker class for every assertion; one checker can return several results. A rubric can be a list of statements without mandatory business categories. Use `shell` for an outcome only execution shows, such as the project's tests; it runs the command, so pair it with `file` `unchanged` on files the agent must not edit.
+Use deterministic checks for exact facts and a judge for qualitative criteria. A file check need not become a new checker class for every assertion; one checker can return several results. A rubric can be a list of statements without mandatory business categories. Use `shell` for an outcome only execution shows, such as the project's tests; it runs the command, so pair it with `file` `unchanged` on files the agent must not edit. A `shell` check's `files` places authored tests into the workspace only when it runs, so the agent never sees them; placement replaces whatever the agent left at that path without following a symlink.
 
 Do not create routing-versus-behavior pipelines. Skill loading, tool choices, restraint and result quality are concerns expressed through checks and evidence when those observations exist.
 
