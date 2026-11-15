@@ -141,7 +141,7 @@ Authoring resources are relative to the YAML file; checker targets are relative 
 
 ### Fixture and Files
 
-`fixture` is the base environment. `files` is the per-case variation layered on top: each key is a workspace-relative destination (`.` is the root, never absolute and never containing `..`) and each value is an authoring file or directory resolved like `fixture`.
+`fixture` is the base environment. `files` is the per-case variation layered on top: each key is a destination relative to the prepared workspace root (`.` is the root, never absolute and never containing `..`), and each value is an authoring file or directory read from the case YAML's directory — the same base as `fixture`, not the fixture directory and not the invocation directory. The fixture populates the workspace first and the entries overlay it.
 
 - An entry may replace a file that came from `fixture`; that is the common "same base, one changed file" case.
 - Entries may not overwrite each other: two entries producing the same file path are an error. Directory entries merge.

@@ -112,41 +112,55 @@ The host sandbox is a deliberate execution choice: real platform behavior is par
 What the sandbox can reach, prepared before the evaluated agent starts and torn down after it stops:
 
 ```text
-PREPARED BY THE HOST, BEFORE THE SANDBOX STARTS
+CASE AUTHORING (operator-owned, in the case YAML's directory)
+  <case>.yml
+  fixture/            base tree, copied first
+  <asset>             any files source, read from this directory
 
-  fixture/   --copy--------->  run/workspace/     writable by the agent
-  files/     --place on top->  run/workspace/     fixture, then files
-  scripts    --replace------>  run/workspace/...  forwarder at the target path;
-                                                  the real script moves out, or
-                                                  to .name when a pass rule exists
-  workspace/ --snapshot----->  run/baseline/      taken AFTER forwarders/scripts
-  case, checks, rubric, .env   stay in the host process, never in the run root
+ACP AGENT CONFIGURATION (its own file and directory)
+  home.deps           harness software, linked read-only into the run HOME
+  home.login          login state, copied into the run HOME
 
-  ACP runner only:
-  deps/      --link--------->  run/home/          software entries, read-only
-  login/     --copy--------->  run/home/          credential files, private copies
-  engine     --write-------->  run/config/        Seatbelt policy, unreadable
+PREPARATION (host, before the sandbox starts)
+  fixture/      --copy-------------->  workspace/
+  <asset>       --place at key------>  workspace/<key>     overlay, after the fixture
+  a files key is a destination relative to the prepared workspace root
+  a files value is a source relative to the case YAML's directory, not the
+  fixture directory and not the invocation directory
+  entries are combined in an internal run/files stage, then copied over the
+  workspace; the stage is removed before the harness starts and is never the
+  public base for resolution
 
-  native Pi runner: no deps/login assembly and no mocks; its policy is written
-  into run/scratch/ and run/config/ holds its isolated settings (writable).
+  workspace scripts --replace----->  workspace/<target>   mock forwarder; the real
+                                                           script moves out, or to
+                                                           .<name> for a pass rule
+  PATH forwarders and script ----->  run/bin/ and run/forward
+  snapshot ---------------------->  baseline/             after the lines above
 
-INSIDE THE SANDBOX (evaluated agent)     |  OUTSIDE THE SANDBOX (host)
-                                         |
-  run/workspace/   writable, including   |  engine: case, checks, rubric, policy,
-    a workspace forwarder and .name      |    run bookkeeping, cancellation
-  run/home/        writable, deps RO     |  mock host: rules, actions, call
-  run/scratch/     writable              |    records, authors' run programs
-  forwarder dir    readable, not writable|  platform: policy and sandbox launch
-    one script per PATH target           |  checkers: file/RE2 evidence reads;
-  run/baseline/    not readable          |    judge in its own Pi process
-  run/config/      ACP: not readable;   |
-                   native: Pi settings   |
-                                         |
-  forwarders --Unix socket only--------->|  mock host answers and records
+RUN ROOT  <tempParent>/run-<id>/                       temporary, removed after
+  workspace/   agent-writable     fixture, then files, then mock forwarders
+  baseline/    host-read only     the snapshot above; not readable in the sandbox
+  home/        agent-writable     ACP: deps as read-only links, login as copies
+                                  native Pi: Pi's isolated HOME
+  config/      ACP: unreadable    ACP: Seatbelt policy
+               native: writable   native Pi: isolated settings, staged skills
+  scratch/     agent-writable     temporary state; native Pi policy; the
+                                  forwarder fault marker
+  tools/       native Pi only     the sandbox-resident supervisor and wrapper
+  bin/         ACP mocks only     forwarders first on PATH; readable, not writable
+  forward                         the shared forwarder script text
+  replaced/                       real workspace scripts moved out of reach
+  files/       internal           transient files staging, gone before launch
+
+HOST STATE OUTSIDE THE SANDBOX
+  engine        case, checks, rubric, policy, run bookkeeping, cancellation
+  mock host     rules, actions, call records, authors' run programs
+  socket        <system temp>/run-<id>.sock, outside the run root and the sandbox
+  results       <results-dir>/<run-id>/: result.json, trace.json when recorded,
+                mocks.json when declared, diagnostics.log when non-empty
 
 AFTER THE RUN
-  run/      workspace, home, config, scratch, baseline, forwarders, socket  removed
-  results/  result.json, trace.json (ACP), mocks.json, diagnostics.log      retained
+  the run root and the socket are removed; the results directory is retained
 ```
 
 - **Authoring assets:** operator-owned YAML, fixtures, skills and extensions. Config-relative resources resolve from the declaring file; executable extensions are not discovered from the agent-writable workspace. Extension code and `.env` lookup commands are trusted host code, not sandboxed test subjects.
