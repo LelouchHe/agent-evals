@@ -132,6 +132,8 @@ export async function startMockHost(options: MockHostOptions): Promise<MockHost>
 
   async function reply(action: MockAction, target: string, argv: readonly string[]): Promise<string> {
     if (action.kind === "pass") return passReply();
+    // An explicit refusal is a decision, like an unmatched call: recorded, never a fault.
+    if (action.kind === "refuse") return denied(target);
     if (action.kind === "return") {
       return resultReply(
         action.result.exitCode,

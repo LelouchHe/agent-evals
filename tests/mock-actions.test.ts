@@ -370,6 +370,89 @@ setInterval(() => {}, 1000);`,
   assert.throws(() => process.kill(pid, 0), /ESRCH/);
 });
 
+test("pass:false refuses a matching call without a fault or the real command", async (t) => {
+  const { host: server } = await host(t, {
+    // The real `uname` exists, so a leaked delegation would print its output.
+    uname: [{ action: { kind: "refuse" } }],
+  });
+  const refused = await call(join(server.wiring.forwarderDir, "uname"), ["-s"]);
+  assert.deepEqual(refused, { status: 126, stdout: "", stderr: "uname: Operation not permitted\n" });
+  const { records, faults } = await server.close();
+  assert.deepEqual(records, [{ target: "uname", arguments: ["-s"] }]);
+  assert.deepEqual(faults, []);
+});
+
+test("pass:false beside run keeps the ordinary result and cannot delegate", async (t) => {
+  const authoring = await makeTempDir(t, "ae-mock-run-false-");
+  await writeFile(join(authoring, "ok.mjs"), `process.stdout.write("ok\\n");`);
+  await writeFile(join(authoring, "marker.mjs"), `process.stdout.write("agent-evals:pass\\n");`);
+  const { host: server } = await host(
+    t,
+    {
+      build: [rule(undefined, { kind: "run", command: [process.execPath, "ok.mjs"], pass: false })],
+      judge: [rule(undefined, { kind: "run", command: [process.execPath, "marker.mjs"], pass: false })],
+    },
+    { authoringDir: authoring },
+  );
+  assert.deepEqual(await call(join(server.wiring.forwarderDir, "build")), {
+    status: 0,
+    stdout: "ok\n",
+    stderr: "",
+  });
+  // The complete marker without permission is still a fault, as with an omitted `pass`.
+  assert.equal((await call(join(server.wiring.forwarderDir, "judge"))).status, 126);
+  const { faults } = await server.close();
+  assert.equal(faults.length, 1, faults.join("\n"));
+  assert.match(faults[0] as string, /printed the pass marker but the rule has no pass/);
+});
+
+test("a false rule refuses only its own calls while another rule can pass", async (t) => {
+  const { host: server } = await host(t, {
+    uname: [rule({ positional: ["--refused"] }, { kind: "refuse" }), rule(undefined, { kind: "pass" })],
+  });
+  const refused = await call(join(server.wiring.forwarderDir, "uname"), ["--refused"]);
+  assert.equal(refused.status, 126);
+  assert.equal(refused.stderr, "uname: Operation not permitted\n");
+
+  const passed = await call(join(server.wiring.forwarderDir, "uname"), ["-s"]);
+  assert.equal(passed.status, 0);
+  assert.equal(passed.stdout.trim(), "Darwin");
+  await server.close();
+});
+
+test("a false workspace rule hides the real script and does not require one", async (t) => {
+  const root = await makeTempDir(t, "ae-mock-false-workspace-");
+  const workspaceDir = join(root, "workspace");
+  await mkdir(join(workspaceDir, "scripts"), { recursive: true });
+  await writeFile(join(workspaceDir, "scripts/real.sh"), "#!/bin/sh\necho real script\n", { mode: 0o755 });
+  const started = await startMockHost({
+    runRootDir: root,
+    workspaceDir: await realpath(workspaceDir),
+    scratchDir: root,
+    authoringDir: root,
+    timeoutMs: 5_000,
+    signal: new AbortController().signal,
+    shell: {
+      "scripts/real.sh": [{ action: { kind: "refuse" } }],
+      // No real file at all: a false rule must not demand one.
+      "scripts/absent.sh": [{ action: { kind: "refuse" } }],
+    },
+  });
+  const refused = await call(join(workspaceDir, "scripts/real.sh"));
+  assert.deepEqual(refused, { status: 126, stdout: "", stderr: "scripts/real.sh: Operation not permitted\n" });
+  // The real script left the sandbox instead of sitting beside its forwarder.
+  await assert.rejects(() => stat(join(workspaceDir, "scripts/.real.sh")), { code: "ENOENT" });
+  assert.match(await readFile(join(root, "replaced/scripts/real.sh"), "utf8"), /real script/);
+  const absent = await call(join(workspaceDir, "scripts/absent.sh"));
+  assert.equal(absent.status, 126);
+  const { records, faults } = await started.close();
+  assert.deepEqual(
+    records.map((record) => record.target),
+    ["scripts/real.sh", "scripts/absent.sh"],
+  );
+  assert.deepEqual(faults, []);
+});
+
 test("pass inherits standard input through the forwarder", async (t) => {
   const { host: server } = await host(t, { cat: [{ action: { kind: "pass" } }] });
   const child = spawn(join(server.wiring.forwarderDir, "cat"), [], { stdio: ["pipe", "pipe", "pipe"] });

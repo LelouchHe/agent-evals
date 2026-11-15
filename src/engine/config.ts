@@ -58,7 +58,8 @@ export interface MockArgs {
 export type MockAction =
   | { readonly kind: "return"; readonly result: MockResult }
   | { readonly kind: "run"; readonly command: readonly string[]; readonly pass: boolean }
-  | { readonly kind: "pass" };
+  | { readonly kind: "pass" }
+  | { readonly kind: "refuse" };
 
 /** One ordered rule; a rule without `args` is the fallback. */
 export interface MockRule {
@@ -322,15 +323,15 @@ function expectMockAction(rule: Record<string, unknown>, label: string): MockAct
     const pass = rule.pass === undefined ? false : expectMockPass(rule.pass, `${label}.pass`);
     return { kind: "run", command: expectMockCommand(rule.run, `${label}.run`), pass };
   }
-  expectMockPass(rule.pass, `${label}.pass`);
-  return { kind: "pass" };
+  return expectMockPass(rule.pass, `${label}.pass`) ? { kind: "pass" } : { kind: "refuse" };
 }
 
-function expectMockPass(value: unknown, label: string): true {
-  if (value !== true) {
-    throw new ConfigError(`${label} must be the literal true`);
+/** `true` hands the call to the real command; `false` refuses it, or keeps `run` from passing. */
+function expectMockPass(value: unknown, label: string): boolean {
+  if (typeof value !== "boolean") {
+    throw new ConfigError(`${label} must be true or false`);
   }
-  return true;
+  return value;
 }
 
 function expectMockCommand(value: unknown, label: string): readonly string[] {

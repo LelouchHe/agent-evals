@@ -258,7 +258,7 @@ test("unsupported mock syntax is rejected at load time instead of ignored", asyn
     [{ shell: { make: {} } }, /must declare one of return, run or pass/],
     [{ shell: { make: { return: {}, run: ["sh"] } } }, /cannot combine return with run/],
     [{ shell: { make: { pass: true, return: {} } } }, /cannot combine return with pass/],
-    [{ shell: { make: { pass: false } } }, /pass must be the literal true/],
+    [{ shell: { make: { pass: "true" } } }, /pass must be true or false/],
     [{ shell: { make: { run: "sh" } } }, /run must be a non-empty list/],
     [{ shell: { make: { run: [] } } }, /run must be a non-empty list/],
     [{ shell: { make: { run: [""] } } }, /run\[0\] must be a non-empty string/],
@@ -305,6 +305,11 @@ mocks:
     npm:
       run: [node, mocks/decide.mjs]
       pass: true
+    docker:
+      pass: false
+    build:
+      run: [node, mocks/build.mjs]
+      pass: false
 runner:
   $type: pi
 checks:
@@ -339,6 +344,8 @@ checks:
         },
       ],
       npm: [{ action: { kind: "run", command: ["node", "mocks/decide.mjs"], pass: true } }],
+      docker: [{ action: { kind: "refuse" } }],
+      build: [{ action: { kind: "run", command: ["node", "mocks/build.mjs"], pass: false } }],
     },
   });
 });
@@ -531,6 +538,64 @@ test(
       { target: "whoami", arguments: [] },
       { target: "scripts/inspect.sh", arguments: ["alpha"] },
       { target: "scripts/publish.sh", arguments: [] },
+    ]);
+  },
+);
+
+test(
+  "pass:false refuses the call and keeps the real command denied in the sandbox",
+  { skip: process.platform !== "darwin" },
+  async (t) => {
+    const fixture = await makeAcpAgent(t, "mocks-refuse");
+    const fixtureFiles = join(fixture.root, "fixture");
+    await mkdir(join(fixtureFiles, "scripts"), { recursive: true });
+    await writeFile(join(fixtureFiles, "scripts/only.sh"), "#!/bin/sh\necho real only\n", { mode: 0o755 });
+    const casePath = join(fixture.root, "case.yml");
+    await writeFile(
+      casePath,
+      stringify({
+        input: INPUT,
+        fixture: "fixture",
+        mocks: {
+          shell: {
+            hostname: { pass: false },
+            "scripts/only.sh": { pass: false },
+          },
+        },
+        runner: { $type: "acp", agent: "agent.yml" },
+        checks: [
+          { $type: "file", path: "false-status", matches: "^126$" },
+          { $type: "file", path: "false-err", matches: "^hostname: Operation not permitted\\n?$" },
+          { $type: "file", path: "false-out", matches: "^$" },
+          // The target cannot pass, so its real binary stays denied by absolute path.
+          { $type: "file", path: "abs-status", matches: "^126$" },
+          { $type: "file", path: "abs-err", matches: "Operation not permitted" },
+          { $type: "file", path: "script-status", matches: "^126$" },
+          { $type: "file", path: "script-out", matches: "^scripts/only.sh: Operation not permitted\\n?$" },
+        ],
+      }),
+    );
+    const registry = createRegistry();
+    addRunner(registry, acpRunner, "built-in");
+    addChecker(registry, fileChecker, "built-in");
+    const resultsDir = join(fixture.root, "results");
+    const record = await runEvaluation({
+      case: await loadCase(casePath),
+      registry,
+      resultsDir,
+      tempParent: await makeTempDir(t, "ae-mocks-refuse-runs-"),
+    });
+
+    assert.deepEqual(
+      record.checks.map((check) => check.status),
+      record.checks.map(() => "pass"),
+      record.error,
+    );
+    assert.equal(record.status, "pass", record.error);
+    const mockRecords = JSON.parse(await readFile(join(resultsDir, record.runId, "mocks.json"), "utf8"));
+    assert.deepEqual(mockRecords, [
+      { target: "hostname", arguments: [] },
+      { target: "scripts/only.sh", arguments: [] },
     ]);
   },
 );

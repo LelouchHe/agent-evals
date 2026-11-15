@@ -127,13 +127,23 @@ Workspace scripts are executed, not sourced: a sourced script would see the call
 
 A rule declares exactly one of three actions. Every call is recorded before its action runs.
 
-| Action   | Behavior                                                                                                                                                                                                                                                                                                |
-| -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `return` | A fixed result: `exitCode` (0–255, default `0`), `stdout` and `stderr` (default empty strings), written byte for byte.                                                                                                                                                                                  |
-| `run`    | An author-supplied host program, started without a shell in the case file's directory with the call's arguments appended and empty standard input, returning its stdout, stderr and exit status unchanged. Its arguments are agent-controlled, so it treats them as untrusted.                          |
-| `pass`   | The real command runs inside the sandbox: the forwarder finds the next executable of that name on `PATH`, skipping its own entry, and `exec`s it; a workspace script `exec`s its dot-named sibling. Standard input, output, signals and the exit status are the real program's. The host never runs it. |
+| Action        | Behavior                                                                                                                                                                                                                                                                                                |
+| ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `return`      | A fixed result: `exitCode` (0–255, default `0`), `stdout` and `stderr` (default empty strings), written byte for byte.                                                                                                                                                                                  |
+| `run`         | An author-supplied host program, started without a shell in the case file's directory with the call's arguments appended and empty standard input, returning its stdout, stderr and exit status unchanged. Its arguments are agent-controlled, so it treats them as untrusted.                          |
+| `pass: true`  | The real command runs inside the sandbox: the forwarder finds the next executable of that name on `PATH`, skipping its own entry, and `exec`s it; a workspace script `exec`s its dot-named sibling. Standard input, output, signals and the exit status are the real program's. The host never runs it. |
+| `pass: false` | The matched call is refused: recorded, exit `126` with `<target>: Operation not permitted`, and the real command does not run. A normal refusal, not a fault. Beside `run` it is the default: the program's own output is returned and it simply cannot authorize delegation.                           |
 
-`run` can decide between a result and a pass by setting `pass: true` beside it. Only one complete stdout value is a control value: the single line `agent-evals:pass`, with at most one trailing line feed. With exit `0` and a rule that allows `pass`, the call passes, none of the program's output reaches the agent and the real command runs in the sandbox. The same complete value from a rule without `pass`, or with a nonzero exit, is a mock fault, so the marker can never reach the agent and a missing `pass` is noticed. Stdout and stderr are otherwise opaque bytes, returned unchanged: a marker embedded in other output is ordinary data, and a crashed program cannot print the complete value by accident. The same holds for a `return`'s YAML text, which is UTF-8 by construction.
+A refusal is per rule: `pass: false` refuses the calls it matches, while a later or earlier `pass: true` rule still handles its own calls:
+
+```yaml
+docker:
+  - args: [push]
+    pass: false # recorded refusal, 126, no fault, no real command
+  - pass: true
+```
+
+`run` can decide between a result and a pass by setting `pass: true` beside it. Only one complete stdout value is a control value: the single line `agent-evals:pass`, with at most one trailing line feed. With exit `0` and a rule that sets `pass: true`, the call passes, none of the program's output reaches the agent and the real command runs in the sandbox. The same complete value from a rule without `pass`, or with a nonzero exit, is a mock fault, so the marker can never reach the agent and a missing `pass` is noticed. Stdout and stderr are otherwise opaque bytes, returned unchanged: a marker embedded in other output is ordinary data, and a crashed program cannot print the complete value by accident. The same holds for a `return`'s YAML text, which is UTF-8 by construction.
 
 A forwarder's command line is never interpreted by a shell and never interpolated into one.
 
@@ -162,7 +172,7 @@ npm:
 - **Scalars are strings.** A YAML number is compared as its text, so `-n: 5` matches `-n 5`. A literal `true` or `false` must be quoted, since unquoted booleans mean required and forbidden.
 - **No `and`/`or`/`not` operators.** Entries written together must all hold; alternatives are a regex alternation or another rule, exclusion is `false` or an earlier rule.
 - **Options before the subcommand break the prefix.** `gh --repo foo/bar pr create` does not match `[pr, create]`; use a bare map, which gives up the order between those tokens.
-- **Ordered per target.** The first matching rule wins; a rule without `args` is the fallback. When no rule matches, the call is still recorded, the real command does not run, and the forwarder exits `126` with `<target>: Operation not permitted` on stderr — the shape of a Seatbelt denial, without naming mocks.
+- **Ordered per target.** The first matching rule wins; a rule without `args` is the fallback. When no rule matches, the call is still recorded, the real command does not run, and the forwarder exits `126` with `<target>: Operation not permitted` on stderr — the shape of a Seatbelt denial, without naming mocks. An explicit `pass: false` rule refuses the same way.
 
 Not expressible yet: repeated options (`-e A=1 -e B=2`), exact argument lists (a bare `make`), combined short options (`-rf`) and regex flags.
 
@@ -243,7 +253,7 @@ The repository's [`deploy-runbook`](../examples/cases/deploy-runbook/case.yml) e
 ## Current Limitations
 
 - **Only the `acp` runner**, and only inside its macOS Seatbelt sandbox; Linux is unsupported.
-- **`PATH` interception and denial are not a proof of absence.** A target that can `pass` keeps its real binary runnable, so an absolute-path call still runs it; the case can prove a `PATH` call, not that no other call happened. A target that cannot `pass` has its resolved real binary denied, which turns an absolute-path bypass into a failure.
+- **`PATH` interception and denial are not a proof of absence.** A target with any `pass: true` rule keeps its real binary runnable, so an absolute-path call still runs it; the case can prove a `PATH` call, not that no other call happened. A target that cannot `pass` has its resolved real binary denied, which turns an absolute-path bypass into a failure.
 - **Only bare names and workspace files.** Shell builtins, harness-internal tools, `PATH` entries added by the agent, and a script executed from outside its declared workspace path are not covered.
 - **Standard input is not forwarded** to `return` or `run`; a mock downstream of a pipe answers without seeing the piped data. `pass` inherits it.
 - **Output is returned after the call completes**, not streamed; the original interleaving of stdout and stderr is lost.
