@@ -1,23 +1,10 @@
 import { spawn, type ChildProcess } from "node:child_process";
+import { readFile } from "node:fs/promises";
 import type { Readable } from "node:stream";
 import { setTimeout as delay } from "node:timers/promises";
 import { sandboxExecutablePath, sandboxLaunchCommand, writeSeatbeltPolicy, type SandboxPolicy } from "./policy.ts";
 
-// Deliberately not a standalone executable: this program is only ever passed
-// to sandbox-exec with our generated same-sandbox signal policy. FD 3 is the
-// private completion channel; the workload never inherits it. Save stdin on
-// FD 4 because asynchronous shell commands otherwise receive /dev/null.
-const SUPERVISOR = `
-trap 'kill -KILL -- -1' TERM INT HUP
-exec 4<&0
-"$@" <&4 3>&- 4<&- &
-child=$!
-exec 4<&-
-wait "$child"
-status=$?
-printf '%s\\n' "$status" >&3
-kill -KILL -- -1
-`;
+const SUPERVISOR_ASSET = new URL("./supervisor.sh", import.meta.url);
 
 export interface SupervisedProcess {
   readonly child: ChildProcess;
@@ -44,14 +31,17 @@ export async function spawnSupervised(options: {
   readonly report?: boolean;
 }): Promise<SupervisedProcess> {
   const executable = sandboxExecutablePath();
-  const policyPath = await writeSeatbeltPolicy(options.policyDirectory, options.policy);
+  const [policyPath, supervisor] = await Promise.all([
+    writeSeatbeltPolicy(options.policyDirectory, options.policy),
+    readFile(SUPERVISOR_ASSET, "utf8"),
+  ]);
   const mode = options.interactive ? "inherit" : "pipe";
   const stdio: Array<"inherit" | "pipe" | "ignore"> = [mode, mode, mode, "pipe"];
   // FD 4 is the supervisor's saved stdin; the optional report pipe is FD 5.
   if (options.report === true) stdio.push("ignore", "pipe");
   const child = spawn(
     executable,
-    sandboxLaunchCommand(policyPath, "/bin/sh", ["-c", SUPERVISOR, "agent-evals", ...options.command]),
+    sandboxLaunchCommand(policyPath, "/bin/sh", ["-c", supervisor, "agent-evals", ...options.command]),
     {
       cwd: options.cwd,
       env: options.env,

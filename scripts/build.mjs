@@ -11,7 +11,7 @@ await rm(dist, { recursive: true, force: true });
 execFileSync(process.execPath, [tsc, "-p", join(root, "tsconfig.build.json")], { cwd: root, stdio: "inherit" });
 
 // Non-TypeScript runtime assets are copied unchanged into their compiled location.
-for (const asset of ["engine/forwarder.sh", "runners/pi/shell-wrapper.sh"]) {
+for (const asset of ["engine/forwarder.sh", "platform/macos/supervisor.sh", "runners/pi/shell-wrapper.sh"]) {
   const target = join(dist, asset);
   await mkdir(dirname(target), { recursive: true });
   await cp(join(root, "src", asset), target);

@@ -1,47 +1,15 @@
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { errorMessage } from "./config.ts";
 import type { CheckSandbox, CheckSandboxOutcome } from "./registry.ts";
+import { siblingRuntimeModule } from "./runtime-assets.ts";
 import { SYSTEM_PATH } from "../platform/macos/policy.ts";
 import { spawnSupervised, type SupervisedProcess } from "../platform/macos/supervise.ts";
 
 /** How much of a program's combined output a check may keep as its reason. */
 const MAX_OUTPUT_LENGTH = 4_096;
-
-/**
- * The workload's parent. It starts the author's program with exactly `PATH`, `HOME` and
- * `TMPDIR`, and reports the exact wait status instead of letting a shell reduce it to `128+n`:
- * `close` gives `code` or `signal`, and a failed `spawn` reports the exec error before any child
- * runs. The report goes to the host's private pipe at FD 5, never to the program's streams.
- */
-const RUNNER = String.raw`
-const { spawn } = require("node:child_process");
-const fs = require("node:fs");
-const program = process.argv[1];
-const args = process.argv.slice(2);
-let settled = false;
-function report(outcome) {
-  if (settled) return;
-  settled = true;
-  // FD 5 is the host's private report pipe, closed for the workload's own children.
-  try { fs.writeSync(5, JSON.stringify(outcome) + "\n"); } catch {}
-}
-try {
-  const child = spawn(program, args, {
-    cwd: process.cwd(),
-    env: { PATH: process.env.PATH, HOME: process.env.HOME, TMPDIR: process.env.TMPDIR },
-    stdio: ["ignore", "inherit", "inherit"],
-  });
-  child.on("error", (error) =>
-    report({ kind: "failed", reason: "could not start " + program + ": " + (error.code || error.message) }),
-  );
-  child.on("close", (code, signal) =>
-    report(signal === null ? { kind: "exited", exitCode: code } : { kind: "signalled", signal }),
-  );
-} catch (error) {
-  report({ kind: "failed", reason: "could not start " + program + ": " + (error.code || error.message) });
-}
-`;
+const CHECK_RUNNER = fileURLToPath(siblingRuntimeModule(import.meta.url, "check-runner"));
 
 export interface CheckSandboxOptions {
   /** Prepared workspace root; the program starts here and may write in it. */
@@ -88,7 +56,7 @@ async function runProgram(options: CheckSandboxOptions, command: readonly string
         allowNetwork: false,
       },
       policyDirectory: directory,
-      command: [process.execPath, "-e", RUNNER, program, ...args],
+      command: [process.execPath, CHECK_RUNNER, program, ...args],
       cwd: options.workspaceDir,
       env: { PATH: path, HOME: homeDir, TMPDIR: tmpDir },
       interactive: false,

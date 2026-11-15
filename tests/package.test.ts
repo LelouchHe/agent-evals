@@ -43,9 +43,11 @@ test("package metadata and built runtime assets point at the sole CLI implementa
   const cli = await readFile(distEntry, "utf8");
   assert.ok(cli.startsWith("#!/usr/bin/env node\n"), "dist/cli.js must keep its executable shebang");
   for (const asset of [
+    "dist/engine/check-runner.js",
     "dist/engine/forwarder.sh",
     "dist/engine/regex.js",
     "dist/engine/runtime-assets.js",
+    "dist/platform/macos/supervisor.sh",
     "dist/runners/pi/supervisor.js",
     "dist/runners/pi/safe-process-group.js",
     "dist/runners/pi/shell-wrapper.sh",
