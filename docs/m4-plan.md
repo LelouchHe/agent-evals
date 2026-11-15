@@ -1,6 +1,8 @@
 # M4: Checks, Usage and a Baseline Runner
 
-Status: planned. Nothing here is implemented. [M3](m3-plan.md) delivers shell collaborator mocks and writes their interaction records. This milestone closes the single-run loop: every evidence source gets a deterministic check, a run records what it cost, and a case can be shown not to pass vacuously.
+Status: delivered. [M3](m3-plan.md) delivers shell collaborator mocks and writes their interaction records. This milestone closes the single-run loop: every evidence source gets a deterministic check, a run records what it cost, and a case can be shown not to pass vacuously.
+
+Implemented as specified below: [`mock`](../src/checkers/mock/checker.ts) and [`shell`](../src/checkers/shell/checker.ts) checkers, the engine's [check sandbox](../src/engine/check-sandbox.ts), `runner.usage` in `result.json`, and the [`noop`](../src/runners/noop/runner.ts) runner. [Configuration](configuration.md) and [Mocks](mocks.md) own the shipped parameter and record details.
 
 ## Scope
 

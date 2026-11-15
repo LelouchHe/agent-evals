@@ -223,6 +223,12 @@ The run completes only when the turn ends with `end_turn`; any other stop reason
 
 Example: [`deploy-runbook`](../examples/cases/deploy-runbook/case.yml), whose Pi and Claude cases share one fixture and one [`mocks`](mocks.md) declaration and differ in agent, model and whether `files` places `skill` where that harness discovers it (`.agents/skills/` or `.claude/skills/`).
 
+### Noop Runner (`$type: noop`)
+
+A parameterless baseline runner. It starts no harness and no sandbox and completes at once with `finalText: null`, no diagnostics, an empty trace (`trace.json` is `[]`), and no usage. It declares mock support, so a case with `mocks` loads; the forwarders are written and nothing calls them, so `mocks.json` is `[]`.
+
+Run a case under it to see which checks need the agent: `file` `matches`, a `mock` with its default count, or a `shell` command over a broken fixture fail, while restraint checks (`times: 0`, `unchanged`) pass by construction. Select it per named case; `run` has no baseline flag.
+
 ### File Checker (`$type: file`)
 
 | Parameter   | Contract                                                                                                                                                        |
@@ -233,6 +239,40 @@ Example: [`deploy-runbook`](../examples/cases/deploy-runbook/case.yml), whose Pi
 | `unchanged` | Optional literal `true`; compare bytes against the initial baseline. `false` is invalid.                                                                        |
 
 At least one assertion is required; each produces its own result. Patterns run on the shared RE2 engine ([Mocks](mocks.md#regexes) owns the dialect), which is linear-time and needs no worker or timeout. File reads are capped at 1 MiB. Missing required files fail checks; unsafe/replaced roots, escaping/broken symlinks, non-regular, oversized or unreadable evidence are errors rather than passes. No content normalization or `includes` alias is provided.
+
+### Mock Checker (`$type: mock`)
+
+Asserts on the calls a declared mock recorded; [Mocks](mocks.md#the-mock-checker) owns the evidence model and its limits.
+
+```yaml
+- $type: mock
+  shell: [git, push, { /-f|--force/: true }]
+  times: 0
+```
+
+| Parameter | Contract                                                                                                                                                                                                                                                                          |
+| --------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `shell`   | Required list. Position 0 is a declared `mocks.shell` target written as a literal: `./scripts/x` and `scripts/x` name the same workspace target, while `x` and `./x` stay distinct, exactly as in the declaration. The rest is a mock rule's [`args`](mocks.md#matching) grammar. |
+| `times`   | Optional non-negative integer, the exact number of matching calls. `0` asserts none; omitted means at least one.                                                                                                                                                                  |
+
+Strict parameters; unknown fields are errors, and position 0 cannot be a `/…/` pattern because a pattern cannot be compared with the declared targets. A case with no `mocks`, or a check naming an undeclared target, is a configuration error at load time, before any run directory exists. The check matches the recorded calls, not the declared rules, so its pattern need not equal any rule's `args`, and it counts a call that reached the mock even when a rule refused it. One result: `pass` or `fail`, with the number and arguments of the matching calls on failure.
+
+### Shell Checker (`$type: shell`)
+
+Runs an author's program after the run and judges its exit status; use it for outcomes only execution shows, such as the project's tests.
+
+```yaml
+- $type: shell
+  run: [npm, test]
+```
+
+| Parameter | Contract                                                                                                                               |
+| --------- | -------------------------------------------------------------------------------------------------------------------------------------- |
+| `run`     | Required non-empty list of non-empty strings: a program and its arguments, the same form as a mock's `run`. Never a shell interpreter. |
+
+The program starts in the workspace root in the engine's check sandbox: open reads, writes only beneath the workspace and a private HOME and temporary directory, no network, and only `PATH`, `HOME` and `TMPDIR` in its environment (`PATH` is the operator's). It is supervised like the harness, so its whole process tree ends with the check. Exit `0` passes; any other exit fails with the tail of its output as the reason; a program that cannot start, dies from a signal or exceeds the check deadline (`timeoutMs`) is an error, not a failed judgment.
+
+A shell check runs in the live workspace, in declaration order, so a `file` check that must see the agent's result unchanged belongs before it. Mocks are closed when checks run: a mocked `PATH` command is not on the check's `PATH`, and a mocked workspace script reaches only a closed host. The sandbox policy is fixed and has no case syntax; `judge` keeps its own network-enabled sandbox instead.
 
 ### Judge Checker (`$type: judge`)
 
@@ -260,7 +300,7 @@ The judge receives the task, the selected regular-file evidence (or an explicit 
 
 `view` uses the same authoring resolver as `run`, then prints the resolved declaration and each top-level field's source file, 1-based declaration line, and common/selected-case origin. Case labels are JSON-escaped. Placeholders are shown unsubstituted. It does not show implementation defaults or invoke implementation schemas, factories, environment lookups or harnesses; it is not a runtime-readiness check.
 
-`run` writes `.agent-evals/<run-id>/result.json` in the invocation directory by default; `--results-dir` changes the root. This is retained report data, not the evaluated workspace. Schema version 1 retains source path/optional case name, declared `resolvedConfig`, runner outcome, individual checks, overall status, diagnostics and cleanup status. Substituted and schema-normalized/defaulted values do not replace the declaration; implementation outputs are retained normally. A runner that records a trace (currently `acp`) also writes `trace.json` beside it, including for failed, timed-out or cancelled runs: an ordered list of `message` and `thought` entries (consecutive chunks joined) and `tool` entries. ACP updates replace the fields they carry, so each tool entry is one `toolCallId` in its final state with the harness's own fields (`title`, `kind`, `status`, `rawInput`, `content`, ...); intermediate states are not kept. Non-text content and other session updates are not recorded. A case that declares [`mocks`](#mocks) also writes `mocks.json`: the calls that reached a mocked command in arrival order, each as a `target` and its `arguments`. It is run evidence, not a copy of the `mocks` declaration, and holds no output or exit code and no judgment. The [judge](#judge-checker-type-judge) can take the trace as evidence; field meanings differ between harnesses, so there are no field-level trace assertions. Literal keys authored in YAML are declaration data and are not automatically masked. No resource hashes or workspace snapshots are retained, so old resource contents cannot be reconstructed from their unchanged paths.
+`run` writes `.agent-evals/<run-id>/result.json` in the invocation directory by default; `--results-dir` changes the root. This is retained report data, not the evaluated workspace. Schema version 1 retains source path/optional case name, declared `resolvedConfig`, runner outcome, individual checks, overall status, diagnostics and cleanup status. The runner record also carries an optional `usage`, as far as the harness reports it: `context` (`used` and `size` from the last ACP `usage_update`), `cost` (that update's cumulative session `amount` and `currency`; omitted leaves it, `null` clears it) and `tokens` (`totalTokens`, `inputTokens`, `outputTokens`, plus optional `thoughtTokens`, `cachedReadTokens` and `cachedWriteTokens` from the prompt response's unstable `usage`). Each part is optional, nothing is estimated, and `_meta` is not recorded. Usage is reported whether or not the run completed, so a timed-out run keeps the last context and cost it saw; tokens arrive with the turn's completion. Native Pi and `noop` report no usage. Substituted and schema-normalized/defaulted values do not replace the declaration; implementation outputs are retained normally. A runner that records a trace (currently `acp`) also writes `trace.json` beside it, including for failed, timed-out or cancelled runs: an ordered list of `message` and `thought` entries (consecutive chunks joined) and `tool` entries. ACP updates replace the fields they carry, so each tool entry is one `toolCallId` in its final state with the harness's own fields (`title`, `kind`, `status`, `rawInput`, `content`, ...); intermediate states are not kept. Non-text content and other session updates are not recorded. A case that declares [`mocks`](#mocks) also writes `mocks.json`: the calls that reached a mocked command in arrival order, each as a `target` and its `arguments`. It is run evidence, not a copy of the `mocks` declaration, and holds no output or exit code and no judgment. The [judge](#judge-checker-type-judge) can take the trace as evidence; field meanings differ between harnesses, so there are no field-level trace assertions. Literal keys authored in YAML are declaration data and are not automatically masked. No resource hashes or workspace snapshots are retained, so old resource contents cannot be reconstructed from their unchanged paths.
 
 Overall statuses are `pass`, `fail`, `error`, `timeout`, and `cancelled`; individual checks are `pass`, `fail`, or `error`. Pass/fail summarizes satisfaction of the configured checks, not model/skill quality or an improvement claim. A normal negative judgment is `fail`; inability to execute or evaluate is `error`, with timeout/cancellation reported separately. Exit codes are 0 for pass, 1 for failed checks, and 2 for configuration/execution/checker/timeout/cancellation errors. Early configuration errors need not produce a run record.
 

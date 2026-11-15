@@ -1,6 +1,6 @@
 # Mocks
 
-A mock is a case-owned substitute for a collaborator at the environment boundary: a case declares it, the run arranges it, and every call that reaches it is recorded. This page owns mock usage — what mocks do, how they relate to checks and the trace, the supported configuration, matching, the three actions, a complete case, `mocks.json`, and current limitations. [M3](m3-plan.md) owns the design decisions; [Configuration Reference](configuration.md) owns the rest of the case format. Asserting on recorded calls is [M4](m4-plan.md); MCP collaborators are M5.
+A mock is a case-owned substitute for a collaborator at the environment boundary: a case declares it, the run arranges it, and every call that reaches it is recorded. This page owns mock usage — what mocks do, how they relate to checks and the trace, the supported configuration, matching, the three actions, a complete case, `mocks.json`, and current limitations. [M3](m3-plan.md) owns the design decisions; [Configuration Reference](configuration.md) owns the rest of the case format. Recorded calls are asserted by the [`mock` checker](#the-mock-checker); MCP collaborators are M5.
 
 Implemented: shell collaborators — bare `PATH` commands and workspace scripts — with `return`, `run` and `pass`, argument matching and Seatbelt denial, wired by the `acp` runner on macOS.
 
@@ -16,11 +16,11 @@ For each declared target the engine writes a thin forwarder into the run. A bare
 
 ## Mocks, Checks and the Trace
 
-`mocks` and `checks` are separate. `mocks` arranges the run, answers calls and records them; it never produces a pass or fail. `checks` inspect evidence afterwards, and today they cannot inspect mock records.
+`mocks` and `checks` are separate. `mocks` arranges the run, answers calls and records them; it never produces a pass or fail. `checks` inspect evidence afterwards, and the [`mock` checker](#the-mock-checker) inspects the records.
 
 - [`mocks.json`](#mocksjson) is the evidence a mock produces: what actually reached the mock boundary, in arrival order.
 - [`trace.json`](configuration.md#inspecting-and-recording) is what the harness reported: messages, reasoning and requested tool calls. A requested call in the trace does not prove its effect, and the trace may omit calls a script made; a recorded mock call is the boundary evidence for those.
-- No call checker exists yet. Asserting on recorded calls is planned in [M4](m4-plan.md); until then `mocks.json` is retained evidence to read, and `judge` does not take it.
+- The [`mock` checker](#the-mock-checker) asserts on the recorded calls. `judge` does not take them; they are structured evidence, not text.
 
 Use a mock to control what a collaborator answers, to supply a fake implementation, and to keep real effects from happening; use a check on the workspace, the trace or a judge for the outcome that matters.
 
@@ -48,12 +48,29 @@ Mocks are prepared with the other run state and answered while the harness runs;
               `-- then the host closes and returns records and faults
                   `-- any fault marks the run "error"
 
- 5. assert    checks read workspace/ and baseline/ (no call checker yet: M4)
+ 5. assert    checks read workspace/, baseline/ and the run's call records
 
  6. teardown  the run root is removed
               `-- retained: result.json, plus trace.json when the runner
                   records one and mocks.json when the case declares mocks
 ```
+
+## The Mock Checker
+
+`$type: mock` asserts how often a declared target was called, with which arguments. Its target must be declared: only a declared target has a forwarder and therefore records. [Configuration](configuration.md#mock-checker-type-mock) owns the parameter table; this section owns what the evidence can and cannot prove.
+
+```yaml
+checks:
+  - $type: mock
+    shell: [git, push, { /-f|--force/: true }]
+    times: 0
+```
+
+- **A matching record proves a call was made** through `PATH` or the declared workspace path. Any process in the sandbox can cause one.
+- **Absence is enforced by the sandbox, not by the record.** For a `PATH` target without any `pass: true` rule the real binary is denied, so `times: 0` together with that denial shows the command had no effect. A target that can pass cannot prove absence: its real binary stays executable, so a call by absolute path runs unrecorded.
+- **It counts calls that reached the mock, not calls that succeeded.** A record is written before a rule is chosen, so a refused or unmatched call counts. `times: 0` means the call was not even attempted through the mock.
+- **The pattern is independent of the rules.** It is matched against the records and need not equal any rule's `args`; a commit message format or a deploy target is checked by matching the argument that carries it.
+- **It never arranges.** The check does not install a forwarder for a target it names, so adding or removing a check does not change the evaluated environment.
 
 ## One Mocked Call
 
@@ -254,11 +271,11 @@ The repository's [`deploy-runbook`](../examples/cases/deploy-runbook/case.yml) e
 
 ## Current Limitations
 
-- **Only the `acp` runner**, and only inside its macOS Seatbelt sandbox; Linux is unsupported.
+- **Only the `acp` runner exercises them**, and only inside its macOS Seatbelt sandbox; `noop` accepts `mocks` without calling them, and Linux is unsupported.
 - **`PATH` interception and denial are not a proof of absence.** A target with any `pass: true` rule keeps its real binary runnable, so an absolute-path call still runs it; the case can prove a `PATH` call, not that no other call happened. A target that cannot `pass` has its resolved real binary denied, which turns an absolute-path bypass into a failure.
 - **Only bare names and workspace files.** Shell builtins, harness-internal tools, `PATH` entries added by the agent, and a script executed from outside its declared workspace path are not covered.
 - **Standard input is not forwarded** to `return` or `run`; a mock downstream of a pipe answers without seeing the piped data. `pass` inherits it.
 - **Output is returned after the call completes**, not streamed; the original interleaving of stdout and stderr is lost.
-- **No call checker**, so mock records are not assertable yet ([M4](m4-plan.md)); MCP collaborators (M5) are unavailable.
+- **MCP collaborators (M5) are unavailable.**
 - **Records cannot be read, altered or erased from inside the sandbox**, but any process there can cause one by calling a mocked command, or by writing to the forwarder's socket directly. Records prove that a call was made, not that only the harness made it.
 - **Transport-fault reporting is ordinary, not tamper-proof.** The marker a lost connection leaves in the run scratch directory is in agent-writable space, so a process that deliberately clears it hides the fault from the run status; `trace.json` is there for investigation, though it does not necessarily record every indirect operation.
