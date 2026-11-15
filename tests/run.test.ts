@@ -136,6 +136,9 @@ test("integration: success runs file and judge checks and cleans the run directo
   const saved = JSON.parse(await readFile(join(resultsDir, record.runId, "result.json"), "utf8")) as EvaluationRecord;
   assert.equal(saved.status, "pass");
   assert.equal(saved.runId, record.runId);
+  // Native Pi reports no usage; the field is omitted rather than zeroed.
+  assert.equal(record.runner.usage, undefined);
+  assert.equal("usage" in saved.runner, false);
   assert.deepEqual(saved.resolvedConfig.runner, {
     $type: "pi",
     model: "test/model",
