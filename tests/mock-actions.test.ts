@@ -268,6 +268,18 @@ setInterval(() => {}, 1000);`,
   assert.throws(() => process.kill(pid, 0), /ESRCH/);
 });
 
+test("pass inherits standard input through the forwarder", async (t) => {
+  const { host: server } = await host(t, { cat: [{ action: { kind: "pass" } }] });
+  const child = spawn(join(server.wiring.forwarderDir, "cat"), [], { stdio: ["pipe", "pipe", "pipe"] });
+  child.stdin?.end("from standard input\n");
+  const out: Buffer[] = [];
+  child.stdout?.on("data", (chunk: Buffer) => out.push(chunk));
+  const status = await new Promise<number | null>((resolve) => child.on("close", resolve));
+  assert.equal(status, 0);
+  assert.equal(Buffer.concat(out).toString(), "from standard input\n");
+  assert.deepEqual((await server.close()).records, [{ target: "cat", arguments: [] }]);
+});
+
 test("run can pass only through the marker and only when the rule allows it", async (t) => {
   const authoring = await makeTempDir(t, "ae-mock-marker-");
   await writeFile(join(authoring, "pass.mjs"), `process.stdout.write("agent-evals:pass\\n");`);

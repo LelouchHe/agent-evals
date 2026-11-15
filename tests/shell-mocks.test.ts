@@ -263,6 +263,7 @@ test("unsupported mock syntax is rejected at load time instead of ignored", asyn
     [{ shell: { make: { run: [] } } }, /run must be a non-empty list/],
     [{ shell: { make: { run: [""] } } }, /run\[0\] must be a non-empty string/],
     [{ shell: { make: { args: [true], return: {} } } }, /quote a boolean literal/],
+    [{ shell: { make: { args: ["/[/"], return: {} } } }, /is not a valid RE2 pattern/],
     [{ shell: { make: { args: [{ a: true }, "b"], return: {} } } }, /option map only as its last element/],
     [{ shell: { make: { args: ["push"], times: 1 } } }, /has unknown field: times/],
     [{ shell: { make: { return: { exitCode: 300 } } } }, /exitCode must be an integer from 0 to 255/],
