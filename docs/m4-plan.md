@@ -132,9 +132,15 @@ One real single-turn run of each harness through the `acp` environment (2026-11-
 - **Only Claude sends the unstable `usage`** on the prompt response (35,246 total tokens, almost all cache reads and writes). Pi answers with the stop reason alone.
 - **The stable SDK client delivers the unstable field unchanged**, so reading it needs no change of SDK entry point.
 
-## To Verify
+The `shell` sandbox against real toolchains (2026-11-15), through `/usr/bin/sandbox-exec` on macOS 15.5 with a deny-default profile: open reads, writes limited to the workspace, a private `HOME` and a private `TMPDIR`, no `network` clause, and exactly `PATH`, `HOME` and `TMPDIR` in the environment.
 
-- **The `shell` sandbox against a real toolchain.** Run a real `npm test` in the check sandbox, with its private HOME and no network, and note what a toolchain still needs: a tool that keeps its configuration or cache under the real HOME, or a test suite that binds a local port.
+- **`npm test` passes as it is.** `npm test` → `node --test` in a Node 24 project exited 0 under the private `HOME`, and 1 with the assertion in its tail when a test failed. npm wrote only beneath the private `HOME` (`.npm/_logs`, `_update-notifier-last-checked`) and its update check's `registry.npmjs.org` fetch failed with `ENOTFOUND` without failing the command; Node's compile cache went under the private `TMPDIR`. `clang`, `make`, `swiftc`, `git` and `python3` ran from the operator's `PATH` and also wrote only there.
+- **A redirected `HOME` withholds configuration, silently.** `git` finds no `~/.gitconfig`: `git config --get user.name` exits 1, and a commit without `-c user.name` and `-c user.email` fails with "Author identity unknown" (exit 128) in an otherwise writable repository. npm needed no copy, because it reaches its global configuration through the Node installation rather than `HOME`.
+- **Reads are open and writes end at `EPERM`.** A check read the operator's `.zshrc` and `/etc/passwd`, while every write outside the three directories failed with `EPERM`: the operator's home, the repository and `/tmp`. `mktemp` used the private `TMPDIR` and failed with `Operation not permitted` for `mktemp -p /tmp`.
+- **The network denial covers loopback and Unix sockets.** With no `network` clause, `listen` on `127.0.0.1:0`, `0.0.0.0:0` and `::1:0` all failed with `EPERM`; so did `connect` to a host process's loopback port, to `1.1.1.1:443`, and to an `AF_UNIX` server, whose own `listen` in the private `TMPDIR` failed with `EPERM` first. Name resolution still works from `/etc/hosts` (`localhost` → `::1`) and fails `ENOTFOUND` for external names.
+- **A loopback exception is not a loopback exception.** Seatbelt parses only `localhost` or `*` as an `ip` filter host and rejects `127.0.0.1` with "host must be * or localhost" (exit 65). Adding `(allow network-inbound (local ip "localhost:*"))` with its `remote` counterpart made loopback listen and connect pass and kept `1.1.1.1:443` at `EPERM`, but also let the sandbox listen on `0.0.0.0:45999`.
+
+So a check suite that binds an ephemeral port or uses a Unix socket for IPC fails at check time, as does anything that activates credentials kept in the operator's `HOME`. Nothing measured contradicts the fixed policy; whether `shell` ever admits loopback is part of the sandbox configuration [M6](roadmap.md#open-questions) designs.
 
 ## Deferred
 
