@@ -102,6 +102,7 @@ export async function runEvaluation(request: RunRequest): Promise<EvaluationReco
   let trace: readonly TraceEntry[] | undefined;
   let mockRecords: readonly MockRecord[] | undefined;
   let mockHost: MockHost | undefined;
+  let mockFailed = false;
   const diagnostics: string[] = [];
   let error: string | undefined;
   let status: RunStatus;
@@ -124,15 +125,24 @@ export async function runEvaluation(request: RunRequest): Promise<EvaluationReco
       await cp(source, workspaceDir, { recursive: true, preserveTimestamps: true });
     }
     await placeCaseFiles(request.case, join(root, "files"), workspaceDir);
-    await cp(workspaceDir, baselineDir, { recursive: true, preserveTimestamps: true });
     const workspaceRoot = await openRunRoot(workspaceDir);
-    const baselineRoot = await openRunRoot(baselineDir);
 
-    // The host answers calls before the runner starts and stays up past its stop.
+    // The host writes the forwarders (workspace ones must precede the baseline) and answers
+    // calls before the runner starts, staying up past its stop.
     const mocks = request.case.config.mocks;
     if (mocks !== undefined) {
-      mockHost = await startMockHost({ runRootDir: root, shell: mocks.shell });
+      mockHost = await startMockHost({
+        runRootDir: root,
+        workspaceDir: workspaceRoot.path,
+        scratchDir,
+        authoringDir: request.case.dir,
+        shell: mocks.shell,
+        timeoutMs,
+        signal: abort.signal,
+      });
     }
+    await cp(workspaceDir, baselineDir, { recursive: true, preserveTimestamps: true });
+    const baselineRoot = await openRunRoot(baselineDir);
 
     runner = registered.runner;
     const started = performance.now();
@@ -176,7 +186,13 @@ export async function runEvaluation(request: RunRequest): Promise<EvaluationReco
       // Closing the host must not depend on the runner's trace, and vice versa.
       try {
         if (mockHost !== undefined) {
-          mockRecords = await mockHost.close();
+          const outcome = await mockHost.close();
+          mockRecords = outcome.records;
+          if (outcome.faults.length > 0) {
+            mockFailed = true;
+            diagnostics.push(...outcome.faults);
+            error ??= outcome.faults[0];
+          }
         }
       } finally {
         trace = runner.trace?.();
@@ -224,6 +240,9 @@ export async function runEvaluation(request: RunRequest): Promise<EvaluationReco
     } else if (runnerStatus !== "completed") {
       status = "error";
       error ??= "runner failed before checks could run";
+    } else if (mockFailed) {
+      status = "error";
+      error ??= "a mock fault ended the run";
     } else if (checks.some((check) => check.status === "error")) {
       status = "error";
       error ??= "one or more checks could not be evaluated";

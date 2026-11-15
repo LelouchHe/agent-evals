@@ -1,4 +1,5 @@
 import { resolve } from "node:path";
+import { compilePattern } from "./regex.ts";
 
 /** A configuration problem detected before any runtime resource is created. */
 export class ConfigError extends Error {
@@ -34,8 +35,42 @@ export interface MockResult {
   readonly stderr: string;
 }
 
-/** One fixed result per bare `PATH` command name. */
-export type ShellMocks = Readonly<Record<string, MockResult>>;
+/** A literal token, or a RE2 pattern written as /…/ and matched against the whole token. */
+export interface MockPattern {
+  /** The literal token, or the pattern source without its slashes. */
+  readonly source: string;
+  readonly regex: boolean;
+}
+
+/** One entry of a rule's option map: required, forbidden, or required with a value. */
+export type MockArgument =
+  | { readonly key: MockPattern; readonly kind: "required" }
+  | { readonly key: MockPattern; readonly kind: "forbidden" }
+  | { readonly key: MockPattern; readonly kind: "value"; readonly value: MockPattern };
+
+/** A rule's optional argument condition: a positional prefix plus one unordered option map. */
+export interface MockArgs {
+  readonly positional: readonly MockPattern[];
+  readonly options: readonly MockArgument[];
+}
+
+/** What a matching rule does with the call. */
+export type MockAction =
+  | { readonly kind: "return"; readonly result: MockResult }
+  | { readonly kind: "run"; readonly command: readonly string[]; readonly pass: boolean }
+  | { readonly kind: "pass" };
+
+/** One ordered rule; a rule without `args` is the fallback. */
+export interface MockRule {
+  readonly args?: MockArgs;
+  readonly action: MockAction;
+}
+
+/** One target's ordered rules; the first match wins. */
+export type ShellMock = readonly MockRule[];
+
+/** One ordered rule list per bare `PATH` command name or workspace-relative script path. */
+export type ShellMocks = Readonly<Record<string, ShellMock>>;
 
 export interface MocksConfig {
   readonly shell: ShellMocks;
@@ -75,6 +110,7 @@ export const CASE_FIELD_KEYS: ReadonlySet<string> = new Set([
 export const CASES_KEY = "cases";
 
 const MOCK_KEYS: ReadonlySet<string> = new Set(["shell"]);
+const MOCK_RULE_KEYS: ReadonlySet<string> = new Set(["args", "return", "run", "pass"]);
 const MOCK_RESULT_KEYS: ReadonlySet<string> = new Set(["exitCode", "stdout", "stderr"]);
 
 /** Resolve an authoring asset relative to the file that declares it. */
@@ -194,9 +230,10 @@ function expectTimeout(value: unknown, label: string): number {
 }
 
 /**
- * Read the declared shell mocks. Only the first supported subset is implemented: one `return`
- * rule per bare `PATH` command name. Every other action, rule list or target shape is rejected
- * instead of ignored, so a case cannot silently fall back to the real command.
+ * Read the declared shell mocks: one target per bare command name or workspace-relative script
+ * path, each with one rule or an ordered list. Every pattern compiles at load time, so an
+ * unsupported RE2 construct or an unsupported shape is a configuration error rather than a
+ * silent fallback to the real command.
  */
 function expectMocks(value: unknown, label: string): MocksConfig {
   const record = expectRecord(value, label);
@@ -207,14 +244,15 @@ function expectMocks(value: unknown, label: string): MocksConfig {
   const shell = expectRecord(record.shell, `${label}.shell`);
   return {
     shell: Object.fromEntries(
-      Object.entries(shell).map(([target, rule]) => [
+      Object.entries(shell).map(([target, rules]) => [
         expectMockTarget(target, `${label}.shell`),
-        expectMockRule(rule, `${label}.shell["${target}"]`),
+        expectMockRules(rules, `${label}.shell["${target}"]`),
       ]),
     ),
   };
 }
 
+/** A bare command name is placed on `PATH`; a path containing `/` is workspace-relative. */
 function expectMockTarget(target: string, label: string): string {
   if (target.trim().length === 0) {
     throw new ConfigError(`${label} has an empty target name`);
@@ -223,9 +261,11 @@ function expectMockTarget(target: string, label: string): string {
     throw new ConfigError(`${label} target "${target}" contains a NUL byte`);
   }
   if (target.includes("/")) {
-    throw new ConfigError(
-      `${label} target "${target}" must be a bare command name; workspace-relative targets are not supported yet`,
-    );
+    expectWorkspaceDestination(target, `${label} target "${target}"`);
+    if (target.endsWith("/") || target.split("/").at(-1) === "") {
+      throw new ConfigError(`${label} target "${target}" must name a file, not a directory`);
+    }
+    return target;
   }
   if (target === "." || target === "..") {
     throw new ConfigError(`${label} target "${target}" is not a command name`);
@@ -233,24 +273,122 @@ function expectMockTarget(target: string, label: string): string {
   return target;
 }
 
-function expectMockRule(value: unknown, label: string): MockResult {
-  if (Array.isArray(value)) {
-    throw new ConfigError(`${label} must be a single rule; ordered rule lists are not supported yet`);
+function expectMockRules(value: unknown, label: string): readonly MockRule[] {
+  const rules = Array.isArray(value) ? value : [value];
+  if (rules.length === 0) {
+    throw new ConfigError(`${label} must declare at least one rule`);
   }
+  return rules.map((rule, index) => expectMockRule(rule, Array.isArray(value) ? `${label}[${index}]` : label));
+}
+
+function expectMockRule(value: unknown, label: string): MockRule {
   const rule = expectRecord(value, label);
-  for (const key of Object.keys(rule)) {
-    if (key !== "return") {
+  rejectUnknownKeys(rule, MOCK_RULE_KEYS, label);
+  const args = rule.args === undefined ? undefined : expectMockArgs(rule.args, `${label}.args`);
+  const action = expectMockAction(rule, label);
+  return { ...(args === undefined ? {} : { args }), action };
+}
+
+function expectMockAction(rule: Record<string, unknown>, label: string): MockAction {
+  const declared = ["return", "run", "pass"].filter((key) => rule[key] !== undefined);
+  if (declared.length === 0) {
+    throw new ConfigError(`${label} must declare one of return, run or pass`);
+  }
+  if (rule.return !== undefined) {
+    if (declared.length > 1) {
       throw new ConfigError(
-        key === "args" || key === "run" || key === "pass"
-          ? `${label}.${key} is not supported yet`
-          : `${label} has unknown field: ${key}`,
+        `${label} cannot combine return with ${declared.filter((key) => key !== "return").join(" and ")}`,
       );
     }
+    return { kind: "return", result: expectMockResult(rule.return, `${label}.return`) };
   }
-  if (rule.return === undefined) {
-    throw new ConfigError(`${label} must declare a return rule; only "return" is supported yet`);
+  if (rule.run !== undefined) {
+    const pass = rule.pass === undefined ? false : expectMockPass(rule.pass, `${label}.pass`);
+    return { kind: "run", command: expectMockCommand(rule.run, `${label}.run`), pass };
   }
-  return expectMockResult(rule.return, `${label}.return`);
+  expectMockPass(rule.pass, `${label}.pass`);
+  return { kind: "pass" };
+}
+
+function expectMockPass(value: unknown, label: string): true {
+  if (value !== true) {
+    throw new ConfigError(`${label} must be the literal true`);
+  }
+  return true;
+}
+
+function expectMockCommand(value: unknown, label: string): readonly string[] {
+  if (!Array.isArray(value) || value.length === 0) {
+    throw new ConfigError(`${label} must be a non-empty list of program and arguments`);
+  }
+  return value.map((entry, index) => {
+    if (typeof entry !== "string" || entry.length === 0) {
+      throw new ConfigError(`${label}[${index}] must be a non-empty string`);
+    }
+    return entry;
+  });
+}
+
+function expectMockArgs(value: unknown, label: string): MockArgs {
+  if (typeof value === "object" && value !== null && !Array.isArray(value)) {
+    return { positional: [], options: expectMockOptions(value, label) };
+  }
+  if (!Array.isArray(value)) {
+    throw new ConfigError(`${label} must be a list or a map`);
+  }
+  const positional: MockPattern[] = [];
+  for (const [index, entry] of value.entries()) {
+    if (typeof entry === "object" && entry !== null && !Array.isArray(entry)) {
+      if (index !== value.length - 1) {
+        throw new ConfigError(`${label} may hold an option map only as its last element`);
+      }
+      return { positional, options: expectMockOptions(entry, label) };
+    }
+    positional.push(expectMockPattern(entry, `${label}[${index}]`));
+  }
+  return { positional, options: [] };
+}
+
+function expectMockOptions(value: object, label: string): readonly MockArgument[] {
+  return Object.entries(value as Record<string, unknown>).map(([key, entry]) => {
+    if (key.length === 0) {
+      throw new ConfigError(`${label} has an empty option name`);
+    }
+    const pattern = expectMockPattern(key, `${label} option "${key}"`, true);
+    if (entry === true) return { key: pattern, kind: "required" };
+    if (entry === false) return { key: pattern, kind: "forbidden" };
+    if (typeof entry === "boolean") {
+      throw new ConfigError(`${label} option "${key}" must be true, false or a value`);
+    }
+    return { key: pattern, kind: "value", value: expectMockPattern(entry, `${label}["${key}"]`) };
+  });
+}
+
+/**
+ * Read one literal or /…/ pattern. A YAML number is compared as its text; an unquoted boolean
+ * is rejected because it would read as a required or forbidden option.
+ */
+function expectMockPattern(value: unknown, label: string, optionName = false): MockPattern {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return { source: String(value), regex: false };
+  }
+  if (typeof value !== "string" || value.length === 0) {
+    throw new ConfigError(
+      optionName
+        ? `${label} must be a non-empty string`
+        : `${label} must be a non-empty string, number, or /…/ pattern; quote a boolean literal`,
+    );
+  }
+  if (value.length >= 2 && value.startsWith("/") && value.endsWith("/")) {
+    const source = value.slice(1, -1);
+    try {
+      compilePattern(source);
+    } catch (error) {
+      throw new ConfigError(`${label} is not a valid RE2 pattern: ${errorMessage(error)}`);
+    }
+    return { source, regex: true };
+  }
+  return { source: value, regex: false };
 }
 
 function expectMockResult(value: unknown, label: string): MockResult {

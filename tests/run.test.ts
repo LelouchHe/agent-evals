@@ -542,8 +542,9 @@ test("integration: FIFO judge evidence fails promptly and the CLI exits", { time
   assert.deepEqual(await readdir(tempParent), []);
 });
 
-test("integration: pathological regex is bounded and the CLI exits", { timeout: 30_000 }, async (t) => {
+test("integration: a backtracking pattern is bounded and the CLI exits", { timeout: 30_000 }, async (t) => {
   const runner = await createFakePi(t, "pathological");
+  // Catastrophic for a backtracking engine; linear-time on RE2, which must still answer.
   const scenario = await writeScenario(t, {
     runnerExecutable: runner.executable,
     timeoutMs: 500,
@@ -558,11 +559,11 @@ test("integration: pathological regex is bounded and the CLI exits", { timeout: 
     timeoutMs: 10_000,
   });
   assert.equal(result.timedOut, false, "CLI remained blocked in regex evaluation");
-  assert.equal(result.code, 2, result.stderr);
+  // The check ran to a real negative judgment instead of timing out.
+  assert.equal(result.code, 1, result.stderr);
   const record = await readOnlyResult(resultsDir);
-  assert.equal(record.status, "error");
-  assert.equal(record.checks[0]?.status, "error");
-  assert.match(record.checks[0]?.reason ?? "", /regex|timed out|timeout/i);
+  assert.equal(record.status, "fail");
+  assert.equal(record.checks[0]?.status, "fail");
   assert.deepEqual(await readdir(tempParent), []);
 });
 

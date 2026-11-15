@@ -1,52 +1,91 @@
-import { link, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { spawn, type ChildProcess } from "node:child_process";
+import { link, mkdir, readFile, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
 import { createServer, type Server, type Socket } from "node:net";
-import { basename, join } from "node:path";
+import { basename, dirname, join, relative, sep } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { tmpdir } from "node:os";
-import type { MockResult, ShellMocks } from "./config.ts";
+import { ConfigError, errorMessage, type MockAction, type ShellMocks } from "./config.ts";
+import { compileShellMocks, matchCall, type CompiledRules } from "./mock-match.ts";
 import type { MockRecord, MockWiring } from "./registry.ts";
+import { isMissing, isWithin, openRunRoot, resolveWorkspacePath } from "./workspace.ts";
 
 /** How long closing waits for already connected callers before dropping them. */
 const CLOSE_GRACE_MS = 5_000;
 /** Any sandboxed process can connect and send; argv itself is limited to about 256 KiB. */
 const MAX_CALL_BYTES = 1_000_000;
+/** A `run` program prints this line, and nothing else, to hand the call to the real command. */
+const PASS_MARKER = "agent-evals:pass";
 
 // The forwarder is a POSIX shell asset beside this module, copied unchanged by the build, so
 // source and built runs read one text. It reports the call over the run's socket and reads the
-// reply line by line: capturing the reply would strip the trailing newlines that make an empty
-// stdout or stderr distinguishable. The name it is executed under selects the target.
+// reply from a single line: capturing the reply would strip the trailing newlines that make an
+// empty stdout or stderr distinguishable. The name it is executed under selects the target.
 const FORWARDER_ASSET = new URL("./forwarder.sh", import.meta.url);
+
+export interface MockOutcome {
+  /** Every recorded call, in arrival order. */
+  readonly records: readonly MockRecord[];
+  /** Infrastructure faults, such as a run program that could not start. */
+  readonly faults: readonly string[];
+}
 
 export interface MockHost {
   /** What the runner places in its environment. */
   readonly wiring: MockWiring;
-  /** Stop accepting and answering calls, then return every call that arrived. */
-  readonly close: () => Promise<readonly MockRecord[]>;
+  /** Stop answering calls, then return every recorded call and fault. */
+  readonly close: () => Promise<MockOutcome>;
+}
+
+export interface MockHostOptions {
+  readonly runRootDir: string;
+  /** Prepared workspace root; its real path, as the runner's sandbox sees it. */
+  readonly workspaceDir: string;
+  /** Run scratch directory; it receives the transport-fault marker. */
+  readonly scratchDir: string;
+  /** Directory of the case file, the working directory of `run` programs. */
+  readonly authoringDir: string;
+  readonly shell: ShellMocks;
+  readonly timeoutMs: number;
+  readonly signal: AbortSignal;
 }
 
 /**
  * Write the forwarders and answer their calls outside the sandbox. The caller starts this
- * before the runner and closes it after the runner has stopped, so no call is cut short.
+ * before the runner (and before the workspace baseline) and closes it after the runner stopped.
  */
-export async function startMockHost(options: {
-  readonly runRootDir: string;
-  readonly shell: ShellMocks;
-}): Promise<MockHost> {
+export async function startMockHost(options: MockHostOptions): Promise<MockHost> {
   const forwarderDir = join(options.runRootDir, "bin");
   // A Unix socket path is limited to about 100 bytes, so it cannot live under the run root.
   const socketPath = join(tmpdir(), `${basename(options.runRootDir)}.sock`);
+  const faultPath = join(options.scratchDir, ".forward-fault");
   const scriptPath = join(options.runRootDir, "forward");
+  const rules = compileShellMocks(options.shell);
+  const workspaceRoot = await openRunRoot(options.workspaceDir);
   await mkdir(forwarderDir, { mode: 0o700 });
-  const forwarder = (await readFile(FORWARDER_ASSET, "utf8")).replace("__SOCKET__", quote(socketPath));
+  // The forwarder canonicalises its own path, so identity comparisons use the real directory.
+  const forwarderRoot = await realpath(forwarderDir);
+
+  const forwarder = (await readFile(FORWARDER_ASSET, "utf8"))
+    .replace("__BINDIR__", quote(forwarderRoot))
+    .replace("__SOCKET__", quote(socketPath))
+    .replace("__FAULT__", quote(faultPath));
   await writeFile(scriptPath, forwarder, { mode: 0o500, flag: "wx" });
+
   for (const target of Object.keys(options.shell).sort()) {
-    await link(scriptPath, join(forwarderDir, target));
+    if (target.includes("/")) {
+      await placeWorkspaceForwarder(workspaceRoot.path, options, target, forwarder);
+    } else {
+      await link(scriptPath, join(forwarderDir, target));
+    }
   }
 
-  const results = new Map(Object.entries(options.shell));
-  const mockRecords: MockRecord[] = [];
+  const records: MockRecord[] = [];
+  const faults: string[] = [];
+  const running = new Set<ChildProcess>();
   const sockets = new Set<Socket>();
-  const server = createServer((socket) => {
+  // The forwarder half-closes after sending, then reads the reply: keep the writable side open
+  // until the answer (which may await a run program) has been written.
+  const server = createServer({ allowHalfOpen: true }, (socket) => {
     sockets.add(socket);
     socket.on("close", () => sockets.delete(socket));
     socket.on("error", () => {});
@@ -60,13 +99,67 @@ export async function startMockHost(options: {
       }
       chunks.push(chunk);
     });
-    socket.on("end", () => answer(socket, Buffer.concat(chunks), results, mockRecords));
+    socket.on("end", () => {
+      void answer(socket, Buffer.concat(chunks)).catch((error: unknown) => {
+        faults.push(`failed to answer a call: ${errorMessage(error)}`);
+        socket.end(denied(""));
+      });
+    });
   });
   await listen(server, socketPath);
 
+  async function answer(socket: Socket, message: Buffer): Promise<void> {
+    const lines = message.toString("utf8").split("\n");
+    if (lines.pop() !== "" || lines.length === 0) {
+      socket.end(denied(""));
+      return;
+    }
+    const self = decode(lines[0] as string);
+    const target = targetOf(self, forwarderRoot, workspaceRoot.path, rules);
+    const targetRules = target === undefined ? undefined : rules.get(target);
+    if (target === undefined || targetRules === undefined) {
+      socket.end(denied(target ?? "call"));
+      return;
+    }
+    const argv = lines.slice(1).map(decode);
+    records.push({ target, arguments: argv });
+    const action = matchCall(targetRules, argv);
+    socket.end(action === undefined ? denied(target) : await reply(action, target, argv));
+  }
+
+  async function reply(action: MockAction, target: string, argv: readonly string[]): Promise<string> {
+    if (action.kind === "pass") return passReply();
+    if (action.kind === "return") {
+      return resultReply(action.result.exitCode, action.result.stdout, action.result.stderr);
+    }
+    const program = await runProgram(target, action, argv, running, options);
+    if (program.fault !== undefined) {
+      faults.push(program.fault);
+      return denied(target);
+    }
+    const marker = program.stdout === `${PASS_MARKER}\n` || program.stdout === PASS_MARKER;
+    if (marker) {
+      if (!action.pass) {
+        faults.push(`run program for "${target}" printed the pass marker but the rule has no pass`);
+        return denied(target);
+      }
+      if (program.exitCode !== 0) {
+        faults.push(`run program for "${target}" printed the pass marker with exit code ${program.exitCode}`);
+        return denied(target);
+      }
+      return passReply();
+    }
+    if (program.stdout.includes(PASS_MARKER)) {
+      faults.push(`run program for "${target}" printed the reserved pass marker`);
+      return denied(target);
+    }
+    return resultReply(program.exitCode, program.stdout, program.stderr);
+  }
+
   return {
-    wiring: { forwarderDir, socketPath },
+    wiring: { forwarderDir, socketPath, denyTargets: denyTargetsOf(options.shell) },
     async close() {
+      for (const child of running) killGroup(child);
       const closed = new Promise<void>((resolve) => server.close(() => resolve()));
       const grace = new AbortController();
       try {
@@ -77,42 +170,221 @@ export async function startMockHost(options: {
       for (const socket of sockets) socket.destroy();
       await closed;
       await rm(socketPath, { force: true });
-      return [...mockRecords];
+      faults.push(...(await transportFaults(faultPath)));
+      return { records: [...records], faults: [...faults] };
     },
   };
 }
 
+/** PATH targets without any `pass` rule, whose real binaries the runner must deny. */
+function denyTargetsOf(shell: ShellMocks): readonly string[] {
+  return Object.entries(shell)
+    .filter(
+      ([target, rules]) =>
+        !target.includes("/") &&
+        !rules.some((rule) => rule.action.kind === "pass" || (rule.action.kind === "run" && rule.action.pass)),
+    )
+    .map(([target]) => target)
+    .sort();
+}
+
 /**
- * Decode one call and reply with the fixed result. Anything connected to the socket can send
- * arbitrary bytes, so an unreadable or unterminated message is denied instead of recorded.
+ * A call is identified by where its forwarder lives: directly in the run's forwarder directory,
+ * or at its workspace-relative path. Anything else is not a declared target.
  */
-function answer(
-  socket: Socket,
-  message: Buffer,
-  results: ReadonlyMap<string, MockResult>,
-  mockRecords: MockRecord[],
-): void {
-  const lines = message.toString("utf8").split("\n");
-  if (lines.pop() !== "" || lines.length === 0) {
-    socket.end(denied(""));
-    return;
+function targetOf(
+  self: string,
+  forwarderDir: string,
+  workspaceDir: string,
+  rules: ReadonlyMap<string, CompiledRules>,
+): string | undefined {
+  if (dirname(self) === forwarderDir) {
+    const name = basename(self);
+    return rules.has(name) ? name : undefined;
   }
-  const target = basename(decode(lines[0] as string));
-  const result = results.get(target);
-  if (result === undefined) {
-    socket.end(denied(target));
-    return;
+  if (isWithin(workspaceDir, self)) {
+    const path = relative(workspaceDir, self).split(sep).join("/");
+    return rules.has(path) ? path : undefined;
   }
-  mockRecords.push({ target, arguments: lines.slice(1).map(decode) });
-  socket.end(`${result.exitCode}\n${encode(result.stdout)}\n${encode(result.stderr)}\n`);
+  return undefined;
+}
+
+/**
+ * Place one workspace forwarder before the baseline snapshot. A target with a `pass` rule keeps
+ * its real script beside it under a dot-prefixed name; without `pass` the real script leaves the
+ * sandbox entirely, so only the forwarder is runnable.
+ */
+async function placeWorkspaceForwarder(
+  workspaceDir: string,
+  options: MockHostOptions,
+  target: string,
+  forwarder: string,
+): Promise<void> {
+  const root = await openRunRoot(workspaceDir);
+  const targetPath = await resolveWorkspacePath(root, target);
+  const folder = dirname(targetPath);
+  const real = await stat(targetPath).catch((error: unknown) => {
+    if (isMissing(error)) return undefined;
+    throw error;
+  });
+  if (real?.isDirectory() === true) {
+    throw new ConfigError(`mocked workspace script ${target} is a directory`);
+  }
+  const usesPass = options.shell[target]?.some(
+    (rule) => rule.action.kind === "pass" || (rule.action.kind === "run" && rule.action.pass),
+  );
+  if (usesPass) {
+    if (real === undefined) {
+      throw new ConfigError(`mocked workspace script ${target} needs a real script for its pass rule`);
+    }
+    const beside = join(folder, `.${basename(targetPath)}`);
+    try {
+      await stat(beside);
+      throw new ConfigError(`mocked workspace script ${target} already has ${basename(beside)} beside it`);
+    } catch (error) {
+      if (!isMissing(error)) throw error;
+    }
+    await rename(targetPath, beside);
+  } else if (real !== undefined) {
+    const stash = join(options.runRootDir, "replaced", ...target.split("/"));
+    await mkdir(dirname(stash), { recursive: true, mode: 0o700 });
+    await rename(targetPath, stash);
+  }
+  await mkdir(folder, { recursive: true, mode: 0o700 });
+  await writeFile(targetPath, forwarder, { mode: 0o500, flag: "wx" });
+}
+
+interface RunOutcome {
+  readonly exitCode: number;
+  readonly stdout: string;
+  readonly stderr: string;
+  readonly fault?: string;
+}
+
+/**
+ * Start the author's program with the call's arguments appended, without a shell, in the case
+ * directory and with empty stdin. A program that cannot start, dies from a signal or exceeds the
+ * run's deadline is an infrastructure fault; an ordinary nonzero exit is just a response.
+ */
+async function runProgram(
+  target: string,
+  action: Extract<MockAction, { kind: "run" }>,
+  argv: readonly string[],
+  running: Set<ChildProcess>,
+  options: MockHostOptions,
+): Promise<RunOutcome> {
+  const [program, ...prefix] = action.command;
+  const child = spawn(program as string, [...prefix, ...argv], {
+    cwd: options.authoringDir,
+    stdio: ["ignore", "pipe", "pipe"],
+    detached: true,
+  });
+  running.add(child);
+  const stdout: Buffer[] = [];
+  const stderr: Buffer[] = [];
+  child.stdout?.on("data", (chunk: Buffer) => stdout.push(chunk));
+  child.stderr?.on("data", (chunk: Buffer) => stderr.push(chunk));
+  let timedOut = false;
+  let aborted = false;
+  const timer = setTimeout(() => {
+    timedOut = true;
+    killGroup(child);
+  }, options.timeoutMs);
+  const onAbort = (): void => {
+    aborted = true;
+    killGroup(child);
+  };
+  options.signal.addEventListener("abort", onAbort, { once: true });
+  try {
+    const outcome = await new Promise<
+      { readonly code: number | null; readonly signal: NodeJS.Signals | null } | { readonly error: Error }
+    >((resolve) => {
+      child.once("error", (error: Error) => resolve({ error }));
+      child.once("close", (code: number | null, signal: NodeJS.Signals | null) => resolve({ code, signal }));
+    });
+    const text = Buffer.concat(stdout).toString("utf8");
+    const errors = Buffer.concat(stderr).toString("utf8");
+    if ("error" in outcome) {
+      return {
+        exitCode: 126,
+        stdout: "",
+        stderr: "",
+        fault: `could not start ${program} for "${target}": ${outcome.error.message}`,
+      };
+    }
+    if (timedOut) {
+      return {
+        exitCode: 126,
+        stdout: "",
+        stderr: "",
+        fault: `run program for "${target}" exceeded ${options.timeoutMs}ms`,
+      };
+    }
+    if (aborted) {
+      return {
+        exitCode: 126,
+        stdout: "",
+        stderr: "",
+        fault: `run program for "${target}" was stopped by cancellation`,
+      };
+    }
+    if (outcome.signal !== null) {
+      return {
+        exitCode: 126,
+        stdout: "",
+        stderr: "",
+        fault: `run program for "${target}" was killed by ${outcome.signal}`,
+      };
+    }
+    return { exitCode: outcome.code ?? 126, stdout: text, stderr: errors };
+  } finally {
+    clearTimeout(timer);
+    options.signal.removeEventListener("abort", onAbort);
+    running.delete(child);
+  }
+}
+
+/** Kill a run program and every descendant, since it owns its own process group. */
+function killGroup(child: ChildProcess): void {
+  try {
+    if (child.pid !== undefined) process.kill(-child.pid, "SIGKILL");
+  } catch {
+    // Already gone.
+  }
+  try {
+    child.kill("SIGKILL");
+  } catch {
+    // Already gone.
+  }
+}
+
+async function transportFaults(path: string): Promise<readonly string[]> {
+  try {
+    const text = await readFile(path, "utf8");
+    return text
+      .split("\n")
+      .filter((line) => line.length > 0)
+      .map((line) => `a forwarder for "${line}" could not reach the mock host`);
+  } catch {
+    return [];
+  }
+}
+
+function resultReply(exitCode: number, stdout: string, stderr: string): string {
+  return `result ${exitCode} ${field(stdout)} ${field(stderr)}\n`;
+}
+
+function passReply(): string {
+  return "pass 0 - -\n";
 }
 
 function denied(target: string): string {
-  return `126\n\n${encode(`${target === "" ? "call" : target}: Operation not permitted\n`)}\n`;
+  return resultReply(126, "", `${target}: Operation not permitted\n`);
 }
 
-function encode(text: string): string {
-  return Buffer.from(text, "utf8").toString("base64");
+/** A reply field is never empty, so a stripped trailing newline cannot merge two fields. */
+function field(text: string): string {
+  return text.length === 0 ? "-" : Buffer.from(text, "utf8").toString("base64");
 }
 
 /** Quote a value as one POSIX shell word. */

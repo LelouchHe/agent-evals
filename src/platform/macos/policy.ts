@@ -12,6 +12,8 @@ export interface SandboxPolicy {
   readonly readableRoots: readonly string[];
   /** Read-only single files, such as a launcher script. */
   readonly readableFiles?: readonly string[];
+  /** Executables the sandbox may not start, such as the real binary behind a mocked command. */
+  readonly denyExecutables?: readonly string[];
   /** Interactive terminal device; allow termios mode changes, not arbitrary ioctl operations. */
   readonly terminal?: string;
   readonly allowNetwork: boolean;
@@ -19,7 +21,9 @@ export interface SandboxPolicy {
 
 /** Add macOS system access and current-terminal handling to caller-owned roots. */
 export function createSandboxPolicy(
-  options: Pick<SandboxPolicy, "writableRoots" | "readableRoots" | "allowNetwork"> & { readonly interactive: boolean },
+  options: Pick<SandboxPolicy, "writableRoots" | "readableRoots" | "allowNetwork" | "denyExecutables"> & {
+    readonly interactive: boolean;
+  },
 ): SandboxPolicy {
   const terminal =
     options.interactive && process.stdin.isTTY
@@ -40,6 +44,7 @@ export function createSandboxPolicy(
       ...options.readableRoots,
     ],
     readableFiles: ["/var"],
+    ...(options.denyExecutables === undefined ? {} : { denyExecutables: options.denyExecutables }),
     allowNetwork: options.allowNetwork,
     ...(terminal === undefined ? {} : { terminal }),
   };
@@ -70,10 +75,14 @@ export function renderSeatbeltPolicy(policy: SandboxPolicy): string {
     metadata.add("/");
   }
 
+  const denied = normalize(policy.denyExecutables ?? []);
   const lines = [
     "(version 1)",
     "(deny default)",
     "(allow process-exec*)",
+    ...(denied.length === 0
+      ? []
+      : [`(deny process-exec ${denied.map((path) => `(literal ${quote(path)})`).join(" ")})`]),
     "(allow process-fork)",
     "(allow signal (target same-sandbox))",
     "(allow sysctl-read)",
