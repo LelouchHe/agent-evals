@@ -45,7 +45,7 @@ export function compileShellMocks(shell: ShellMocks): CompiledShellMocks {
   const path = new Map<string, CompiledRules>();
   const workspace = new Map<string, CompiledWorkspaceTarget>();
   for (const [target, rules] of Object.entries(shell)) {
-    const compiled = rules.map(compileRule);
+    const compiled = compileRules(rules);
     if (target.includes("/")) {
       workspace.set(workspaceTargetPath(target), { target, rules: compiled });
     } else {
@@ -53,6 +53,11 @@ export function compileShellMocks(shell: ShellMocks): CompiledShellMocks {
     }
   }
   return { path, workspace };
+}
+
+/** Compile one target's ordered rules; the same path serves the host and a mock check. */
+export function compileRules(rules: readonly MockRule[]): CompiledRules {
+  return rules.map(compileRule);
 }
 
 function compileRule(rule: MockRule): CompiledRule {

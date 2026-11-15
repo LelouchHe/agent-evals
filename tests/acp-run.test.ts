@@ -19,6 +19,7 @@ async function runCase(
   scenario: string,
   runner: (fixture: Awaited<ReturnType<typeof makeAcpAgent>>) => Record<string, unknown>,
   signal?: AbortSignal,
+  extra: Record<string, unknown> = {},
 ) {
   const fixture = await makeAcpAgent(t, scenario);
   await mkdir(join(fixture.login, ".auth"), { recursive: true });
@@ -29,6 +30,7 @@ async function runCase(
     casePath,
     stringify({
       input: INPUT,
+      ...extra,
       checks: [{ $type: "file", path: "answer.txt", matches: `^model-b: ${INPUT}$` }],
       runner: { $type: "acp", ...runner(fixture) },
     }),
@@ -123,5 +125,70 @@ test(
     assert.equal(result.record.status, "cancelled");
     assert.equal(result.requests.at(-1), "session/prompt");
     assert.deepEqual(await readdir(result.fixture.runtime), []);
+  },
+);
+
+test(
+  "acp records context, cost and the unstable prompt usage in result.json",
+  { skip: process.platform !== "darwin" },
+  async (t) => {
+    const { fixture, record } = await runCase(t, "usage", () => ({ agent: "agent.yml", config: { model: "model-b" } }));
+    assert.equal(record.status, "pass", record.error);
+    assert.deepEqual(record.runner.usage, {
+      context: { used: 20, size: 200 },
+      cost: { amount: 0.01, currency: "USD" },
+      tokens: {
+        totalTokens: 350,
+        inputTokens: 300,
+        outputTokens: 50,
+        thoughtTokens: 5,
+        cachedReadTokens: 200,
+        cachedWriteTokens: 100,
+      },
+    });
+    const written = JSON.parse(await readFile(join(fixture.root, "results", record.runId, "result.json"), "utf8"));
+    assert.deepEqual(written.runner.usage, record.runner.usage);
+    // `_meta` carries harness rate-limit state; it is not recorded.
+    assert.doesNotMatch(JSON.stringify(written.runner.usage), /_meta|private|claude|ignored/);
+  },
+);
+
+test(
+  "a null cost clears the last one and malformed prompt usage is dropped",
+  { skip: process.platform !== "darwin" },
+  async (t) => {
+    const cleared = await runCase(t, "usage-cleared", () => ({
+      agent: "agent.yml",
+      config: { model: "model-b" },
+    }));
+    assert.equal(cleared.record.status, "pass", cleared.record.error);
+    assert.deepEqual(cleared.record.runner.usage, { context: { used: 20, size: 200 } });
+
+    const malformed = await runCase(t, "usage-malformed", () => ({
+      agent: "agent.yml",
+      config: { model: "model-b" },
+    }));
+    // A field the protocol may change does not fail the run; only the context is reported.
+    assert.equal(malformed.record.status, "pass", malformed.record.error);
+    assert.deepEqual(malformed.record.runner.usage, { context: { used: 5, size: 50 } });
+  },
+);
+
+test(
+  "a timed-out run still reports the context and cost it saw, without tokens",
+  { skip: process.platform !== "darwin" },
+  async (t) => {
+    const { record } = await runCase(
+      t,
+      "usage-timeout",
+      () => ({ agent: "agent.yml", config: { model: "model-b" } }),
+      undefined,
+      { timeoutMs: 2_000 },
+    );
+    assert.equal(record.status, "timeout");
+    assert.deepEqual(record.runner.usage, {
+      context: { used: 20, size: 200 },
+      cost: { amount: 0.01, currency: "USD" },
+    });
   },
 );

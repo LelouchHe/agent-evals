@@ -37,6 +37,7 @@ const checkerContext: CheckerContext = {
   input: "task",
   timeoutMs: 1_000,
   signal: new AbortController().signal,
+  checkSandbox: { run: async () => ({ kind: "exited", exitCode: 0, output: "" }) },
 };
 
 const implementationContext: ImplementationContext = {

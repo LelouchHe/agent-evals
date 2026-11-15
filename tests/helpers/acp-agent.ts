@@ -135,6 +135,18 @@ printf x >"$(dirname "$fwd")/added" 2>/dev/null; printf '%s' $? >probe-write
 };
       system("/bin/sh", "-c", $probe);
     }
+    if ($scenario =~ /^usage/) {
+      my @usage_updates =
+        $scenario eq "usage-cleared"
+          ? ({used => 10, size => 100, cost => {amount => 0.01, currency => "USD"}}, {used => 20, size => 200, cost => undef})
+          : $scenario eq "usage-malformed"
+          ? ({used => 5, size => 50})
+          : ({used => 10, size => 100, cost => {amount => 0.01, currency => "USD", _meta => {private => 1}}, _meta => {claude => "state"}}, {used => 20, size => 200});
+      for my $u (@usage_updates) {
+        print encode_json({jsonrpc => "2.0", method => "session/update", params => {sessionId => "session-test", update => {%$u, sessionUpdate => "usage_update"}}}), "\n";
+      }
+      if ($scenario eq "usage-timeout") { sleep 600; }
+    }
     for my $update (
       {sessionUpdate => "agent_thought_chunk", content => {type => "text", text => "plan "}},
       {sessionUpdate => "agent_thought_chunk", content => {type => "text", text => "it"}},
@@ -149,6 +161,12 @@ printf x >"$(dirname "$fwd")/added" 2>/dev/null; printf '%s' $? >probe-write
       print encode_json({jsonrpc => "2.0", method => "session/update", params => {sessionId => "session-test", update => $update}}), "\n";
     }
     $result = {stopReason => "end_turn"};
+    if ($scenario eq "usage") {
+      $result->{usage} = {totalTokens => 350, inputTokens => 300, outputTokens => 50, thoughtTokens => 5, cachedReadTokens => 200, cachedWriteTokens => 100, _meta => {ignored => 1}};
+    }
+    if ($scenario eq "usage-malformed") {
+      $result->{usage} = {totalTokens => "lots"};
+    }
   } else { die "unexpected method"; }
   print encode_json({jsonrpc => "2.0", id => $request->{id}, result => $result}), "\\n";
 }

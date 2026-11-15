@@ -8,6 +8,7 @@ import { agentSchema } from "./agent.ts";
 import { assembleEnvironment, resolveHome, type HarnessHome } from "./environment.ts";
 import { withSession } from "./session.ts";
 import { AcpTrace } from "./trace.ts";
+import { AcpUsage } from "./usage.ts";
 
 const acpRunnerParamsSchema = z.strictObject({
   /** Inline agent startup object, or a path to a standalone file holding the same object. */
@@ -45,6 +46,7 @@ class AcpRunner implements Runner {
   #copyBack: (() => Promise<void>) | undefined;
   #stopped: Promise<void> | undefined;
   readonly #trace = new AcpTrace();
+  readonly #usage = new AcpUsage();
 
   constructor(command: readonly [string, ...string[]], home: HarnessHome, config: SessionConfig) {
     this.#command = command;
@@ -79,7 +81,10 @@ class AcpRunner implements Runner {
       await withSession(
         this.#process,
         context.workspaceDir,
-        (update) => this.#trace.add(update),
+        (update) => {
+          this.#trace.add(update);
+          this.#usage.add(update);
+        },
         async (agent, _initialized, session) => {
           const { sessionId } = session;
           let options = session.configOptions ?? [];
@@ -89,11 +94,14 @@ class AcpRunner implements Runner {
             options = (await agent.request(methods.agent.session.setConfigOption, { sessionId, configId, ...request }))
               .configOptions;
           }
-          const { stopReason } = await agent.request(methods.agent.session.prompt, {
+          const response = await agent.request(methods.agent.session.prompt, {
             sessionId,
             prompt: [{ type: "text", text: context.input }],
           });
-          if (stopReason !== "end_turn") throw new Error(`ACP turn stopped with ${stopReason}`);
+          this.#usage.setPromptUsage(response);
+          if (response.stopReason !== "end_turn") {
+            throw new Error(`ACP turn stopped with ${response.stopReason}`);
+          }
         },
       );
       return { finalText: this.#trace.finalText(), diagnostics: [] };
@@ -103,6 +111,8 @@ class AcpRunner implements Runner {
   };
 
   readonly trace = () => this.#trace.entries;
+
+  readonly usage = () => this.#usage.value;
 
   /** Stop the whole sandbox, then keep login changes the harness made to its original files. */
   readonly stop = async (): Promise<void> => {

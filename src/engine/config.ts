@@ -251,7 +251,7 @@ function expectMocks(value: unknown, label: string): MocksConfig {
   // `./name` name different things: a PATH command and a workspace-root script.
   const seen = new Map<string, string>();
   for (const [target] of entries) {
-    const identity = target.includes("/") ? `workspace:${workspaceTargetPath(target)}` : `path:${target}`;
+    const identity = mockTargetIdentity(target);
     const previous = seen.get(identity);
     if (previous !== undefined) {
       throw new ConfigError(`${label}.shell declares "${previous}" and "${target}" as the same target`);
@@ -259,6 +259,11 @@ function expectMocks(value: unknown, label: string): MocksConfig {
     seen.set(identity, target);
   }
   return { shell: Object.fromEntries(entries) };
+}
+
+/** The declared spelling two targets name the same thing by, for duplicates and checks. */
+export function mockTargetIdentity(target: string): string {
+  return target.includes("/") ? `workspace:${workspaceTargetPath(target)}` : `path:${target}`;
 }
 
 /** The workspace-relative file a target names, without `.` or empty segments. */
@@ -346,7 +351,7 @@ function expectMockCommand(value: unknown, label: string): readonly string[] {
   });
 }
 
-function expectMockArgs(value: unknown, label: string): MockArgs {
+export function expectMockArgs(value: unknown, label: string): MockArgs {
   if (typeof value === "object" && value !== null && !Array.isArray(value)) {
     return { positional: [], options: expectMockOptions(value, label) };
   }

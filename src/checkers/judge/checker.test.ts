@@ -6,7 +6,7 @@ import { ConfigError, type ImplementationParams } from "../../engine/config.ts";
 import { parseImplementationParams } from "../../engine/params.ts";
 import type { CheckerContext } from "../../engine/registry.ts";
 import { createFakePi, makeTempDir } from "../../../tests/helpers/fake-pi-control.ts";
-import { implementationContext } from "../../../tests/helpers/implementation-context.ts";
+import { implementationContext, unusedCheckSandbox } from "../../../tests/helpers/implementation-context.ts";
 import { judgeChecker, JudgeError } from "./checker.ts";
 import { openRunRoot } from "../../engine/workspace.ts";
 
@@ -30,6 +30,7 @@ async function context(root: string, workspace: string, baseline: string): Promi
     input: "Create hello.txt with exactly the content Hello, world!",
     timeoutMs: 5_000,
     signal: AbortSignal.timeout(10_000),
+    checkSandbox: unusedCheckSandbox,
   };
 }
 

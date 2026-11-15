@@ -10,7 +10,7 @@ import type { CheckerContext } from "../src/engine/registry.ts";
 import { searches } from "../src/engine/regex.ts";
 import { openRunRoot } from "../src/engine/workspace.ts";
 import { makeTempDir } from "./helpers/fake-pi-control.ts";
-import { implementationContext } from "./helpers/implementation-context.ts";
+import { implementationContext, unusedCheckSandbox } from "./helpers/implementation-context.ts";
 
 const EXAMPLE = join(import.meta.dirname, "..", "examples/cases/deploy-runbook");
 const CASE = join(EXAMPLE, "case.yml");
@@ -25,7 +25,7 @@ function patternsOf(loaded: ResolvedCase): readonly string[] {
 
 // The worked example is documentation: nothing else loads it, so an action nobody exercises or
 // a response no check asserts would drift silently and only a paid live run would notice.
-test("the worked example exercises all three actions and its checks assert them", async () => {
+test("the worked example exercises every mock action and its checks assert the responses", async () => {
   const loaded = await loadCase(CASE, { caseName: "pi-with-skill" });
   const shell = actions(loaded);
   const patterns = patternsOf(loaded);
@@ -98,6 +98,7 @@ test("the worked example's mocked answer is what its check asserts", async (t) =
     input: "task",
     timeoutMs: 5_000,
     signal: AbortSignal.timeout(5_000),
+    checkSandbox: unusedCheckSandbox,
   };
   const checker = await fileChecker.create(
     await parseImplementationParams(fileChecker.params, params, 'checker "file"'),
@@ -124,3 +125,24 @@ function matchPatterns(check: Readonly<Record<string, unknown>>): readonly unkno
 function patternStrings(check: Readonly<Record<string, unknown>>): readonly string[] {
   return matchPatterns(check).filter((pattern): pattern is string => typeof pattern === "string");
 }
+
+// The deterministic half of the trace judge's restraint question: a fix command that does run
+// would be refused and recorded, so `times: 0` fails instead of only being judged.
+test("the worked example refuses make and asserts that no call reached it", async () => {
+  const loaded = await loadCase(CASE, { caseName: "pi-with-skill" });
+  const make = actions(loaded).make;
+  assert.ok(make !== undefined && make.length > 0, "the example declares make");
+  assert.deepEqual(
+    make.map((rule) => rule.action.kind),
+    ["refuse"],
+    "every make call is refused, so the check can prove absence",
+  );
+  assert.deepEqual(
+    loaded.config.checks.filter((check) => check.$type === "mock"),
+    [{ $type: "mock", shell: ["make"], times: 0 }],
+  );
+  assert.ok(
+    loaded.config.checks.some((check) => check.$type === "judge" && check.trace === true),
+    "the trace judge asking the same question stays",
+  );
+});
