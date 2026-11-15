@@ -249,3 +249,4 @@ The repository's [`deploy-runbook`](../examples/cases/deploy-runbook/case.yml) e
 - **Output is returned after the call completes**, not streamed; the original interleaving of stdout and stderr is lost.
 - **No call checker**, so mock records are not assertable yet ([M4](m4-plan.md)); MCP collaborators (M5) are unavailable.
 - **Records cannot be read, altered or erased from inside the sandbox**, but any process there can cause one by calling a mocked command, or by writing to the forwarder's socket directly. Records prove that a call was made, not that only the harness made it.
+- **Transport-fault reporting is ordinary, not tamper-proof.** The marker a lost connection leaves in the run scratch directory is in agent-writable space, so a process that deliberately clears it hides the fault from the run status; `trace.json` is there for investigation, though it does not necessarily record every indirect operation.
