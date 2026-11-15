@@ -43,8 +43,8 @@ test("package metadata and built runtime assets point at the sole CLI implementa
   const cli = await readFile(distEntry, "utf8");
   assert.ok(cli.startsWith("#!/usr/bin/env node\n"), "dist/cli.js must keep its executable shebang");
   for (const asset of [
-    "dist/checkers/file/regex-worker.js",
     "dist/engine/forwarder.sh",
+    "dist/engine/regex.js",
     "dist/engine/runtime-assets.js",
     "dist/runners/pi/supervisor.js",
     "dist/runners/pi/safe-process-group.js",
@@ -79,7 +79,7 @@ test("source and built CLIs produce identical help and view output", async (t) =
   }
 });
 
-test("built CLI runs packaged supervisor, wrapper, regex worker, and judge assets", async (t) => {
+test("built CLI runs packaged supervisor, wrapper, and judge assets", async (t) => {
   const fake = await createFakePi(t, "record-tools");
   const judge = await createFakePi(t, "judge-valid");
   const directory = await makeTempDir(t, "ae-package-run-");
@@ -98,7 +98,8 @@ test("built CLI runs packaged supervisor, wrapper, regex worker, and judge asset
             '"safe-process-group\\.js"',
             '"shell-wrapper\\.sh"',
             '"shellHasStateDir":true',
-            "^(?!.*\\.ts).*$",
+            // Every staged tool is a built .js/.sh asset, never a .ts source file.
+            '^\\{"names\\":\\["[a-z-]+\\.(js|sh)\\"(,\\"[a-z-]+\\.(js|sh)\\")*\\],"shellHasStateDir\\":true\\}$',
           ],
         },
         {
