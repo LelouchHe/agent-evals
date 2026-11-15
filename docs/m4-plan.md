@@ -129,6 +129,11 @@ It starts no harness and no sandbox and completes at once with no final text and
 
 [`deploy-runbook`](../examples/cases/deploy-runbook/case.yml) gains a refused `make` (`pass: false`), a `mock` check with `times: 0` beside the trace judge that asks the same question (so the deterministic and the judged answer to "no fix command was run" can be compared), and a `baseline` case on the `noop` runner.
 
+It also exercises both kinds of `shell` check:
+
+- **A fixture script.** `file` `unchanged` on `fixture/checks/check-diagnosis.sh` runs before the `shell` check that executes it, so the agent cannot edit its way to a pass. The script asserts only public facts — `diagnosis.md` is non-empty and repeats the `E4127` code `deploy.log` already shows — because the fixture is shared with `deploy-runbook-native` and must not leak the skill's private cause or fix.
+- **A check-time acceptance script.** `checks/acceptance.sh` sits outside `fixture/` and is placed into the workspace through `shell.files` only when the check runs, so the agent never sees the private fix commands and combined facts it asserts.
+
 ## Verified
 
 One real single-turn run of each harness through the `acp` environment (2026-11-15), with `pi-acp` 0.0.34 and `claude-agent-acp` 0.107.0, capturing the wire messages:
