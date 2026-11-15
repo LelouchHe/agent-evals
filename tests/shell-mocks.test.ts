@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { readFile, readdir, stat, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises";
 import type { Readable } from "node:stream";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -10,8 +10,8 @@ import { stringify } from "yaml";
 import { z } from "zod";
 import { fileChecker } from "../src/checkers/file/checker.ts";
 import { loadCase } from "../src/engine/authoring.ts";
-import { ConfigError } from "../src/engine/config.ts";
-import { startMockHost } from "../src/engine/mocks.ts";
+import { ConfigError, type ShellMock } from "../src/engine/config.ts";
+import { startMockHost, type MockHostOptions } from "../src/engine/mocks.ts";
 import { addChecker, addRunner, createRegistry } from "../src/engine/registry.ts";
 import { runEvaluation } from "../src/engine/run.ts";
 import { acpRunner } from "../src/runners/acp/runner.ts";
@@ -254,16 +254,23 @@ test("calls that arrive while the runner stops are still recorded", async (t) =>
 test("unsupported mock syntax is rejected at load time instead of ignored", async (t) => {
   const directory = await makeTempDir(t, "ae-mocks-syntax-");
   const cases = [
-    [{ shell: { make: { args: ["push"], return: {} } } }, /mocks\.shell\["make"\]\.args is not supported yet/],
-    [{ shell: { make: { run: ["sh", "fake.sh"] } } }, /mocks\.shell\["make"\]\.run is not supported yet/],
-    [{ shell: { make: { pass: true } } }, /mocks\.shell\["make"\]\.pass is not supported yet/],
-    [{ shell: { make: [{ return: {} }] } }, /mocks\.shell\["make"\] must be a single rule/],
-    [{ shell: { "scripts/deploy.sh": { return: {} } } }, /must be a bare command name/],
-    [{ shell: { make: {} } }, /must declare a return rule/],
-    [{ shell: { make: { return: {}, times: 1 } } }, /mocks\.shell\["make"\] has unknown field: times/],
+    [{ shell: { make: [] } }, /must declare at least one rule/],
+    [{ shell: { make: {} } }, /must declare one of return, run or pass/],
+    [{ shell: { make: { return: {}, run: ["sh"] } } }, /cannot combine return with run/],
+    [{ shell: { make: { pass: true, return: {} } } }, /cannot combine return with pass/],
+    [{ shell: { make: { pass: "true" } } }, /pass must be true or false/],
+    [{ shell: { make: { run: "sh" } } }, /run must be a non-empty list/],
+    [{ shell: { make: { run: [] } } }, /run must be a non-empty list/],
+    [{ shell: { make: { run: [""] } } }, /run\[0\] must be a non-empty string/],
+    [{ shell: { make: { args: [true], return: {} } } }, /quote a boolean literal/],
+    [{ shell: { make: { args: ["/[/"], return: {} } } }, /is not a valid RE2 pattern/],
+    [{ shell: { make: { args: [{ a: true }, "b"], return: {} } } }, /option map only as its last element/],
+    [{ shell: { make: { args: ["push"], times: 1 } } }, /has unknown field: times/],
     [{ shell: { make: { return: { exitCode: 300 } } } }, /exitCode must be an integer from 0 to 255/],
-    [{ shell: { make: { return: { exitCode: "1" } } } }, /exitCode must be an integer from 0 to 255/],
     [{ shell: { make: { return: { output: "text" } } } }, /return has unknown field: output/],
+    [{ shell: { "scripts/../escape.sh": { return: {} } } }, /must not contain "\.\."/],
+    [{ shell: { "/absolute.sh": { return: {} } } }, /must be relative to the workspace root/],
+    [{ shell: { "scripts/": { return: {} } } }, /must name a file, not a directory/],
     [{ mcp: { server: {} } }, /mocks has unknown field: mcp/],
     [{}, /mocks must declare shell targets/],
   ] as const;
@@ -281,15 +288,65 @@ test("unsupported mock syntax is rejected at load time instead of ignored", asyn
   const declared = join(directory, "declared.yml");
   await writeFile(
     declared,
-    stringify({
-      input: INPUT,
-      mocks: { shell: { make: { return: {} }, deploy: { return: { stdout: "done\n" } } } },
-      runner: { $type: "pi" },
-      checks: [{ $type: "file" }],
-    }),
+    `input: task
+mocks:
+  shell:
+    make:
+      return: {}
+    git:
+      - args: [push, { /-f|--force/: true }]
+        return:
+          exitCode: 1
+          stderr: "no\\n"
+      - args: { push: true, /--force|--force-with-lease/: false }
+        pass: true
+    scripts/deploy.sh:
+      run: [sh, ./mocks/fake-deploy.sh, "-n: 5"]
+    npm:
+      run: [node, mocks/decide.mjs]
+      pass: true
+    docker:
+      pass: false
+    build:
+      run: [node, mocks/build.mjs]
+      pass: false
+runner:
+  $type: pi
+checks:
+  - $type: file
+`,
   );
   assert.deepEqual((await loadCase(declared)).config.mocks, {
-    shell: { make: { exitCode: 0, stdout: "", stderr: "" }, deploy: { exitCode: 0, stdout: "done\n", stderr: "" } },
+    shell: {
+      make: [{ action: { kind: "return", result: { exitCode: 0, stdout: "", stderr: "" } } }],
+      git: [
+        {
+          args: {
+            positional: [{ source: "push", regex: false }],
+            options: [{ key: { source: "-f|--force", regex: true }, kind: "required" }],
+          },
+          action: { kind: "return", result: { exitCode: 1, stdout: "", stderr: "no\n" } },
+        },
+        {
+          args: {
+            positional: [],
+            options: [
+              { key: { source: "push", regex: false }, kind: "required" },
+              { key: { source: "--force|--force-with-lease", regex: true }, kind: "forbidden" },
+            ],
+          },
+          action: { kind: "pass" },
+        },
+      ],
+      "scripts/deploy.sh": [
+        {
+          action: { kind: "run", command: ["sh", "./mocks/fake-deploy.sh", "-n: 5"], pass: false },
+        },
+      ],
+      npm: [{ action: { kind: "run", command: ["node", "mocks/decide.mjs"], pass: true } }],
+      docker: [{ action: { kind: "refuse" } }],
+      build: [{ action: { kind: "run", command: ["node", "mocks/build.mjs"], pass: false } }],
+    },
   });
 });
 
@@ -299,12 +356,12 @@ test(
   async (t) => {
     const root = await makeTempDir(t, "ae-mocks-streams-");
     const host = await startMockHost({
-      runRootDir: root,
+      ...(await hostOptions(root)),
       shell: {
-        both: { exitCode: 3, stdout: "OUT\n", stderr: "ERR\n" },
-        onlyout: { exitCode: 0, stdout: "OUT\n", stderr: "" },
-        onlyerr: { exitCode: 1, stdout: "", stderr: "ERR\n" },
-        neither: { exitCode: 0, stdout: "", stderr: "" },
+        both: fixed({ exitCode: 3, stdout: "OUT\n", stderr: "ERR\n" }),
+        onlyout: fixed({ stdout: "OUT\n" }),
+        onlyerr: fixed({ exitCode: 1, stderr: "ERR\n" }),
+        neither: fixed({}),
       },
     });
     const names = ["both", "onlyout", "onlyerr", "neither"];
@@ -312,7 +369,7 @@ test(
     for (const name of names) {
       results[name] = await callForwarder(join(host.wiring.forwarderDir, name));
     }
-    const mockRecords = await host.close();
+    const { records: mockRecords } = await host.close();
 
     assert.deepEqual(results, {
       both: { status: 3, stdout: "OUT\n", stderr: "ERR\n" },
@@ -394,3 +451,151 @@ test("a throwing runner trace still closes the mock host", async (t) => {
   assert.ok(path !== undefined);
   await assert.rejects(() => stat(path), { code: "ENOENT" });
 });
+
+/** One fixed-result rule, the internal shape the host takes. */
+function fixed(result: { exitCode?: number; stdout?: string; stderr?: string }): ShellMock {
+  return [{ action: { kind: "return", result: { exitCode: 0, stdout: "", stderr: "", ...result } } }];
+}
+
+/** Host options shared by tests that only need forwarders and records. */
+async function hostOptions(runRootDir: string): Promise<Omit<MockHostOptions, "shell">> {
+  const workspaceDir = join(runRootDir, "workspace");
+  const scratchDir = join(runRootDir, "scratch");
+  await mkdir(workspaceDir, { recursive: true });
+  await mkdir(scratchDir, { recursive: true });
+  return {
+    runRootDir,
+    workspaceDir,
+    scratchDir,
+    authoringDir: runRootDir,
+    timeoutMs: 5_000,
+    signal: new AbortController().signal,
+  };
+}
+
+test(
+  "pass runs the real command while a target without pass stays denied by absolute path",
+  { skip: process.platform !== "darwin" },
+  async (t) => {
+    const fixture = await makeAcpAgent(t, "mocks-actions");
+    const fixtureFiles = join(fixture.root, "fixture");
+    await mkdir(join(fixtureFiles, "scripts"), { recursive: true });
+    await writeFile(join(fixtureFiles, "scripts/inspect.sh"), '#!/bin/sh\necho "real inspect $1"\n', { mode: 0o755 });
+    await writeFile(join(fixtureFiles, "scripts/publish.sh"), "#!/bin/sh\necho real publish\n", { mode: 0o755 });
+    const casePath = join(fixture.root, "case.yml");
+    await writeFile(
+      casePath,
+      stringify({
+        input: INPUT,
+        fixture: "fixture",
+        mocks: {
+          shell: {
+            uname: [{ args: ["-s"], pass: true }, { return: { exitCode: 1, stderr: "unsupported\n" } }],
+            whoami: { return: { stdout: "mocked-user\n" } },
+            "scripts/inspect.sh": { pass: true },
+            "scripts/publish.sh": { return: { stdout: "mocked publish\n" } },
+          },
+        },
+        runner: { $type: "acp", agent: "agent.yml" },
+        checks: [
+          { $type: "file", path: "pass-out", matches: "^Darwin\\n?$" },
+          { $type: "file", path: "pass-status", matches: "^0$" },
+          // pass keeps the real binary executable, so an absolute path still runs it.
+          { $type: "file", path: "abs-pass-out", matches: "^Darwin\\n?$" },
+          { $type: "file", path: "who-out", matches: "^mocked-user\\n?$" },
+          { $type: "file", path: "abs-status", matches: "^126$" },
+          { $type: "file", path: "abs-err", matches: "Operation not permitted" },
+          { $type: "file", path: "script-pass-out", matches: "^real inspect alpha\\n?$" },
+          { $type: "file", path: "script-return-out", matches: "^mocked publish\\n?$" },
+          { $type: "file", path: "script-return-status", matches: "^0$" },
+          // The forwarders are placed before the baseline, so unchanged compares them with
+          // themselves even though the real scripts moved.
+          { $type: "file", path: "scripts/inspect.sh", unchanged: true },
+          { $type: "file", path: "scripts/publish.sh", unchanged: true },
+        ],
+      }),
+    );
+    const registry = createRegistry();
+    addRunner(registry, acpRunner, "built-in");
+    addChecker(registry, fileChecker, "built-in");
+    const resultsDir = join(fixture.root, "results");
+    const record = await runEvaluation({
+      case: await loadCase(casePath),
+      registry,
+      resultsDir,
+      tempParent: await makeTempDir(t, "ae-mocks-actions-runs-"),
+    });
+
+    assert.deepEqual(
+      record.checks.map((check) => check.status),
+      record.checks.map(() => "pass"),
+      record.error,
+    );
+    assert.equal(record.status, "pass", record.error);
+    const mockRecords = JSON.parse(await readFile(join(resultsDir, record.runId, "mocks.json"), "utf8"));
+    assert.deepEqual(mockRecords, [
+      { target: "uname", arguments: ["-s"] },
+      { target: "whoami", arguments: [] },
+      { target: "scripts/inspect.sh", arguments: ["alpha"] },
+      { target: "scripts/publish.sh", arguments: [] },
+    ]);
+  },
+);
+
+test(
+  "pass:false refuses the call and keeps the real command denied in the sandbox",
+  { skip: process.platform !== "darwin" },
+  async (t) => {
+    const fixture = await makeAcpAgent(t, "mocks-refuse");
+    const fixtureFiles = join(fixture.root, "fixture");
+    await mkdir(join(fixtureFiles, "scripts"), { recursive: true });
+    await writeFile(join(fixtureFiles, "scripts/only.sh"), "#!/bin/sh\necho real only\n", { mode: 0o755 });
+    const casePath = join(fixture.root, "case.yml");
+    await writeFile(
+      casePath,
+      stringify({
+        input: INPUT,
+        fixture: "fixture",
+        mocks: {
+          shell: {
+            hostname: { pass: false },
+            "scripts/only.sh": { pass: false },
+          },
+        },
+        runner: { $type: "acp", agent: "agent.yml" },
+        checks: [
+          { $type: "file", path: "false-status", matches: "^126$" },
+          { $type: "file", path: "false-err", matches: "^hostname: Operation not permitted\\n?$" },
+          { $type: "file", path: "false-out", matches: "^$" },
+          // The target cannot pass, so its real binary stays denied by absolute path.
+          { $type: "file", path: "abs-status", matches: "^126$" },
+          { $type: "file", path: "abs-err", matches: "Operation not permitted" },
+          { $type: "file", path: "script-status", matches: "^126$" },
+          { $type: "file", path: "script-out", matches: "^scripts/only.sh: Operation not permitted\\n?$" },
+        ],
+      }),
+    );
+    const registry = createRegistry();
+    addRunner(registry, acpRunner, "built-in");
+    addChecker(registry, fileChecker, "built-in");
+    const resultsDir = join(fixture.root, "results");
+    const record = await runEvaluation({
+      case: await loadCase(casePath),
+      registry,
+      resultsDir,
+      tempParent: await makeTempDir(t, "ae-mocks-refuse-runs-"),
+    });
+
+    assert.deepEqual(
+      record.checks.map((check) => check.status),
+      record.checks.map(() => "pass"),
+      record.error,
+    );
+    assert.equal(record.status, "pass", record.error);
+    const mockRecords = JSON.parse(await readFile(join(resultsDir, record.runId, "mocks.json"), "utf8"));
+    assert.deepEqual(mockRecords, [
+      { target: "hostname", arguments: [] },
+      { target: "scripts/only.sh", arguments: [] },
+    ]);
+  },
+);

@@ -3,8 +3,8 @@ import { errorMessage } from "../../engine/config.ts";
 import type { CheckResult, Checker, CheckerContext, CheckerDefinition } from "../../engine/registry.ts";
 import { runRelativePathSchema } from "../../engine/params.ts";
 import { truncate } from "../../engine/truncate.ts";
+import { compilePattern, searches } from "../../engine/regex.ts";
 import { isMissing, readRunFile, runFileExists, type RunRoot } from "../../engine/workspace.ts";
-import { evaluateRegexes } from "./regex.ts";
 
 const MAX_PATTERNS = 100;
 
@@ -13,11 +13,11 @@ const patternSchema = z
   .min(1, "must not be empty")
   .superRefine((pattern, context) => {
     try {
-      new RegExp(pattern);
+      compilePattern(pattern);
     } catch (error) {
       context.addIssue({
         code: "custom",
-        message: `is not a valid regular expression: ${errorMessage(error)}`,
+        message: `is not a valid RE2 regular expression: ${errorMessage(error)}`,
       });
     }
   });
@@ -105,20 +105,14 @@ class FileChecker implements Checker {
           );
         }
       } else {
-        const evaluation = await evaluateRegexes(content.toString("utf8"), parsed.patterns, context.signal);
-        for (const [index, pattern] of parsed.patterns.entries()) {
+        const text = content.toString("utf8");
+        for (const pattern of parsed.patterns) {
           const subject = `${parsed.path} matches /${truncate(pattern, 120)}/`;
-          const compileError = evaluation.errors[index];
-          if (compileError !== undefined) {
-            results.push(errorResult(subject, `regular expression failed: ${compileError}`));
-            continue;
+          try {
+            results.push({ ...(searches(pattern, text) ? pass("pattern found") : fail("pattern not found")), subject });
+          } catch (error) {
+            results.push(errorResult(subject, `regular expression failed: ${errorMessage(error)}`));
           }
-          const matched = evaluation.matched[index];
-          if (matched === undefined) {
-            results.push(errorResult(subject, evaluation.failure ?? "regular expression did not finish evaluating"));
-            continue;
-          }
-          results.push({ ...(matched ? pass("pattern found") : fail("pattern not found")), subject });
         }
       }
     }

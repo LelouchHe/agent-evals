@@ -1,4 +1,6 @@
 import { constants } from "node:fs";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import { randomUUID } from "node:crypto";
 import { lstat, mkdir, open, readdir, realpath, rename, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
@@ -82,10 +84,13 @@ export async function assembleEnvironment(
       originals.set(file, data);
     }
   }
+  const pathEntries = [...source.path.map((path) => join(home, path)), ...SYSTEM_PATH];
   const policy = createSandboxPolicy({
     writableRoots: [home, dirs.workspace, dirs.scratch],
     // A mocked command's forwarder is readable and executable, never writable.
     readableRoots: mocks === undefined ? [deps] : [deps, mocks.forwarderDir],
+    denyExecutables:
+      mocks === undefined ? [] : await deniedBinaries(mocks.denyTargets, pathEntries, await activeDeveloperDir()),
     allowNetwork: true,
     interactive: options.interactive,
   });
@@ -94,11 +99,7 @@ export async function assembleEnvironment(
     ...(process.env.TERM === undefined ? {} : { TERM: process.env.TERM }),
     HOME: home,
     TMPDIR: dirs.scratch,
-    PATH: [
-      ...(mocks === undefined ? [] : [mocks.forwarderDir]),
-      ...source.path.map((path) => join(home, path)),
-      ...SYSTEM_PATH,
-    ].join(":"),
+    PATH: [...(mocks === undefined ? [] : [mocks.forwarderDir]), ...pathEntries].join(":"),
   };
   const persist = async (selected: ReadonlyMap<string, Buffer>): Promise<void> => {
     if (login === undefined) throw new ConfigError("login requires home.login");
@@ -139,6 +140,44 @@ export async function assembleEnvironment(
       if (changed.size > 0) await persist(changed);
     },
   };
+}
+
+/**
+ * The real binaries behind PATH targets whose rules never pass. Besides the first PATH match,
+ * the active developer directory is included because `/usr/bin/make` and `/usr/bin/git` are
+ * shims that start the toolchain's own copy.
+ */
+export async function deniedBinaries(
+  targets: readonly string[],
+  pathEntries: readonly string[],
+  developerDir: string | undefined,
+): Promise<readonly string[]> {
+  const denied: string[] = [];
+  for (const target of targets) {
+    const candidates = [
+      ...pathEntries.map((entry) => join(entry, target)),
+      ...(developerDir === undefined ? [] : [join(developerDir, "usr", "bin", target)]),
+    ];
+    for (const candidate of candidates) {
+      try {
+        if ((await stat(candidate)).isFile()) denied.push(candidate, await realpath(candidate));
+      } catch {
+        // Not installed here.
+      }
+    }
+  }
+  return denied;
+}
+
+/** The directory the platform shims start tools from, when a developer directory is selected. */
+async function activeDeveloperDir(): Promise<string | undefined> {
+  try {
+    const { stdout } = await promisify(execFile)("/usr/bin/xcode-select", ["-p"]);
+    const path = stdout.trim();
+    return path.length === 0 ? undefined : path;
+  } catch {
+    return undefined;
+  }
 }
 
 /** Canonicalize existing ancestors too, without creating a first-login directory. */

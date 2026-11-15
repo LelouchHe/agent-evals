@@ -135,6 +135,8 @@ test("file checker rejects invalid configuration", async () => {
   const parse = (params: ImplementationParams) =>
     parseImplementationParams(fileChecker.params, params, 'checker "file"');
   await assert.rejects(() => parse({ path: "a", matches: "(" }), ConfigError);
+  // RE2 has no lookaround; the dialect is enforced at load time.
+  await assert.rejects(() => parse({ path: "a", matches: "^(?!x)" }), ConfigError);
   await assert.rejects(() => parse({ path: "a" }), ConfigError);
   await assert.rejects(() => parse({ path: "/etc/passwd", exists: true }), ConfigError);
   await assert.rejects(() => parse({ path: "../outside", exists: true }), ConfigError);

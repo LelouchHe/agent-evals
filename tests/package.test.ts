@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFile, spawn } from "node:child_process";
-import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
+import { cp, mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -43,8 +43,8 @@ test("package metadata and built runtime assets point at the sole CLI implementa
   const cli = await readFile(distEntry, "utf8");
   assert.ok(cli.startsWith("#!/usr/bin/env node\n"), "dist/cli.js must keep its executable shebang");
   for (const asset of [
-    "dist/checkers/file/regex-worker.js",
     "dist/engine/forwarder.sh",
+    "dist/engine/regex.js",
     "dist/engine/runtime-assets.js",
     "dist/runners/pi/supervisor.js",
     "dist/runners/pi/safe-process-group.js",
@@ -79,7 +79,7 @@ test("source and built CLIs produce identical help and view output", async (t) =
   }
 });
 
-test("built CLI runs packaged supervisor, wrapper, regex worker, and judge assets", async (t) => {
+test("built CLI runs packaged supervisor, wrapper, and judge assets", async (t) => {
   const fake = await createFakePi(t, "record-tools");
   const judge = await createFakePi(t, "judge-valid");
   const directory = await makeTempDir(t, "ae-package-run-");
@@ -98,7 +98,8 @@ test("built CLI runs packaged supervisor, wrapper, regex worker, and judge asset
             '"safe-process-group\\.js"',
             '"shell-wrapper\\.sh"',
             '"shellHasStateDir":true',
-            "^(?!.*\\.ts).*$",
+            // Every staged tool is a built .js/.sh asset, never a .ts source file.
+            '^\\{"names\\":\\["[a-z-]+\\.(js|sh)\\"(,\\"[a-z-]+\\.(js|sh)\\")*\\],"shellHasStateDir\\":true\\}$',
           ],
         },
         {
@@ -181,13 +182,29 @@ test(
       join(packageRoot, "dist", "engine", "forwarder.sh"),
     );
     await readFile(join(packageRoot, "dist", "engine", "forwarder.sh"), "utf8");
+    // A package resolves its declared dependency from its own tree; give the unpacked copy the
+    // installed re2js the engine imports, so the test never falls back to this worktree.
+    await cp(join(root, "node_modules", "re2js"), join(packageRoot, "node_modules", "re2js"), { recursive: true });
 
     const { startMockHost } = (await import(mocksModule.href)) as typeof import("../src/engine/mocks.ts");
     const runRoot = join(packDir, "run");
     await mkdir(runRoot);
+    await mkdir(join(runRoot, "workspace"));
+    await mkdir(join(runRoot, "scratch"));
     const host = await startMockHost({
       runRootDir: runRoot,
-      shell: { release: { exitCode: 4, stdout: "packed out\n", stderr: "packed err\n" } },
+      workspaceDir: join(runRoot, "workspace"),
+      scratchDir: join(runRoot, "scratch"),
+      authoringDir: packDir,
+      timeoutMs: 5_000,
+      signal: new AbortController().signal,
+      shell: {
+        release: [
+          {
+            action: { kind: "return", result: { exitCode: 4, stdout: "packed out\n", stderr: "packed err\n" } },
+          },
+        ],
+      },
     });
     // Close once, however the test ends: a failed call must not leave the host listening.
     let closing: ReturnType<typeof host.close> | undefined;
@@ -200,7 +217,7 @@ test(
     for (const args of [["--now", ""], ["next"]]) {
       calls.push(await callForwarder(join(host.wiring.forwarderDir, "release"), args));
     }
-    const mockRecords = await closeHost();
+    const { records: mockRecords } = await closeHost();
 
     assert.deepEqual(calls, [
       { status: 4, stdout: "packed out\n", stderr: "packed err\n" },

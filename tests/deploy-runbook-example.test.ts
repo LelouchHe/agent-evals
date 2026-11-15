@@ -1,35 +1,82 @@
 import assert from "node:assert/strict";
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { test } from "node:test";
 import { fileChecker } from "../src/checkers/file/checker.ts";
 import { loadCase } from "../src/engine/authoring.ts";
-import type { ImplementationRecord } from "../src/engine/config.ts";
+import type { MockRule, ResolvedCase } from "../src/engine/config.ts";
 import { parseImplementationParams } from "../src/engine/params.ts";
 import type { CheckerContext } from "../src/engine/registry.ts";
+import { searches } from "../src/engine/regex.ts";
 import { openRunRoot } from "../src/engine/workspace.ts";
 import { makeTempDir } from "./helpers/fake-pi-control.ts";
 import { implementationContext } from "./helpers/implementation-context.ts";
 
-const CASE = join(import.meta.dirname, "..", "examples/cases/deploy-runbook/case.yml");
+const EXAMPLE = join(import.meta.dirname, "..", "examples/cases/deploy-runbook");
+const CASE = join(EXAMPLE, "case.yml");
 
-function matchPatterns(check: ImplementationRecord): readonly unknown[] {
-  const patterns = check.matches;
-  return typeof patterns === "string" ? [patterns] : Array.isArray(patterns) ? patterns : [];
+function actions(loaded: ResolvedCase): Readonly<Record<string, readonly MockRule[]>> {
+  return loaded.config.mocks?.shell ?? {};
 }
 
-// The worked example is documentation: nothing else loads it, so a mock whose
-// answer no check asserts would drift silently and only a paid live run would
-// notice.
+function patternsOf(loaded: ResolvedCase): readonly string[] {
+  return loaded.config.checks.flatMap((check) => patternStrings(check));
+}
+
+// The worked example is documentation: nothing else loads it, so an action nobody exercises or
+// a response no check asserts would drift silently and only a paid live run would notice.
+test("the worked example exercises all three actions and its checks assert them", async () => {
+  const loaded = await loadCase(CASE, { caseName: "pi-with-skill" });
+  const shell = actions(loaded);
+  const patterns = patternsOf(loaded);
+
+  // return: the status answer, whose serial only it reveals.
+  const status = shell.deployctl?.[0]?.action;
+  assert.equal(status?.kind, "return");
+  const serial = /serial ([0-9A-F]+)/.exec(status.kind === "return" ? status.result.stdout : "")?.[1];
+  assert.ok(serial !== undefined, "the mocked answer reports a certificate serial");
+
+  // run: the author's program, whose build id only it prints.
+  const facts = shell["release-facts"]?.[0]?.action;
+  assert.equal(facts?.kind, "run");
+  const script = await readFile(join(EXAMPLE, "mocks/release-facts.sh"), "utf8");
+  const build = /build: (\S+)/.exec(script)?.[1];
+  assert.ok(build !== undefined, "the run program prints a build id");
+
+  // pass: the real platform command, reachable only through a pass rule.
+  const uname = shell.uname ?? [];
+  assert.deepEqual(uname[0]?.args?.positional, [{ source: "-s", regex: false }]);
+  assert.equal(uname[0]?.action.kind, "pass");
+
+  // The private cause and fix stay in the skill: no mocked answer hands them over.
+  for (const rules of Object.values(shell)) {
+    for (const rule of rules) {
+      if (rule.action.kind === "return") {
+        assert.doesNotMatch(rule.action.result.stdout, /expired|rotate-signing-cert/i);
+      }
+    }
+  }
+
+  // Each fact is asserted by a check pattern that really matches the response line.
+  for (const [line, label] of [
+    [`signing-cert: serial ${serial}`, "the serial from the mocked status"],
+    [`build: ${build}`, "the build id from the run program"],
+    ["Darwin", "the platform from the passed command"],
+  ] as const) {
+    assert.ok(
+      patterns.some((pattern) => searches(pattern, line)),
+      `${label} is asserted by a check`,
+    );
+  }
+});
+
 test("the worked example's mocked answer is what its check asserts", async (t) => {
   const loaded = await loadCase(CASE, { caseName: "pi-with-skill" });
-  const mock = loaded.config.mocks?.shell.deployctl;
-  assert.ok(mock !== undefined, "the example declares the deployctl mock");
+  const rule = actions(loaded).deployctl?.[0];
+  assert.ok(rule?.action.kind === "return", "the example declares the deployctl mock");
+  const mock = rule.action.result;
   const serial = /serial ([0-9A-F]+)/.exec(mock.stdout)?.[1];
   assert.ok(serial !== undefined, "the mocked answer reports a certificate serial");
-  // The cause and the fix are the skill's private knowledge; the mock only
-  // reports release state, which the fixture log already implies.
-  assert.doesNotMatch(mock.stdout, /expired|rotate-signing-cert/i);
 
   // Exactly one file check on diagnosis.md must assert that serial, and the real
   // checker must accept evidence carrying it and reject evidence without it.
@@ -37,7 +84,7 @@ test("the worked example's mocked answer is what its check asserts", async (t) =
     (check) => check.$type === "file" && check.path === "diagnosis.md" && matchPatterns(check).includes(serial),
   );
   assert.equal(asserted.length, 1, "one file check asserts the mocked serial in diagnosis.md");
-  const { $type: _type, ...params } = asserted[0] as ImplementationRecord;
+  const { $type: _type, ...params } = asserted[0] as (typeof loaded.config.checks)[number];
 
   const root = await makeTempDir(t, "ae-example-diagnosis-");
   const workspace = join(root, "workspace");
@@ -59,13 +106,21 @@ test("the worked example's mocked answer is what its check asserts", async (t) =
 
   await writeFile(join(workspace, "diagnosis.md"), `E4127, signing-cert serial ${serial}\n`);
   assert.deepEqual(
-    (await checker.check(context)).map((result) => result.status),
+    (await checker.check(context)).map((resultValue) => resultValue.status),
     ["pass"],
   );
 
   await writeFile(join(workspace, "diagnosis.md"), "E4127, cause and fix only\n");
   assert.deepEqual(
-    (await checker.check(context)).map((result) => result.status),
+    (await checker.check(context)).map((resultValue) => resultValue.status),
     ["fail"],
   );
 });
+
+function matchPatterns(check: Readonly<Record<string, unknown>>): readonly unknown[] {
+  return typeof check.matches === "string" ? [check.matches] : Array.isArray(check.matches) ? check.matches : [];
+}
+
+function patternStrings(check: Readonly<Record<string, unknown>>): readonly string[] {
+  return matchPatterns(check).filter((pattern): pattern is string => typeof pattern === "string");
+}

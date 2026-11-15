@@ -97,6 +97,28 @@ while (my $line = <STDIN>) {
     open(my $f, ">", "answer.txt") or die $!;
     print $f "$model: $request->{params}{prompt}[0]{text}"; close($f);
     if ($scenario eq "hang") { sleep 600; }
+    if ($scenario eq "mocks-refuse") {
+      my $probe = q{
+hostname >false-out 2>false-err; printf '%s' $? >false-status
+/bin/hostname >abs-out 2>abs-err; printf '%s' $? >abs-status
+./scripts/only.sh >script-out 2>&1; printf '%s' $? >script-status
+};
+      system("/bin/sh", "-c", $probe);
+    }
+    if ($scenario eq "mocks-actions") {
+      my $probe = q{
+uname -s >pass-out 2>pass-err
+printf '%s' $? >pass-status
+/usr/bin/uname -s >abs-pass-out 2>&1
+whoami >who-out 2>&1
+/usr/bin/whoami >abs-out 2>abs-err
+printf '%s' $? >abs-status
+./scripts/inspect.sh alpha >script-pass-out 2>&1
+./scripts/publish.sh >script-return-out 2>&1
+printf '%s' $? >script-return-status
+};
+      system("/bin/sh", "-c", $probe);
+    }
     if ($scenario eq "mocks") {
       my $probe = q{
 fwd=$(command -v id)

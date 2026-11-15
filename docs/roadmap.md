@@ -31,7 +31,7 @@ Extend the prepared environment with substitutes for tools, services, skills or 
 - A substituted skill retains selection-relevant identity but changes instruction content. It remains model context, not a transparent function-call boundary, and can affect later behavior.
 - Substituted collaborators isolate behavior; real collaborators assess the combined outcome. Both kinds of test matter.
 
-Mocks sit at the environment boundary because ACP session updates report calls rather than request them; see [M3](m3-plan.md) for the agreed boundary design, separation of `mocks` and `checks`, and remaining open syntax questions. Shell collaborators (`PATH` programs and workspace scripts) are the first interception point; MCP servers are milestone M5. Harness-native tools need harness support; network interception is shelved. Replacing the model itself remains a way to test this toolkit's deterministic code, not a promised agent-evaluation case feature.
+Mocks sit at the environment boundary because ACP session updates report calls rather than request them; see [M3](m3-plan.md) for the agreed boundary design, separation of `mocks` and `checks`, and remaining open syntax questions. Shell collaborators (`PATH` programs and workspace scripts) are delivered by [M3](m3-plan.md); MCP servers are milestone M5. Harness-native tools need harness support; network interception is shelved. Replacing the model itself remains a way to test this toolkit's deterministic code, not a promised agent-evaluation case feature.
 
 ## Evidence and Measurements
 
@@ -69,4 +69,4 @@ The following product-design questions are **pending**, not implementation requi
 
 ## Delivery
 
-[M1](m1-plan.md) and [M2](m2-plan.md) record delivered filesystem and ACP/trace milestones. [M3](m3-plan.md) holds the shell-collaborator design and open questions, [M4](m4-plan.md) holds the interaction checker that moved out of it, and MCP collaborators are M5, whose plan is not written yet. Define later milestone plans when there is a real scenario and agreed scope; this document does not invent a schedule or turn the directions above into implementation obligations.
+[M1](m1-plan.md), [M2](m2-plan.md) and [M3](m3-plan.md) record delivered filesystem, ACP/trace and shell-collaborator milestones. [M4](m4-plan.md) holds the planned interaction checker that moved out of M3, and MCP collaborators are M5, whose plan is not written yet. Define later milestone plans when there is a real scenario and agreed scope; this document does not invent a schedule or turn the directions above into implementation obligations.
