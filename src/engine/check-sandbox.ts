@@ -27,7 +27,7 @@ export interface CheckSandboxOptions {
  * stay beneath the workspace and a private HOME and temporary directory and the network is denied.
  */
 export function createCheckSandbox(options: CheckSandboxOptions): CheckSandbox {
-  return { run: (command) => runProgram(options, command) };
+  return { run: (command, runOptions) => runProgram(options, command, runOptions?.stagingDir) };
 }
 
 /** The outcome the wrapper reports, before the launcher attaches the program's output. */
@@ -36,7 +36,11 @@ type ReportedOutcome =
   | { readonly kind: "signalled"; readonly signal: string }
   | { readonly kind: "failed"; readonly reason: string };
 
-async function runProgram(options: CheckSandboxOptions, command: readonly string[]): Promise<CheckSandboxOutcome> {
+async function runProgram(
+  options: CheckSandboxOptions,
+  command: readonly string[],
+  stagingDir: string | undefined,
+): Promise<CheckSandboxOutcome> {
   const [program, ...args] = command;
   if (program === undefined) {
     return { kind: "failed", reason: "the check named no program", output: "" };
@@ -56,7 +60,7 @@ async function runProgram(options: CheckSandboxOptions, command: readonly string
         allowNetwork: false,
       },
       policyDirectory: directory,
-      command: [process.execPath, CHECK_RUNNER, program, ...args],
+      command: [process.execPath, CHECK_RUNNER, stagingDir ?? "-", program, ...args],
       cwd: options.workspaceDir,
       env: { PATH: path, HOME: homeDir, TMPDIR: tmpDir },
       interactive: false,

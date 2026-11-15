@@ -81,8 +81,15 @@ export type CheckSandboxOutcome =
  * beneath the workspace and a private HOME and temporary directory, and no network.
  */
 export interface CheckSandbox {
-  /** Start `command` in the workspace root; program and arguments are never given to a shell. */
-  readonly run: (command: readonly string[]) => Promise<CheckSandboxOutcome>;
+  /**
+   * Start `command` in the workspace root; program and arguments are never given to a shell.
+   * A `stagingDir` is a tree the sandbox copies into the workspace immediately before starting,
+   * so the placement runs under the sandbox's write policy instead of on the host.
+   */
+  readonly run: (
+    command: readonly string[],
+    options?: { readonly stagingDir?: string },
+  ) => Promise<CheckSandboxOutcome>;
 }
 
 /** A prepared runner instance; its factory already captured validated parameters. */

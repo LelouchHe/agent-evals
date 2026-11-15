@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { createServer } from "node:net";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { lstat, mkdir, readFile, readdir, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { test, type TestContext } from "node:test";
@@ -19,8 +19,15 @@ async function setup(t: TestContext) {
     root,
     workspace,
     outside,
-    run: (command: readonly string[], signal = AbortSignal.timeout(15_000)): Promise<CheckSandboxOutcome> =>
-      createCheckSandbox({ workspaceDir: workspace, runRootDir: root, signal }).run(command),
+    run: (
+      command: readonly string[],
+      options: { readonly stagingDir?: string; readonly signal?: AbortSignal } = {},
+    ): Promise<CheckSandboxOutcome> =>
+      createCheckSandbox({
+        workspaceDir: workspace,
+        runRootDir: root,
+        signal: options.signal ?? AbortSignal.timeout(15_000),
+      }).run(command, options.stagingDir === undefined ? undefined : { stagingDir: options.stagingDir }),
   };
 }
 
@@ -158,7 +165,7 @@ test(
     });
     const timedOut = await dirs.run(
       ["/bin/sh", "-c", '/bin/sleep 65479 & printf "%s" $! > background.pid; /bin/sleep 65479'],
-      AbortSignal.timeout(500),
+      { signal: AbortSignal.timeout(500) },
     );
     assert.equal(timedOut.kind, "failed");
     assert.match(timedOut.kind === "failed" ? timedOut.reason : "", /did not finish before the check deadline/);
@@ -302,5 +309,119 @@ test(
     assert.equal(lingering.kind, "exited", lingering.output);
     assert.equal(lingering.kind === "exited" ? lingering.exitCode : undefined, 1);
     assert.ok(performance.now() - started < 3_000, `took ${Math.round(performance.now() - started)}ms`);
+  },
+);
+
+test(
+  "staged check files are placed into the workspace before the program runs",
+  {
+    skip: process.platform !== "darwin",
+  },
+  async (t) => {
+    const dirs = await setup(t);
+    const staging = await makeTempDir(t, "ae-check-staging-");
+    await mkdir(join(staging, "tests"));
+    await writeFile(join(staging, "tests/acceptance.txt"), "acceptance\n");
+
+    const outcome = await dirs.run(["/bin/sh", "-c", "cat tests/acceptance.txt > seen.txt"], {
+      stagingDir: staging,
+    });
+    assert.equal(outcome.kind, "exited", outcome.output);
+    assert.equal(outcome.kind === "exited" ? outcome.exitCode : 1, 0, outcome.output);
+    assert.equal(await readFile(join(dirs.workspace, "seen.txt"), "utf8"), "acceptance\n");
+    assert.equal(await readFile(join(dirs.workspace, "tests/acceptance.txt"), "utf8"), "acceptance\n");
+  },
+);
+
+test(
+  "a destination leaf symlink is replaced inside the sandbox instead of written through",
+  {
+    skip: process.platform !== "darwin",
+  },
+  async (t) => {
+    const dirs = await setup(t);
+    const outside = await makeTempDir(t, "ae-check-outside-");
+    const sentinel = join(outside, "sentinel");
+    await writeFile(sentinel, "do not touch\n");
+    const staging = await makeTempDir(t, "ae-check-staging-");
+    await mkdir(join(staging, "tests"));
+    await writeFile(join(staging, "tests/acceptance.txt"), "real body\n");
+    await writeFile(join(staging, "tests/broken.txt"), "real body\n");
+
+    await mkdir(join(dirs.workspace, "tests"));
+    await symlink(sentinel, join(dirs.workspace, "tests/acceptance.txt"));
+    await symlink(join(outside, "missing.txt"), join(dirs.workspace, "tests/broken.txt"));
+
+    const outcome = await dirs.run(["/bin/cat", "tests/acceptance.txt"], { stagingDir: staging });
+    assert.equal(outcome.kind, "exited", outcome.output);
+    assert.equal(outcome.output, "real body\n");
+    assert.equal(await readFile(sentinel, "utf8"), "do not touch\n");
+    await assert.rejects(readFile(join(outside, "missing.txt")));
+    assert.equal((await lstat(join(dirs.workspace, "tests/acceptance.txt"))).isSymbolicLink(), false);
+    assert.equal((await lstat(join(dirs.workspace, "tests/broken.txt"))).isSymbolicLink(), false);
+  },
+);
+
+test(
+  "an ancestor symlink is refused inside the sandbox and the outside stays untouched",
+  {
+    skip: process.platform !== "darwin",
+  },
+  async (t) => {
+    for (const inside of [false, true]) {
+      const dirs = await setup(t);
+      const outside = await makeTempDir(t, "ae-check-outside-");
+      const target = inside ? join(dirs.workspace, "real") : outside;
+      if (inside) await mkdir(target);
+      await symlink(target, join(dirs.workspace, "tests"));
+      const staging = await makeTempDir(t, "ae-check-staging-");
+      await mkdir(join(staging, "tests"));
+      await writeFile(join(staging, "tests/acceptance.txt"), "real body\n");
+
+      const outcome = await dirs.run(["/bin/true"], { stagingDir: staging });
+      assert.equal(outcome.kind, "failed", outcome.output);
+      assert.match(outcome.kind === "failed" ? outcome.reason : "", /symlink/);
+      assert.equal((await lstat(join(dirs.workspace, "tests"))).isSymbolicLink(), true);
+      assert.deepEqual(await readdir(target), []);
+    }
+  },
+);
+
+test(
+  "a directory where a staged file goes is a placement error",
+  {
+    skip: process.platform !== "darwin",
+  },
+  async (t) => {
+    const dirs = await setup(t);
+    const staging = await makeTempDir(t, "ae-check-staging-");
+    await mkdir(join(staging, "tests"));
+    await writeFile(join(staging, "tests/acceptance.txt"), "real body\n");
+    await mkdir(join(dirs.workspace, "tests/acceptance.txt"), { recursive: true });
+
+    const outcome = await dirs.run(["/bin/true"], { stagingDir: staging });
+    assert.equal(outcome.kind, "failed", outcome.output);
+    assert.match(outcome.kind === "failed" ? outcome.reason : "", /where a directory exists/);
+    assert.equal((await lstat(join(dirs.workspace, "tests/acceptance.txt"))).isDirectory(), true);
+  },
+);
+
+test(
+  "the untrusted program cannot write the host's staged tree",
+  {
+    skip: process.platform !== "darwin",
+  },
+  async (t) => {
+    const dirs = await setup(t);
+    const staging = await makeTempDir(t, "ae-check-staging-");
+    await writeFile(join(staging, "staged.txt"), "staged\n");
+
+    const outcome = await dirs.run(["/bin/sh", "-c", 'printf changed > "$1"', "sh", join(staging, "staged.txt")], {
+      stagingDir: staging,
+    });
+    assert.equal(outcome.kind, "exited", outcome.output);
+    assert.notEqual(outcome.kind === "exited" ? outcome.exitCode : 0, 0);
+    assert.match(outcome.output, /Operation not permitted/);
+    assert.equal(await readFile(join(staging, "staged.txt"), "utf8"), "staged\n");
   },
 );

@@ -1,4 +1,4 @@
-import { lstat, mkdtemp, rm, stat } from "node:fs/promises";
+import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { z } from "zod";
@@ -7,10 +7,9 @@ import {
   errorMessage,
   expectRelativePath,
   expectWorkspaceDestination,
-  resolveAuthoringAsset,
   workspaceTargetPath,
 } from "../../engine/config.ts";
-import { placeStagedFiles, stageFiles } from "../../engine/files.ts";
+import { stageFiles } from "../../engine/files.ts";
 import type { CheckResult, Checker, CheckerContext, CheckerDefinition } from "../../engine/registry.ts";
 import { assertSeatbeltAvailable } from "../../platform/macos/policy.ts";
 import { truncate } from "../../engine/truncate.ts";
@@ -57,34 +56,12 @@ export const shellChecker: CheckerDefinition<ShellCheckParams> = {
   },
 };
 
-/** Check every source and stage them once, so a missing source or overlap fails before any run. */
+/**
+ * Stage every source once, so a missing source, a special file, a symlink to one, or overlapping
+ * entries fails at load time instead of during the check.
+ */
 async function validateFiles(files: Record<string, string> | undefined, authoringDir: string): Promise<void> {
   if (files === undefined || Object.keys(files).length === 0) return;
-  for (const [destination, source] of Object.entries(files)) {
-    const path = resolveAuthoringAsset(authoringDir, source, `shell checker files["${destination}"]`);
-    let info;
-    try {
-      info = await lstat(path);
-    } catch (error) {
-      throw new ConfigError(
-        `shell checker files source ${source} for "${destination}" is not accessible: ${errorMessage(error)}`,
-      );
-    }
-    if (info.isDirectory() || info.isFile()) continue;
-    if (info.isSymbolicLink()) {
-      try {
-        if ((await stat(path)).isFile()) continue;
-      } catch (error) {
-        throw new ConfigError(
-          `shell checker files source ${source} for "${destination}" is not accessible: ${errorMessage(error)}`,
-        );
-      }
-    }
-    throw new ConfigError(
-      `shell checker files source ${source} for "${destination}" must be a regular file or directory`,
-    );
-  }
-
   const staging = await mkdtemp(join(tmpdir(), "agent-evals-shell-files-"));
   try {
     await stageFiles(files, authoringDir, staging, "shell checker files");
@@ -107,10 +84,17 @@ class ShellChecker implements Checker {
   readonly check = async (context: CheckerContext): Promise<readonly CheckResult[]> => {
     const subject = truncate(`run ${this.#params.run.join(" ")}`, MAX_SUBJECT);
     const files = this.#params.files;
+    let stagingDir: string | undefined;
     if (files !== undefined && Object.keys(files).length > 0) {
       try {
-        await placeFiles(files, this.#authoringDir, context);
+        stagingDir = await mkdtemp(join(context.runRootDir, "check-files-"));
+        await stageFiles(files, this.#authoringDir, stagingDir, "shell checker files", context.signal);
       } catch (error) {
+        if (stagingDir !== undefined) {
+          await rm(stagingDir, { recursive: true, force: true, maxRetries: 3 });
+        }
+        // The engine owns cancellation and deadline reporting for an aborted check.
+        if (context.signal.aborted) throw error;
         return [
           {
             checker: "shell",
@@ -122,42 +106,36 @@ class ShellChecker implements Checker {
       }
     }
 
-    const outcome = await context.checkSandbox.run(this.#params.run);
-    switch (outcome.kind) {
-      case "exited": {
-        if (outcome.exitCode === 0) {
-          return [{ checker: "shell", subject, status: "pass", reason: "exit status 0" }];
+    try {
+      const outcome = await context.checkSandbox.run(
+        this.#params.run,
+        stagingDir === undefined ? undefined : { stagingDir },
+      );
+      switch (outcome.kind) {
+        case "exited": {
+          if (outcome.exitCode === 0) {
+            return [{ checker: "shell", subject, status: "pass", reason: "exit status 0" }];
+          }
+          return [
+            {
+              checker: "shell",
+              subject,
+              status: "fail",
+              reason: failureReason(outcome.exitCode, outcome.output),
+            },
+          ];
         }
-        return [
-          {
-            checker: "shell",
-            subject,
-            status: "fail",
-            reason: failureReason(outcome.exitCode, outcome.output),
-          },
-        ];
+        case "signalled":
+          return [{ checker: "shell", subject, status: "error", reason: `program died from ${outcome.signal}` }];
+        case "failed":
+          return [{ checker: "shell", subject, status: "error", reason: truncate(outcome.reason, MAX_REASON) }];
       }
-      case "signalled":
-        return [{ checker: "shell", subject, status: "error", reason: `program died from ${outcome.signal}` }];
-      case "failed":
-        return [{ checker: "shell", subject, status: "error", reason: truncate(outcome.reason, MAX_REASON) }];
+    } finally {
+      if (stagingDir !== undefined) {
+        await rm(stagingDir, { recursive: true, force: true, maxRetries: 3 });
+      }
     }
   };
-}
-
-/** Stage the check's files and copy them into the live workspace before the program starts. */
-async function placeFiles(
-  files: Readonly<Record<string, string>>,
-  authoringDir: string,
-  context: CheckerContext,
-): Promise<void> {
-  const staging = await mkdtemp(join(context.runRootDir, "check-files-"));
-  try {
-    await stageFiles(files, authoringDir, staging, "shell checker files");
-    await placeStagedFiles(staging, context.workspace, "shell checker files");
-  } finally {
-    await rm(staging, { recursive: true, force: true, maxRetries: 3 });
-  }
 }
 
 /** Keep the end of the output, where a test runner's assertion failure is. */

@@ -333,8 +333,7 @@ test("a missing check-time file source is a configuration error before any run d
   const tempParent = await makeTempDir(t, "ae-shell-files-load-runs-");
   await assert.rejects(
     async () => runEvaluation({ case: await loadCase(casePath), registry, resultsDir, tempParent }),
-    (error: unknown) =>
-      error instanceof ConfigError && /shell checker files source .* is not accessible/.test(error.message),
+    (error: unknown) => error instanceof ConfigError && /shell checker files.*is not accessible/.test(error.message),
   );
   assert.deepEqual(await readdir(tempParent), []);
   assert.deepEqual(await readdir(resultsDir), []);
