@@ -24,6 +24,12 @@ export interface SupervisedProcess {
   /** Native workload result, not the supervisor's intentional SIGKILL exit. */
   readonly completion: Promise<number>;
   readonly stop: () => Promise<void>;
+  /**
+   * The workload's private report pipe at FD 5, present only when requested. FD 5 is not a
+   * standard stream, so it stays out of the workload's own output; `spawn` closes it for the
+   * workload's children, so untrusted descendants cannot write it.
+   */
+  readonly report?: Readable;
 }
 
 /** Start a sandbox-wide-cleanup supervisor; never execute its program on the host. */
@@ -34,22 +40,32 @@ export async function spawnSupervised(options: {
   readonly cwd: string;
   readonly env: NodeJS.ProcessEnv;
   readonly interactive: boolean;
+  /** Add a private report pipe at FD 5 for the workload, exposed as `report`. */
+  readonly report?: boolean;
 }): Promise<SupervisedProcess> {
   const executable = sandboxExecutablePath();
   const policyPath = await writeSeatbeltPolicy(options.policyDirectory, options.policy);
   const mode = options.interactive ? "inherit" : "pipe";
+  const stdio: Array<"inherit" | "pipe" | "ignore"> = [mode, mode, mode, "pipe"];
+  // FD 4 is the supervisor's saved stdin; the optional report pipe is FD 5.
+  if (options.report === true) stdio.push("ignore", "pipe");
   const child = spawn(
     executable,
     sandboxLaunchCommand(policyPath, "/bin/sh", ["-c", SUPERVISOR, "agent-evals", ...options.command]),
     {
       cwd: options.cwd,
       env: options.env,
-      stdio: [mode, mode, mode, "pipe"],
+      stdio,
     },
   );
   // stdio[3] is explicitly a pipe above; Node's general stdio type does not
   // distinguish its read direction from other possible descriptor kinds.
   const control = child.stdio[3] as Readable;
+  // Node's type fixes `stdio` at five entries; a longer array is still honoured at runtime.
+  const report =
+    options.report === true
+      ? ((child.stdio as unknown as Array<Readable | null | undefined>)[5] as Readable)
+      : undefined;
   let status = "";
   const controlEnded = new Promise<void>((resolve, reject) => {
     control.on("data", (chunk: Buffer) => {
@@ -114,7 +130,8 @@ export async function spawnSupervised(options: {
         child.stdout?.destroy();
         child.stderr?.destroy();
         control.destroy();
+        report?.destroy();
       }
     })());
-  return { child, completion, stop };
+  return { child, completion, stop, ...(report === undefined ? {} : { report }) };
 }

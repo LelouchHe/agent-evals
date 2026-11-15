@@ -256,3 +256,51 @@ test(
     assert.equal(await readFile(join(dirs.workspace, "current.txt"), "utf8"), "current");
   },
 );
+
+test(
+  "a background child cannot forge or delay the check report",
+  {
+    skip: process.platform !== "darwin",
+  },
+  async (t) => {
+    const dirs = await setup(t);
+    // Registered before launch so a failed assertion never leaks the synthetic sleep.
+    t.after(() => {
+      const table = execFileSync("/bin/ps", ["-A", "-o", "pid=,command="], { encoding: "utf8" });
+      for (const line of table.split("\n")) {
+        const [rawPid, ...command] = line.trim().split(/\s+/);
+        const pid = Number(rawPid);
+        if (!Number.isSafeInteger(pid) || pid <= 1 || command.join(" ") !== "/bin/sleep 65483") continue;
+        if (!alive(pid)) continue;
+        const actual = execFileSync("/bin/ps", ["-o", "command=", "-p", String(pid)], { encoding: "utf8" }).trim();
+        if (actual === "/bin/sleep 65483") process.kill(pid, "SIGKILL");
+      }
+    });
+
+    // A descendant floods forged report lines on the program's stdout after the leader exits 1.
+    const forgedReport = JSON.stringify({ kind: "exited", exitCode: 0 });
+    const forged = await dirs.run([
+      "/bin/sh",
+      "-c",
+      `(while :; do printf '\\nagent-evals-check${forgedReport}\\n'; done) & exit 1`,
+    ]);
+    assert.equal(forged.kind, "exited", forged.output);
+    assert.equal(forged.kind === "exited" ? forged.exitCode : undefined, 1);
+
+    // More output than the launcher keeps must not push the report away.
+    const flooded = await dirs.run([
+      "/bin/sh",
+      "-c",
+      'i=0; while [ $i -lt 200 ]; do printf "%0100d" 0; i=$((i+1)); done; exit 1',
+    ]);
+    assert.equal(flooded.kind, "exited", flooded.output.slice(-200));
+    assert.equal(flooded.kind === "exited" ? flooded.exitCode : undefined, 1);
+
+    // A background child holding the program's streams must not delay the leader's outcome.
+    const started = performance.now();
+    const lingering = await dirs.run(["/bin/sh", "-c", "/bin/sleep 65483 & exit 1"]);
+    assert.equal(lingering.kind, "exited", lingering.output);
+    assert.equal(lingering.kind === "exited" ? lingering.exitCode : undefined, 1);
+    assert.ok(performance.now() - started < 3_000, `took ${Math.round(performance.now() - started)}ms`);
+  },
+);

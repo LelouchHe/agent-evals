@@ -7,25 +7,24 @@ import { spawnSupervised, type SupervisedProcess } from "../platform/macos/super
 
 /** How much of a program's combined output a check may keep as its reason. */
 const MAX_OUTPUT_LENGTH = 4_096;
-/** Marks the wrapper's report line in the workload's stdout. */
-const REPORT_MARKER = "agent-evals-check";
 
 /**
  * The workload's parent. It starts the author's program with exactly `PATH`, `HOME` and
  * `TMPDIR`, and reports the exact wait status instead of letting a shell reduce it to `128+n`:
  * `close` gives `code` or `signal`, and a failed `spawn` reports the exec error before any child
- * runs. The report is the last line of the wrapper's stdout, after the program's own output.
+ * runs. The report goes to the host's private pipe at FD 5, never to the program's streams.
  */
 const RUNNER = String.raw`
 const { spawn } = require("node:child_process");
-const marker = process.argv[1];
-const program = process.argv[2];
-const args = process.argv.slice(3);
+const fs = require("node:fs");
+const program = process.argv[1];
+const args = process.argv.slice(2);
 let settled = false;
 function report(outcome) {
   if (settled) return;
   settled = true;
-  process.stdout.write("\n" + marker + JSON.stringify(outcome) + "\n");
+  // FD 5 is the host's private report pipe, closed for the workload's own children.
+  try { fs.writeSync(5, JSON.stringify(outcome) + "\n"); } catch {}
 }
 try {
   const child = spawn(program, args, {
@@ -89,10 +88,11 @@ async function runProgram(options: CheckSandboxOptions, command: readonly string
         allowNetwork: false,
       },
       policyDirectory: directory,
-      command: [process.execPath, "-e", RUNNER, REPORT_MARKER, program, ...args],
+      command: [process.execPath, "-e", RUNNER, program, ...args],
       cwd: options.workspaceDir,
       env: { PATH: path, HOME: homeDir, TMPDIR: tmpDir },
       interactive: false,
+      report: true,
     });
     return await supervise(supervised, options);
   } catch (error) {
@@ -112,11 +112,15 @@ async function runProgram(options: CheckSandboxOptions, command: readonly string
 async function supervise(supervised: SupervisedProcess, options: CheckSandboxOptions): Promise<CheckSandboxOutcome> {
   let stdout = "";
   let stderr = "";
+  let report = "";
   supervised.child.stdout?.on("data", (chunk: Buffer) => {
     stdout = keepTail(stdout, chunk);
   });
   supervised.child.stderr?.on("data", (chunk: Buffer) => {
     stderr = keepTail(stderr, chunk);
+  });
+  supervised.report?.on("data", (chunk: Buffer) => {
+    if (report.length <= MAX_OUTPUT_LENGTH) report += chunk.toString("utf8");
   });
   // The check program reads no standard input, so it does not wait for the engine.
   supervised.child.stdin?.end();
@@ -142,13 +146,13 @@ async function supervise(supervised: SupervisedProcess, options: CheckSandboxOpt
     if (status === undefined) {
       return { kind: "failed", reason: "the check sandbox ended without an outcome", output: tail(stdout + stderr) };
     }
-    // The completion record arrives on its own pipe before stdout is drained.
+    // Completion arrives on its own pipe before the output and report pipes are drained.
     await closed;
-    const report = readReport(stdout);
-    if (report === undefined) {
+    const outcome = readReport(report);
+    if (outcome === undefined) {
       return { kind: "failed", reason: "the check program did not report an outcome", output: tail(stdout + stderr) };
     }
-    return { ...report.outcome, output: tail(report.stdout + stderr) };
+    return { ...outcome, output: tail(stdout + stderr) };
   } finally {
     options.signal.removeEventListener("abort", onAbort);
   }
@@ -160,22 +164,17 @@ function abortReason(options: CheckSandboxOptions): string {
     : "the program did not finish before the check deadline";
 }
 
-/** Read the wrapper's report, which is the last marker line in stdout. */
-function readReport(stdout: string): { readonly outcome: ReportedOutcome; readonly stdout: string } | undefined {
-  const marker = `\n${REPORT_MARKER}`;
-  const index = stdout.lastIndexOf(marker);
-  if (index < 0) return undefined;
-  const rest = stdout.slice(index + marker.length);
-  const newline = rest.indexOf("\n");
-  if (newline < 0) return undefined;
+/** Read the wrapper's one report line; anything else means the report is missing or corrupt. */
+function readReport(report: string): ReportedOutcome | undefined {
+  const lines = report.split("\n").filter((line) => line.length > 0);
+  if (lines.length !== 1) return undefined;
   let value: unknown;
   try {
-    value = JSON.parse(rest.slice(0, newline));
+    value = JSON.parse(lines[0] as string);
   } catch {
     return undefined;
   }
-  const outcome = reportedOutcome(value);
-  return outcome === undefined ? undefined : { outcome, stdout: stdout.slice(0, index) };
+  return reportedOutcome(value);
 }
 
 function reportedOutcome(value: unknown): ReportedOutcome | undefined {
