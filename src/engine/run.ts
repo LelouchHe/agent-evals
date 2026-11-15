@@ -30,7 +30,7 @@ import {
 } from "./results.ts";
 import { createEnvSource, type EnvSource } from "./env-source.ts";
 import { placeCaseFiles } from "./files.ts";
-import { startMockHost, type MockHost } from "./mocks.ts";
+import { prepareMockShell, type MockHost } from "./mocks.ts";
 import { parseImplementationParams } from "./params.ts";
 import { truncate, truncateNullable } from "./truncate.ts";
 import { substituteValues, type ValueSource } from "./values.ts";
@@ -127,22 +127,18 @@ export async function runEvaluation(request: RunRequest): Promise<EvaluationReco
     await placeCaseFiles(request.case, join(root, "files"), workspaceDir);
     const workspaceRoot = await openRunRoot(workspaceDir);
 
-    // The host writes the forwarders (workspace ones must precede the baseline) and answers
-    // calls before the runner starts, staying up past its stop.
+    // Forwarders are written before the baseline snapshot; the listeners open only after it,
+    // so no step that can fail has a socket open yet.
     const mocks = request.case.config.mocks;
-    if (mocks !== undefined) {
-      mockHost = await startMockHost({
-        runRootDir: root,
-        workspaceDir: workspaceRoot.path,
-        scratchDir,
-        authoringDir: request.case.dir,
-        shell: mocks.shell,
-        timeoutMs,
-        signal: abort.signal,
-      });
-    }
+    const mockShell =
+      mocks === undefined
+        ? undefined
+        : await prepareMockShell({ runRootDir: root, workspaceDir: workspaceRoot.path, shell: mocks.shell });
     await cp(workspaceDir, baselineDir, { recursive: true, preserveTimestamps: true });
     const baselineRoot = await openRunRoot(baselineDir);
+    if (mockShell !== undefined) {
+      mockHost = await mockShell.listen({ authoringDir: request.case.dir, timeoutMs, signal: abort.signal });
+    }
 
     runner = registered.runner;
     const started = performance.now();
@@ -260,6 +256,14 @@ export async function runEvaluation(request: RunRequest): Promise<EvaluationReco
       clearTimeout(timer);
     }
     request.signal?.removeEventListener("abort", onAbort);
+    // A backstop for any failure before the runner's own teardown; close is idempotent.
+    if (mockHost !== undefined) {
+      try {
+        await mockHost.close();
+      } catch (caught) {
+        diagnostics.push(`failed to close mock host: ${errorMessage(caught)}`);
+      }
+    }
     try {
       await rm(root, { recursive: true, force: true, maxRetries: 3 });
     } catch (caught) {

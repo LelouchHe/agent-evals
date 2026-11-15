@@ -9,40 +9,44 @@ This page explains how the implemented modules cooperate. [Configuration](config
 Responsibility and wiring, not execution order ([One Run in Order](#one-run-in-order) covers that):
 
 ```text
-                        agent-evals CLI  (agent-evals / npm run eval)
-           view /            |  run                \  config, login
-               v             v                      v
-   +------------------+  +---------------------+  +---------------------------+
-   | case resolver    |  | engine              |  | ACP preparation helpers   |
-   | YAML + selection |  | validate, prepare,  |  | agent schema, HOME/login  |
-   | field origins    |  | run, stop, check,   |  | assembly, queries         |
-   +--------+---------+  | record, clean up    |  +-------------+-------------+
-            |            +--+--------+--------++                |
-            v               |        |        |                 | shares the ACP
-   +------------------+     |        |        |                 | environment code
-   | resolved display |     |        |        |                 |
-   | no runtime       |     |        |        |                 |
-   +------------------+     |        |        |                 |
-                            v        v        v                 |
-               +------------+ +---------+ +-----------+         |
-               | runner     | | mock    | | checkers  |         |
-               | harness    | | host    | | file: RE2 |         |
-               +-----+------+ | rules,  | | judge: Pi |         |
-                     |        | actions,| +-----+-----+         |
-                     |        | records |       |               |
-       +-------------+--+     +----+----+       +--> separate, tool-free Pi run;
-       v                v          |                 never the evaluated session
-   native Pi          ACP         |
-   JSONL RPC +        generic     |
-   supervisor         harness     |
-       |                |          |
-       +--------+-------+          |
-                v                  v
-       harness under           authors' run programs and
-       Seatbelt, forwarder     the call records, on the host
-       dir first on PATH
+                        agent-evals CLI
+          view /            |  run                \  config, login
+              v             v                      v
+      +----------------------------------+   +---------------------------+
+      | case resolver                    |   | ACP preparation helpers   |
+      | YAML, selection, field origins   |   | agent schema, HOME/login  |
+      +-----------+------------------+---+   | assembly, queries         |
+                  | view             | run   +-------------+-------------+
+                  v                  v                   |
+      +------------------+  +---------------------+      | shares the ACP
+      | resolved display |  | engine              |      | environment code
+      | no runtime       |  | validate, prepare,  |      |
+      +------------------+  | run, stop, check,   |      |
+                            | record, clean up    |      |
+                            +--+------+------+----+      |
+                               |      |      |           |
+                               v      v      v           |
+                  +------------+ +--------+ +-----------+|
+                  | runner     | | mock   | | checkers  ||
+                  | harness    | | host   | | file: RE2 ||
+                  +-----+------+ | rules, | | judge: Pi ||
+                        |        | actions| +-----+-----+|
+                        |        | records|       |      |
+      +-----------------+-+      +--------+       +--> separate, tool-free
+      v                   v                             Pi run; never the
+  native Pi             ACP                             evaluated session
+  JSONL RPC +           harness; mocks
+  supervisor            supported
+  no mocks:             (forwarder dir
+  rejects them          first on PATH)
+      |                   |
+      +---------+---------+
+                v
+        harness under Seatbelt
+        (native: policy in run/scratch/;
+         ACP: policy in run/config/)
 
-   retained per run: result.json, trace.json (ACP), mocks.json   (run root removed)
+  authors' run programs and the call records stay on the host, outside the sandbox
 ```
 
 - **CLI** parses commands and flags, registers built-ins, loads trusted extension directories and maps outcomes to exit codes. `view` stops at the resolver and prints the resolved declaration; it starts no runtime. `run` hands the resolved case to the engine. `config` and `login` take a standalone agent file and use the ACP preparation helpers instead.
@@ -78,7 +82,7 @@ Built-ins and trusted extensions share this path. Dynamic modules cross a locali
 A run follows the test lifecycle in [Writing Cases](cases.md#the-test-model): set up the environment, act, collect observations, assert, tear down. Teardown runs even after failure. Today the runner stops its processes and the engine removes the single runtime root; the engine also starts and stops the mock host that answers declared collaborator substitutes.
 
 1. **Load.** Resolve one case and preserve its declaration. Choose the run root's path without creating it. Select definitions; substitute placeholders from the invocation `.env` and the chosen run directories, validate schemas, create instances and validate the fixture. The engine never interprets provider/key names. [Configuration](configuration.md#placeholders) owns placeholder semantics.
-2. **Set up.** Create the chosen root exclusively; an existing path is an error. The engine copies the fixture into `workspace` or starts empty, places each `files` entry on top, captures an initial `baseline`, and prepares independent `home`, `config` and `scratch`; source fixtures remain unchanged. The runner assembles its harness configuration, for Pi by staging selected skills with discovery disabled. For a case declaring [`mocks`](mocks.md), the engine writes the forwarders and starts the host service that answers them. The platform module builds the Seatbelt policy; a runner that wires mocks adds the forwarder directory as a readable, non-writable root and first on `PATH`.
+2. **Set up.** Create the chosen root exclusively; an existing path is an error. The engine copies the fixture into `workspace` or starts empty, places each `files` entry on top, and prepares independent `home`, `config` and `scratch`; source fixtures remain unchanged. For a case declaring [`mocks`](mocks.md), the engine then writes the forwarders, workspace scripts included, and only afterwards captures the initial `baseline` snapshot, so a replaced script compares forwarder with forwarder; the host service opens its sockets after that. The runner assembles its harness configuration, for Pi by staging selected skills with discovery disabled. The platform module builds the Seatbelt policy; a runner that wires mocks adds the forwarder directory as a readable, non-writable root and first on `PATH`.
 3. **Act.** The runner receives the input, directories, deadline, cancellation signal and optional mock wiring, and drives the harness. Pi runs its isolated RPC session under Seatbelt, with autonomous tool calls after one initial message.
 4. **Collect.** Await supported runner teardown before checks; the runner returns its final text. The mock host closes only after that teardown, so a call from a process that outlived the turn is still answered and recorded. Timeouts, cancellation and execution failures are not negative judgments. See [M1 limits](m1-plan.md#known-limitations).
 5. **Assert.** Checkers inspect the still-live workspace/baseline. File patterns and mock argument patterns share the linear-time RE2 engine; the judge reads selected evidence and starts a separate tool-free Pi invocation.
@@ -100,11 +104,16 @@ PREPARED BY THE HOST, BEFORE THE SANDBOX STARTS
   scripts    --replace------>  run/workspace/...  forwarder at the target path;
                                                   the real script moves out, or
                                                   to .name when a pass rule exists
+  workspace/ --snapshot----->  run/baseline/      taken AFTER forwarders/scripts
+  case, checks, rubric, .env   stay in the host process, never in the run root
+
+  ACP runner only:
   deps/      --link--------->  run/home/          software entries, read-only
   login/     --copy--------->  run/home/          credential files, private copies
-  workspace/ --snapshot----->  run/baseline/      taken AFTER forwarders/scripts
   engine     --write-------->  run/config/        Seatbelt policy, unreadable
-  case, checks, rubric, .env   stay in the host process, never in the run root
+
+  native Pi runner: no deps/login assembly and no mocks; its policy is written
+  into run/scratch/ and run/config/ holds its isolated settings (writable).
 
 INSIDE THE SANDBOX (evaluated agent)     |  OUTSIDE THE SANDBOX (host)
                                          |
@@ -115,7 +124,8 @@ INSIDE THE SANDBOX (evaluated agent)     |  OUTSIDE THE SANDBOX (host)
   forwarder dir    readable, not writable|  platform: policy and sandbox launch
     one script per PATH target           |  checkers: file/RE2 evidence reads;
   run/baseline/    not readable          |    judge in its own Pi process
-  run/config/      not readable          |
+  run/config/      ACP: not readable;   |
+                   native: Pi settings   |
                                          |
   forwarders --Unix socket only--------->|  mock host answers and records
 

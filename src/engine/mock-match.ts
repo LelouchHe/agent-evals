@@ -1,5 +1,12 @@
 import type { RE2JS } from "re2js";
-import type { MockAction, MockArgument, MockPattern, MockRule, ShellMocks } from "./config.ts";
+import {
+  workspaceTargetPath,
+  type MockAction,
+  type MockArgument,
+  type MockPattern,
+  type MockRule,
+  type ShellMocks,
+} from "./config.ts";
 import { compilePattern } from "./regex.ts";
 
 interface CompiledPattern {
@@ -21,9 +28,31 @@ interface CompiledRule {
 /** One target's compiled ordered rules. */
 export type CompiledRules = readonly CompiledRule[];
 
+/** One workspace target: the declared spelling and its compiled rules. */
+export interface CompiledWorkspaceTarget {
+  readonly target: string;
+  readonly rules: CompiledRules;
+}
+
+/** Compiled rules split by where the target lives; a bare name and `./name` differ. */
+export interface CompiledShellMocks {
+  readonly path: ReadonlyMap<string, CompiledRules>;
+  readonly workspace: ReadonlyMap<string, CompiledWorkspaceTarget>;
+}
+
 /** Compile every pattern once, when the host starts. Invalid patterns already failed at load. */
-export function compileShellMocks(shell: ShellMocks): ReadonlyMap<string, CompiledRules> {
-  return new Map(Object.entries(shell).map(([target, rules]) => [target, rules.map(compileRule)]));
+export function compileShellMocks(shell: ShellMocks): CompiledShellMocks {
+  const path = new Map<string, CompiledRules>();
+  const workspace = new Map<string, CompiledWorkspaceTarget>();
+  for (const [target, rules] of Object.entries(shell)) {
+    const compiled = rules.map(compileRule);
+    if (target.includes("/")) {
+      workspace.set(workspaceTargetPath(target), { target, rules: compiled });
+    } else {
+      path.set(target, compiled);
+    }
+  }
+  return { path, workspace };
 }
 
 function compileRule(rule: MockRule): CompiledRule {
@@ -89,14 +118,19 @@ function optionMatches(option: CompiledArgument, tokens: readonly string[]): boo
   if (option.kind === "value") {
     const { key, value } = option;
     return tokens.some((token, index) => {
-      if (tokenMatches(key, token)) {
-        const next = tokens[index + 1];
-        return next !== undefined && tokenMatches(value, next);
-      }
+      // Both promised spellings: `--name=value` first, then `--name value`. A regex name may
+      // match the whole `--name=value` token, so splitting cannot depend on that check.
       const separator = token.indexOf("=");
-      return (
-        separator > 0 && tokenMatches(key, token.slice(0, separator)) && tokenMatches(value, token.slice(separator + 1))
-      );
+      if (
+        separator > 0 &&
+        tokenMatches(key, token.slice(0, separator)) &&
+        tokenMatches(value, token.slice(separator + 1))
+      ) {
+        return true;
+      }
+      if (!tokenMatches(key, token)) return false;
+      const next = tokens[index + 1];
+      return next !== undefined && tokenMatches(value, next);
     });
   }
   if (option.kind === "required") {

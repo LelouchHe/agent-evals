@@ -11,7 +11,7 @@ import { z } from "zod";
 import { fileChecker } from "../src/checkers/file/checker.ts";
 import { loadCase } from "../src/engine/authoring.ts";
 import { ConfigError, type ShellMock } from "../src/engine/config.ts";
-import { startMockHost, type MockHostOptions } from "../src/engine/mocks.ts";
+import { startMockHost, type MockListenOptions, type MockShellOptions } from "../src/engine/mocks.ts";
 import { addChecker, addRunner, createRegistry } from "../src/engine/registry.ts";
 import { runEvaluation } from "../src/engine/run.ts";
 import { acpRunner } from "../src/runners/acp/runner.ts";
@@ -451,15 +451,12 @@ function fixed(result: { exitCode?: number; stdout?: string; stderr?: string }):
 }
 
 /** Host options shared by tests that only need forwarders and records. */
-async function hostOptions(runRootDir: string): Promise<Omit<MockHostOptions, "shell">> {
+async function hostOptions(runRootDir: string): Promise<Omit<MockShellOptions & MockListenOptions, "shell">> {
   const workspaceDir = join(runRootDir, "workspace");
-  const scratchDir = join(runRootDir, "scratch");
   await mkdir(workspaceDir, { recursive: true });
-  await mkdir(scratchDir, { recursive: true });
   return {
     runRootDir,
     workspaceDir,
-    scratchDir,
     authoringDir: runRootDir,
     timeoutMs: 5_000,
     signal: new AbortController().signal,

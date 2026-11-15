@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { mkdir, readFile, realpath, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, realpath, rm, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { Readable } from "node:stream";
 import { test } from "node:test";
@@ -9,7 +9,7 @@ import { z } from "zod";
 import { fileChecker } from "../src/checkers/file/checker.ts";
 import { loadCase } from "../src/engine/authoring.ts";
 import type { MockArgument, MockResult, MockRule, ShellMocks } from "../src/engine/config.ts";
-import { startMockHost, type MockHost, type MockHostOptions } from "../src/engine/mocks.ts";
+import { prepareMockShell, startMockHost, type MockHost, type MockListenOptions } from "../src/engine/mocks.ts";
 import { addChecker, addRunner, createRegistry } from "../src/engine/registry.ts";
 import { runEvaluation } from "../src/engine/run.ts";
 import { makeTempDir } from "./helpers/fake-pi-control.ts";
@@ -26,17 +26,14 @@ interface Call {
 async function host(
   t: Parameters<typeof makeTempDir>[0],
   shell: ShellMocks,
-  extra: Partial<MockHostOptions> = {},
+  extra: Partial<MockListenOptions> = {},
 ): Promise<{ host: MockHost; root: string }> {
   const root = await makeTempDir(t, "ae-mock-actions-");
   const workspaceDir = join(root, "workspace");
-  const scratchDir = join(root, "scratch");
   await mkdir(workspaceDir);
-  await mkdir(scratchDir);
   const started = await startMockHost({
     runRootDir: root,
     workspaceDir,
-    scratchDir,
     authoringDir: root,
     timeoutMs: 5_000,
     signal: new AbortController().signal,
@@ -94,6 +91,24 @@ function patternOf(source: string): { source: string; regex: boolean } {
   return source.length >= 2 && source.startsWith("/") && source.endsWith("/")
     ? { source: source.slice(1, -1), regex: true }
     : { source, regex: false };
+}
+
+/** Run a forwarder and keep its streams as bytes. */
+async function callRaw(
+  path: string,
+  args: readonly string[] = [],
+): Promise<{ status: number | null; stdout: Buffer; stderr: Buffer }> {
+  const child = spawn(path, args, { stdio: ["ignore", "pipe", "pipe"] });
+  const exited = new Promise<number | null>((resolve, reject) => {
+    child.once("close", resolve);
+    child.once("error", reject);
+  });
+  const stdout: Buffer[] = [];
+  const stderr: Buffer[] = [];
+  child.stdout?.on("data", (chunk: Buffer) => stdout.push(chunk));
+  child.stderr?.on("data", (chunk: Buffer) => stderr.push(chunk));
+  await exited;
+  return { status: await exited, stdout: Buffer.concat(stdout), stderr: Buffer.concat(stderr) };
 }
 
 async function call(path: string, args: readonly string[] = []): Promise<Call> {
@@ -159,12 +174,58 @@ test("an option value matches the next token or the part after =", async (t) => 
     npm: returns(result(0, "published\n"), {
       options: [{ key: "--registry", kind: "value", value: "https://r.example" }],
     }),
+    // A regex name matches the whole `--name=value` token too, so both spellings must work.
+    repo: returns(result(0, "targeted\n"), {
+      options: [{ key: "/--repo.*/", kind: "value", value: "foo" }],
+    }),
   });
   const npm = join(server.wiring.forwarderDir, "npm");
   assert.equal((await call(npm, ["--registry", "https://r.example"])).stdout, "published\n");
   assert.equal((await call(npm, ["--registry=https://r.example"])).stdout, "published\n");
   assert.equal((await call(npm, ["--registry", "https://other.example"])).status, 126);
+  const repo = join(server.wiring.forwarderDir, "repo");
+  assert.equal((await call(repo, ["--repo", "foo"])).stdout, "targeted\n");
+  assert.equal((await call(repo, ["--repo=foo"])).stdout, "targeted\n");
+  assert.equal((await call(repo, ["--repo", "bar"])).status, 126);
+  assert.equal((await call(repo, ["--repo=bar"])).status, 126);
   await server.close();
+});
+
+test("workspace-root scripts keep their ./ spelling and never become PATH targets", async (t) => {
+  const { host: server, root } = await host(t, {
+    "job.sh": returns(result(0, "from path\n")),
+    "./job.sh": returns(result(0, "from workspace root\n")),
+    "scripts/./deploy.sh": returns(result(0, "from nested alias\n")),
+  });
+  const workspace = join(root, "workspace");
+  const rootScript = await call(join(workspace, "job.sh"));
+  assert.deepEqual(rootScript, { status: 0, stdout: "from workspace root\n", stderr: "" });
+  const pathCommand = await call(join(server.wiring.forwarderDir, "job.sh"));
+  assert.deepEqual(pathCommand, { status: 0, stdout: "from path\n", stderr: "" });
+
+  const nested = await call(join(workspace, "scripts", "deploy.sh"));
+  assert.deepEqual(nested, { status: 0, stdout: "from nested alias\n", stderr: "" });
+
+  const { records } = await server.close();
+  assert.deepEqual(
+    records.map((record) => record.target),
+    ["./job.sh", "job.sh", "scripts/./deploy.sh"],
+  );
+});
+
+test("two spellings of one workspace file are rejected at load time", async (t) => {
+  const directory = await makeTempDir(t, "ae-mock-alias-");
+  const casePath = join(directory, "case.yml");
+  await writeFile(
+    casePath,
+    stringify({
+      input: INPUT,
+      mocks: { shell: { "./scripts/x.sh": { return: {} }, "scripts/./x.sh": { return: {} } } },
+      runner: { $type: "pi" },
+      checks: [{ $type: "file" }],
+    }),
+  );
+  await assert.rejects(() => loadCase(casePath), /as the same target/);
 });
 
 test("a positional prefix ignores later arguments and compares numbers as text", async (t) => {
@@ -243,6 +304,44 @@ test("a run program that cannot start, is killed or overruns is a fault, not a r
   assert.match(faults[1] as string, /exceeded 300ms/);
 });
 
+test("a run program that exits normally leaves no descendant behind", async (t) => {
+  const authoring = await makeTempDir(t, "ae-mock-orphan-");
+  await writeFile(
+    join(authoring, "spawn.mjs"),
+    `import { spawn } from "node:child_process";
+import { writeFileSync } from "node:fs";
+const child = spawn("/bin/sh", ["-c", "sleep 30"], { stdio: "ignore" });
+child.unref();
+writeFileSync("child.pid", String(child.pid));
+process.stdout.write("returned\\n");`,
+  );
+  const { host: server } = await host(
+    t,
+    { quick: [rule(undefined, { kind: "run", command: [process.execPath, "spawn.mjs"], pass: false })] },
+    { authoringDir: authoring },
+  );
+  // Failure-safe: kill whatever the program left, even if an assertion below fails.
+  const orphan: { pid?: number } = {};
+  t.after(async () => {
+    try {
+      const recorded = orphan.pid ?? Number(await readFile(join(authoring, "child.pid"), "utf8"));
+      process.kill(-recorded, "SIGKILL");
+    } catch {
+      // Already gone, as expected.
+    }
+  });
+
+  assert.deepEqual(await call(join(server.wiring.forwarderDir, "quick")), {
+    status: 0,
+    stdout: "returned\n",
+    stderr: "",
+  });
+  await server.close();
+  orphan.pid = Number(await readFile(join(authoring, "child.pid"), "utf8"));
+  assert.ok(Number.isInteger(orphan.pid) && orphan.pid > 0, "the program reported its child");
+  assert.throws(() => process.kill(orphan.pid as number, 0), /ESRCH/);
+});
+
 test("a run program's descendants are killed when it overruns", async (t) => {
   const authoring = await makeTempDir(t, "ae-mock-descendants-");
   await writeFile(
@@ -280,6 +379,39 @@ test("pass inherits standard input through the forwarder", async (t) => {
   assert.deepEqual((await server.close()).records, [{ target: "cat", arguments: [] }]);
 });
 
+test("run stdout and stderr are returned as opaque bytes", async (t) => {
+  const authoring = await makeTempDir(t, "ae-mock-bytes-");
+  await writeFile(
+    join(authoring, "bytes.mjs"),
+    `process.stdout.write(Buffer.from([0xff, 0x00, 0xc3, 0x28]));
+process.stderr.write(Buffer.from([0xfe, 0x80]));`,
+  );
+  await writeFile(
+    join(authoring, "embedded.mjs"),
+    `process.stdout.write(Buffer.from("note: agent-evals:pass is a word here\\n"));`,
+  );
+  const { host: server } = await host(
+    t,
+    {
+      raw: [rule(undefined, { kind: "run", command: [process.execPath, "bytes.mjs"], pass: false })],
+      embedded: [rule(undefined, { kind: "run", command: [process.execPath, "embedded.mjs"], pass: false })],
+    },
+    { authoringDir: authoring },
+  );
+  const raw = await callRaw(join(server.wiring.forwarderDir, "raw"));
+  assert.equal(raw.status, 0);
+  assert.deepEqual(raw.stdout, Buffer.from([0xff, 0x00, 0xc3, 0x28]));
+  assert.deepEqual(raw.stderr, Buffer.from([0xfe, 0x80]));
+
+  // A marker inside other output is data, not the complete control value.
+  const embedded = await callRaw(join(server.wiring.forwarderDir, "embedded"));
+  assert.equal(embedded.status, 0);
+  assert.deepEqual(embedded.stdout, Buffer.from("note: agent-evals:pass is a word here\n"));
+
+  const { faults } = await server.close();
+  assert.deepEqual(faults, []);
+});
+
 test("run can pass only through the marker and only when the rule allows it", async (t) => {
   const authoring = await makeTempDir(t, "ae-mock-marker-");
   await writeFile(join(authoring, "pass.mjs"), `process.stdout.write("agent-evals:pass\\n");`);
@@ -310,6 +442,34 @@ test("run can pass only through the marker and only when the rule allows it", as
   assert.match(faults[1] as string, /printed the pass marker but the rule has no pass/);
 });
 
+test("forwarders are written before any listener opens, and close is idempotent", async (t) => {
+  const root = await makeTempDir(t, "ae-mock-phase-");
+  const workspaceDir = join(root, "workspace");
+  await mkdir(workspaceDir);
+  const preparation = await prepareMockShell({
+    runRootDir: root,
+    workspaceDir: await realpath(workspaceDir),
+    shell: { deploy: returns(result(0, "ok\n")), "./job.sh": returns(result(0, "root\n")) },
+  });
+  assert.deepEqual(await readdir(join(root, "bin")), ["deploy"]);
+  assert.deepEqual(await readdir(workspaceDir), ["job.sh"]);
+  // Preparing leaves no socket behind, so a preparation failure cannot leak a listener.
+  assert.equal(await stat(preparation.wiring.socketPath).catch(() => undefined), undefined);
+
+  const host = await preparation.listen({
+    authoringDir: root,
+    timeoutMs: 5_000,
+    signal: new AbortController().signal,
+  });
+  assert.ok((await stat(preparation.wiring.socketPath)).isSocket());
+  assert.equal((await call(join(root, "bin", "deploy"))).stdout, "ok\n");
+
+  const first = await host.close();
+  const second = await host.close();
+  assert.deepEqual(second, first);
+  assert.equal(await stat(preparation.wiring.socketPath).catch(() => undefined), undefined);
+});
+
 test("a forwarder that cannot reach the host is a reported fault", async (t) => {
   const { host: server, root } = await host(t, { deploy: returns(result(0, "ok\n")) });
   // Remove the socket so the forwarder's connection fails, as it would if the host died.
@@ -331,7 +491,6 @@ test("workspace scripts run through their forwarder and keep the real one out of
   const started = await startMockHost({
     runRootDir: root,
     workspaceDir: await realpath(workspaceDir),
-    scratchDir: root,
     authoringDir: root,
     timeoutMs: 5_000,
     signal: new AbortController().signal,
@@ -370,7 +529,6 @@ test("a workspace script target rejects a pass without a real script and a name 
       startMockHost({
         runRootDir: root,
         workspaceDir: await realpath(workspaceDir),
-        scratchDir: root,
         authoringDir: root,
         timeoutMs: 5_000,
         signal: new AbortController().signal,
@@ -390,6 +548,57 @@ test("a workspace script target rejects a pass without a real script and a name 
     () => collision({ "scripts/deploy.sh": [{ action: { kind: "pass" } }] }),
     /already has \.deploy\.sh beside it/,
   );
+});
+
+test("a transport fault survives the agent clearing everything it can write", async (t) => {
+  const registry = createRegistry();
+  addRunner(
+    registry,
+    {
+      type: "erasing-runner",
+      params: z.strictObject({}),
+      mocks: true,
+      create: () => ({
+        run: async (context) => {
+          const wiring = context.mocks;
+          assert.ok(wiring !== undefined);
+          // Host-side loss of the call socket, then the agent wipes its writable scratch.
+          await rm(wiring.socketPath, { force: true });
+          const child = spawn(join(wiring.forwarderDir, "deploy"), [], { stdio: "ignore" });
+          const status = await new Promise((resolve) => child.on("close", resolve));
+          assert.equal(status, 126);
+          await rm(context.scratchDir, { recursive: true, force: true });
+          await mkdir(context.scratchDir);
+          return { finalText: null, diagnostics: [] };
+        },
+        stop: async () => {},
+      }),
+    },
+    "test",
+  );
+  addChecker(registry, fileChecker, "built-in");
+
+  const directory = await makeTempDir(t, "ae-mock-transport-");
+  const casePath = join(directory, "case.yml");
+  await writeFile(
+    casePath,
+    stringify({
+      input: INPUT,
+      mocks: { shell: { deploy: { return: { stdout: "ok\n" } } } },
+      runner: { $type: "erasing-runner" },
+      checks: [{ $type: "file", path: "absent.txt", exists: false }],
+    }),
+  );
+  const resultsDir = await makeTempDir(t, "ae-mock-transport-results-");
+  const record = await runEvaluation({
+    case: await loadCase(casePath),
+    registry,
+    resultsDir,
+    tempParent: await makeTempDir(t, "ae-mock-transport-runs-"),
+  });
+  assert.equal(record.status, "error");
+  assert.match(record.error ?? "", /could not reach the mock host/);
+  assert.deepEqual(JSON.parse(await readFile(join(resultsDir, record.runId, "mocks.json"), "utf8")), []);
 });
 
 test("a mock fault ends the run as an error while keeping its records", async (t) => {

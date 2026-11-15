@@ -2,7 +2,7 @@
 self=$0
 bindir=__BINDIR__
 socket=__SOCKET__
-fault=__FAULT__
+fault=__FAULTSOCK__
 encode() {
   printf '%s' "$1" | /usr/bin/base64 | /usr/bin/tr -d '\n'
   printf '\n'
@@ -18,9 +18,10 @@ reply=$(
       encode "$argument"
     done
   } | /usr/bin/nc -U "$socket"
+  # Report the lost call on the second, host-side socket: the evaluated side cannot erase it.
 ) || {
   printf '%s: Service unavailable\n' "${self##*/}" >&2
-  printf '%s\n' "${self##*/}" >>"$fault" 2>/dev/null
+  encode "$self" | /usr/bin/nc -U "$fault" >/dev/null 2>&1
   exit 126
 }
 IFS=' ' read -r kind code out err <<EOF

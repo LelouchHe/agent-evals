@@ -8,10 +8,10 @@ Implemented: shell collaborators — bare `PATH` commands and workspace scripts 
 
 For each declared target the engine writes a thin forwarder into the run. A bare command name gets a forwarder in a per-run directory that the runner puts first on `PATH`; a workspace-relative path gets a forwarder at that path. The forwarder reports the call over a per-run socket and prints the reply, which may itself be a decision to run the real command inside the sandbox.
 
-- The forwarder is the only mock code inside the sandbox. Matching, actions, real programs and call records stay on the host.
-- Calls are intercepted at command lookup, so a call from a script is caught too, because children inherit `PATH`. Undeclared commands resolve as usual and are not recorded.
-- Commands run by path instead of through `PATH` (for example `/usr/bin/make`) are not intercepted; for a mocked `PATH` target without any `pass` rule the real binary is _denied_ in the sandbox, so the bypass fails instead of running.
-- Shell builtins, harness-internal tools and a script executed by path are outside this boundary.
+- The forwarder is the only mock code inside the sandbox. Matching, actions, call records and the author's `run` programs stay on the host; a `pass` runs the real command in the sandbox.
+- A call is intercepted at command lookup, or at a declared workspace path, so a call from a script is caught too, because children inherit `PATH` and the declared path is the forwarder. Undeclared commands resolve as usual and are not recorded.
+- Paths nobody declared are not intercepted, for example `/usr/bin/make` or a script outside the workspace. For a mocked `PATH` target without any `pass` rule the real binary is _denied_ in the sandbox, so that bypass fails instead of running.
+- Shell builtins, harness-internal tools and undeclared paths are outside this boundary; a declared workspace script is covered at exactly its declared path.
 - Nothing hides the substitution: `which` and reading the forwarder reveal it, never the declared rules, results or records. Any process in the sandbox can cause a record by calling a mocked command, or by writing to the forwarder's socket directly; it cannot read, change or remove one.
 
 ## Mocks, Checks and the Trace
@@ -36,11 +36,9 @@ Mocks are prepared with the other run state and answered while the harness runs;
               |-- fixture, then files         -> workspace/
               |-- workspace-script forwarders -> at their target path;
               |                                  real scripts moved out
-              |-- PATH forwarders, socket,    -> outside the workspace
-              |   fault marker
-              |-- host service listening      -> outside the sandbox
-              |-- baseline snapshot           -> after the forwarders,
-              |                                  before the harness
+              |-- PATH forwarders and script  -> outside the workspace
+              |-- baseline snapshot           -> after the forwarders
+              |-- host sockets opened         -> outside the sandbox
               `-- runner starts the harness   -> forwarder dir first on PATH
 
  3. act       the harness works; every mocked call is answered and recorded
@@ -53,7 +51,8 @@ Mocks are prepared with the other run state and answered while the harness runs;
  5. assert    checks read workspace/ and baseline/ (no call checker yet: M4)
 
  6. teardown  the run root is removed
-              `-- retained: result.json, trace.json, mocks.json
+              `-- retained: result.json, plus trace.json when the runner
+                  records one and mocks.json when the case declares mocks
 ```
 
 ## One Mocked Call
@@ -103,9 +102,9 @@ Mocks are prepared with the other run state and answered while the harness runs;
             status are the real command's own
 ```
 
-The two regions are the trust boundary. Inside the sandbox there is only a forwarder — a readable `sh` script — plus, for a `pass`, the real command it starts; rules, actions, author programs and records stay on the host. `which` and `cat` reveal the forwarder, never the rules or the records.
+The two regions are the trust boundary. Inside the sandbox there is only a forwarder — a readable `sh` script — plus, for a `pass`, the real command it starts; rules, actions, call records and the author's `run` programs stay on the host. `which` and `cat` reveal the forwarder, never the rules or the records.
 
-The host records the call **before** it chooses a rule, so evidence does not depend on which action ran or whether one matched. A `return` or `run` reply is data for the caller; a `run` program is trusted author code on the host, started without a shell with the call's arguments appended, never agent code and never executed in the sandbox. A `pass` reply is a decision: the real command runs only in the sandbox, from the forwarder, so its stdin, output, signals and exit status stay its own and the host never runs it. An unmatched call is refused with `126` and still recorded; a mock fault (transport failure, a program that cannot start, dies or overruns, or the reserved marker where no `pass` allows it) looks the same to the caller but also ends the run as `error`, so checks never judge an unreliable record. `mocks.json` holds these calls — target and arguments, in arrival order — as evidence: no output, exit status or judgment.
+The host records the call **before** it chooses a rule, so evidence does not depend on which action ran or whether one matched. A `return` or `run` reply is data for the caller; a `run` program is trusted author code on the host, started without a shell with the call's arguments appended, never agent code and never executed in the sandbox. A `pass` reply is a decision: the real command runs only in the sandbox, from the forwarder, so its stdin, output, signals and exit status stay its own and the host never runs it. An unmatched call is refused with `126` and still recorded; that refusal is a normal decision, not a fault. A mock fault looks the same to the caller but is different in the record: transport failure (the forwarder prints `Service unavailable` and reports it on a second, host-side socket), and a `run` program that cannot start, dies or overruns, or prints the reserved marker where the rule does not allow it. Any fault ends the run as `error`: checks may still run and their results are retained, but they cannot make the run pass. `mocks.json` is written whenever the case declares mocks, so a faulting run still shows the calls that did arrive, possibly none. `mocks.json` holds these calls — target and arguments, in arrival order — as evidence: no output, exit status or judgment.
 
 ## Targets
 
@@ -134,7 +133,7 @@ A rule declares exactly one of three actions. Every call is recorded before its 
 | `run`    | An author-supplied host program, started without a shell in the case file's directory with the call's arguments appended and empty standard input, returning its stdout, stderr and exit status unchanged. Its arguments are agent-controlled, so it treats them as untrusted.                          |
 | `pass`   | The real command runs inside the sandbox: the forwarder finds the next executable of that name on `PATH`, skipping its own entry, and `exec`s it; a workspace script `exec`s its dot-named sibling. Standard input, output, signals and the exit status are the real program's. The host never runs it. |
 
-`run` can decide between a result and a pass by setting `pass: true` beside it. When the program exits `0` and its whole stdout is the single line `agent-evals:pass`, the call passes, nothing of the program's output reaches the agent and the real command runs in the sandbox; any other output is returned as the result. The marker is reserved: the same output from a rule without `pass`, with a nonzero exit or with anything else on stdout is a mock fault, so it can never reach the agent and a missing `pass` is noticed. A crashed program cannot print it by accident.
+`run` can decide between a result and a pass by setting `pass: true` beside it. Only one complete stdout value is a control value: the single line `agent-evals:pass`, with at most one trailing line feed. With exit `0` and a rule that allows `pass`, the call passes, none of the program's output reaches the agent and the real command runs in the sandbox. The same complete value from a rule without `pass`, or with a nonzero exit, is a mock fault, so the marker can never reach the agent and a missing `pass` is noticed. Stdout and stderr are otherwise opaque bytes, returned unchanged: a marker embedded in other output is ordinary data, and a crashed program cannot print the complete value by accident. The same holds for a `return`'s YAML text, which is UTF-8 by construction.
 
 A forwarder's command line is never interpreted by a shell and never interpolated into one.
 
@@ -173,13 +172,13 @@ Every pattern in a case is RE2: mock `args` patterns here, and the [`file` check
 
 ## Faults
 
-Mock faults end the run as `error` instead of letting checks judge unreliable evidence:
+Mock faults make the run finish as `error`, whatever the checks say; their individual results are still retained, so a fault cannot turn into a pass:
 
 - a `run` program that cannot start, dies from a signal, or exceeds the run's `timeoutMs`;
-- a `run` program that prints the reserved pass marker where the rule does not allow it;
-- a forwarder that cannot reach the host.
+- a `run` program that prints the complete pass marker where the rule does not allow it, or with a nonzero exit;
+- a forwarder that cannot reach the host: it prints `<target>: Service unavailable` and reports the loss on a second socket the evaluated side cannot erase, so the fault survives.
 
-The agent sees a failed command (`126` and `<target>: Operation not permitted`), never a fault detail. A `run` program's ordinary nonzero exit is a returned response, not a fault. Programs are started in their own process group and killed with their descendants on timeout, cancellation and teardown.
+The agent only sees the failed command (exit `126`), never a fault detail. An unmatched rule or a broken rule condition is ordinary denial instead: `126` with `<target>: Operation not permitted`, recorded, and not a fault. A `run` program's ordinary nonzero exit is a returned response, not a fault. Programs are started in their own process group and killed with their descendants on timeout, cancellation and teardown, including descendants that outlive a program which exited normally.
 
 ## A Complete Case
 

@@ -242,14 +242,30 @@ function expectMocks(value: unknown, label: string): MocksConfig {
     throw new ConfigError(`${label} must declare shell targets`);
   }
   const shell = expectRecord(record.shell, `${label}.shell`);
-  return {
-    shell: Object.fromEntries(
-      Object.entries(shell).map(([target, rules]) => [
-        expectMockTarget(target, `${label}.shell`),
-        expectMockRules(rules, `${label}.shell["${target}"]`),
-      ]),
-    ),
-  };
+  const entries = Object.entries(shell).map(
+    ([target, rules]) =>
+      [expectMockTarget(target, `${label}.shell`), expectMockRules(rules, `${label}.shell["${target}"]`)] as const,
+  );
+  // `./scripts/x`, `scripts/.//x` and `scripts/x` name one workspace file, and a bare name and
+  // `./name` name different things: a PATH command and a workspace-root script.
+  const seen = new Map<string, string>();
+  for (const [target] of entries) {
+    const identity = target.includes("/") ? `workspace:${workspaceTargetPath(target)}` : `path:${target}`;
+    const previous = seen.get(identity);
+    if (previous !== undefined) {
+      throw new ConfigError(`${label}.shell declares "${previous}" and "${target}" as the same target`);
+    }
+    seen.set(identity, target);
+  }
+  return { shell: Object.fromEntries(entries) };
+}
+
+/** The workspace-relative file a target names, without `.` or empty segments. */
+export function workspaceTargetPath(target: string): string {
+  return target
+    .split("/")
+    .filter((segment) => segment.length > 0 && segment !== ".")
+    .join("/");
 }
 
 /** A bare command name is placed on `PATH`; a path containing `/` is workspace-relative. */
