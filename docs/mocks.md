@@ -79,8 +79,10 @@ Mocks are prepared with the other run state and answered while the harness runs;
                                                    |      return -> fixed result
                                                    |      run    -> author program
                                                    |                on the host
-                                                   |      pass   -> hand the call
-                                                   |                back
+                                                   |      pass: true -> hand the call
+                                                   |                   back
+                                                   |      pass: false -> refuse here:
+                                                   |                   recorded, 126
                                                    |      run+pass -> hand back only
                                                    |      when the program's output
                                                    |      is exactly its marker
@@ -90,8 +92,8 @@ Mocks are prepared with the other run state and answered while the harness runs;
         |   exit with its code
         |
         |-- 126: "<target>: Operation not permitted"
-        |   (unmatched rule, or a mock fault that
-        |    also ends the run as error)
+        |   (no matching rule, an explicit pass:false,
+        |    or a mock fault that also ends the run)
         |
         `-- pass: exec the real command here
             * next PATH entry for the name, skipping

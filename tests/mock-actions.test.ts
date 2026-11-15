@@ -438,6 +438,13 @@ test("a false workspace rule hides the real script and does not require one", as
       "scripts/absent.sh": [{ action: { kind: "refuse" } }],
     },
   });
+  // Close once, however the test ends: a failed assertion must not leave the host listening.
+  let closing: ReturnType<typeof started.close> | undefined;
+  const close = (): ReturnType<typeof started.close> => (closing ??= started.close());
+  t.after(async () => {
+    await close().catch(() => {});
+  });
+
   const refused = await call(join(workspaceDir, "scripts/real.sh"));
   assert.deepEqual(refused, { status: 126, stdout: "", stderr: "scripts/real.sh: Operation not permitted\n" });
   // The real script left the sandbox instead of sitting beside its forwarder.
@@ -445,7 +452,7 @@ test("a false workspace rule hides the real script and does not require one", as
   assert.match(await readFile(join(root, "replaced/scripts/real.sh"), "utf8"), /real script/);
   const absent = await call(join(workspaceDir, "scripts/absent.sh"));
   assert.equal(absent.status, 126);
-  const { records, faults } = await started.close();
+  const { records, faults } = await close();
   assert.deepEqual(
     records.map((record) => record.target),
     ["scripts/real.sh", "scripts/absent.sh"],
