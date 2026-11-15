@@ -35,6 +35,21 @@ test("Seatbelt policy renders deny-default, scoped reads, writes, and network", 
   assert.doesNotMatch(policy, /\(allow default\)/);
 });
 
+test("the check sandbox policy opens reads and keeps the write and network limits", () => {
+  const policy = renderSeatbeltPolicy({
+    writableRoots: ["/tmp/ws"],
+    readableRoots: [],
+    readAll: true,
+    allowNetwork: false,
+  });
+  assert.match(policy, /\(allow file-read\*\)/);
+  // No scoped read root or metadata clause is needed when reads are open.
+  assert.doesNotMatch(policy, /\(allow file-read\* \(/);
+  assert.doesNotMatch(policy, /file-read-metadata/);
+  assert.match(policy, /\(allow file-write\* \(subpath "\/tmp\/ws"\) \(literal "\/dev\/null"\)\)/);
+  assert.doesNotMatch(policy, /network/);
+});
+
 test("Seatbelt policy omits network when not requested", () => {
   const policy = renderSeatbeltPolicy({ writableRoots: ["/tmp/ws"], readableRoots: [], allowNetwork: false });
   assert.doesNotMatch(policy, /network-outbound/);

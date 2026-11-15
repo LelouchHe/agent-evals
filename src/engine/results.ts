@@ -2,7 +2,7 @@ import { mkdir, rename, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { randomUUID } from "node:crypto";
 import type { CaseConfig } from "./config.ts";
-import type { CheckResult, MockRecord, TraceEntry } from "./registry.ts";
+import type { CheckResult, MockRecord, RunnerUsage, TraceEntry } from "./registry.ts";
 
 export type RunStatus = "pass" | "fail" | "error" | "timeout" | "cancelled";
 export type RunnerStatus = "completed" | "error" | "timeout" | "cancelled";
@@ -12,6 +12,8 @@ export interface RunnerRecord {
   readonly status: RunnerStatus;
   readonly durationMs: number;
   readonly finalText: string | null;
+  /** What the harness reported it consumed; absent when it reports nothing. */
+  readonly usage?: RunnerUsage;
 }
 
 export interface EvaluationRecord {

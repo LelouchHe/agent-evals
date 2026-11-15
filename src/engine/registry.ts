@@ -50,6 +50,48 @@ export interface MockRecord {
   readonly arguments: readonly string[];
 }
 
+/** One end-of-run measurement as the harness reported it. Every part is optional and unestimated. */
+export interface RunnerUsage {
+  /** The last reported context size: tokens in the context and the context window. */
+  readonly context?: { readonly used: number; readonly size: number };
+  /** The last reported cumulative session cost. */
+  readonly cost?: { readonly amount: number; readonly currency: string };
+  /** Totals the harness sent with the completed turn. */
+  readonly tokens?: RunnerTokens;
+}
+
+/** Tokens a completed turn consumed, as the harness's unstable usage field reports them. */
+export interface RunnerTokens {
+  readonly totalTokens: number;
+  readonly inputTokens: number;
+  readonly outputTokens: number;
+  readonly thoughtTokens?: number;
+  readonly cachedReadTokens?: number;
+  readonly cachedWriteTokens?: number;
+}
+
+/** What a check-time program did in the engine's fixed check sandbox. */
+export type CheckSandboxOutcome =
+  | { readonly kind: "exited"; readonly exitCode: number; readonly output: string }
+  | { readonly kind: "signalled"; readonly signal: string; readonly output: string }
+  | { readonly kind: "failed"; readonly reason: string; readonly output: string };
+
+/**
+ * Run one program at check time. The engine supplies the fixed sandbox: open reads, writes only
+ * beneath the workspace and a private HOME and temporary directory, and no network.
+ */
+export interface CheckSandbox {
+  /**
+   * Start `command` in the workspace root; program and arguments are never given to a shell.
+   * `files` maps workspace destinations to authoring sources; the engine validates and stages
+   * them inside the sandbox, copying them into the workspace immediately before the program.
+   */
+  readonly run: (
+    command: readonly string[],
+    options?: { readonly files?: Readonly<Record<string, string>> },
+  ) => Promise<CheckSandboxOutcome>;
+}
+
 /** A prepared runner instance; its factory already captured validated parameters. */
 export interface Runner {
   readonly run: (context: RunnerContext) => Promise<RunnerOutcome>;
@@ -57,12 +99,18 @@ export interface Runner {
   readonly stop: () => Promise<void>;
   /** What the run recorded so far, also after a failed run; absent when the runner records no trace. */
   readonly trace?: () => readonly TraceEntry[];
+  /** What the harness reported it consumed, also after a failed run; absent when it reports nothing. */
+  readonly usage?: () => RunnerUsage | undefined;
 }
 
 export interface ImplementationContext {
   readonly authoringDir: string;
   /** The run's placeholder sources, for parameters an implementation loads itself. */
   readonly values: ValueSource;
+  /** Validate and stage a checker's check-time `files` at load time, relative to `authoringDir`. */
+  readonly validateFiles: (files: Readonly<Record<string, string>>) => Promise<void>;
+  /** The case's declared `mocks.shell` targets, for a checker that must name one at load time. */
+  readonly mockTargets?: readonly string[];
 }
 
 export interface RunnerDefinition<P> {
@@ -93,6 +141,10 @@ export interface CheckerContext {
   readonly input: string;
   /** The runner's trace, when it records one. */
   readonly trace?: readonly TraceEntry[];
+  /** The run's recorded mock calls, when the case declares mocks. */
+  readonly mockRecords?: readonly MockRecord[];
+  /** The engine's fixed sandbox for running a program at check time. */
+  readonly checkSandbox: CheckSandbox;
   readonly timeoutMs: number;
   readonly signal: AbortSignal;
 }

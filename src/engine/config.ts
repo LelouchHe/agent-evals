@@ -3,8 +3,8 @@ import { compilePattern } from "./regex.ts";
 
 /** A configuration problem detected before any runtime resource is created. */
 export class ConfigError extends Error {
-  constructor(message: string) {
-    super(message);
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, options);
     this.name = "ConfigError";
   }
 }
@@ -177,7 +177,7 @@ function expectNonEmptyString(value: unknown, label: string): string {
   return value;
 }
 
-function expectRelativePath(value: unknown, label: string): string {
+export function expectRelativePath(value: unknown, label: string): string {
   const path = expectNonEmptyString(value, label);
   assertRelativePath(path, label);
   return path;
@@ -197,7 +197,7 @@ function expectFiles(value: unknown, label: string): Readonly<Record<string, str
   );
 }
 
-function expectWorkspaceDestination(destination: string, label: string): void {
+export function expectWorkspaceDestination(destination: string, label: string): void {
   expectNonEmptyString(destination, label);
   if (destination.includes("\0")) {
     throw new ConfigError(`${label} contains a NUL byte`);
@@ -251,7 +251,7 @@ function expectMocks(value: unknown, label: string): MocksConfig {
   // `./name` name different things: a PATH command and a workspace-root script.
   const seen = new Map<string, string>();
   for (const [target] of entries) {
-    const identity = target.includes("/") ? `workspace:${workspaceTargetPath(target)}` : `path:${target}`;
+    const identity = mockTargetIdentity(target);
     const previous = seen.get(identity);
     if (previous !== undefined) {
       throw new ConfigError(`${label}.shell declares "${previous}" and "${target}" as the same target`);
@@ -259,6 +259,11 @@ function expectMocks(value: unknown, label: string): MocksConfig {
     seen.set(identity, target);
   }
   return { shell: Object.fromEntries(entries) };
+}
+
+/** The declared spelling two targets name the same thing by, for duplicates and checks. */
+export function mockTargetIdentity(target: string): string {
+  return target.includes("/") ? `workspace:${workspaceTargetPath(target)}` : `path:${target}`;
 }
 
 /** The workspace-relative file a target names, without `.` or empty segments. */
@@ -270,7 +275,7 @@ export function workspaceTargetPath(target: string): string {
 }
 
 /** A bare command name is placed on `PATH`; a path containing `/` is workspace-relative. */
-function expectMockTarget(target: string, label: string): string {
+export function expectMockTarget(target: string, label: string): string {
   if (target.trim().length === 0) {
     throw new ConfigError(`${label} has an empty target name`);
   }
@@ -346,7 +351,7 @@ function expectMockCommand(value: unknown, label: string): readonly string[] {
   });
 }
 
-function expectMockArgs(value: unknown, label: string): MockArgs {
+export function expectMockArgs(value: unknown, label: string): MockArgs {
   if (typeof value === "object" && value !== null && !Array.isArray(value)) {
     return { positional: [], options: expectMockOptions(value, label) };
   }

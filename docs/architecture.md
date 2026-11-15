@@ -1,6 +1,6 @@
 # Architecture
 
-Agent Evals executes configured tests against agent systems. The engine is generic; the current evaluation runtime is deliberately narrow: one input message, a filesystem workspace, a native Pi RPC runner or the generic ACP runner, and file/judge checks on macOS. Standalone ACP configuration-query and login helpers share the ACP runner's environment setup.
+Agent Evals executes configured tests against agent systems. The engine is generic; the current evaluation runtime is deliberately narrow: one input message, a filesystem workspace, a native Pi RPC runner or the generic ACP runner plus a `noop` baseline, and file/mock/shell/judge checks on macOS. Standalone ACP configuration-query and login helpers share the ACP runner's environment setup.
 
 This page explains how the implemented modules cooperate. [Configuration](configuration.md) owns the authoring/reference rules; [Roadmap](roadmap.md) owns the target shape and planned capabilities.
 
@@ -28,11 +28,12 @@ Responsibility and wiring, not execution order ([One Run in Order](#one-run-in-o
                                v      v      v           |
                   +------------+ +--------+ +-----------+|
                   | runner     | | mock   | | checkers  ||
-                  | harness    | | host   | | file: RE2 ||
-                  +-----+------+ | rules, | | judge: Pi ||
-                        |        | actions| +-----+-----+|
-                        |        | records|       |      |
-      +-----------------+-+      +--------+       +--> separate, tool-free
+                  | harness or | | host   | | file/mock ||
+                  | noop       | | rules, | | shell     ||
+                  +-----+------+ | actions| | judge: Pi ||
+                        |        | records| +-----+-----+|
+                        |        +--------+       |      |
+      +-----------------+-+                       +--> separate, tool-free
       v                   v                             Pi run; never the
   native Pi             ACP                             evaluated session
   route                 route
@@ -64,11 +65,40 @@ Responsibility and wiring, not execution order ([One Run in Order](#one-run-in-o
   authors' run programs and the call records stay on the host, outside the sandbox
 ```
 
+The check-time path from the same checkers box, after the harness stopped:
+
+```text
+  LOAD TIME: checker.create(params, context)
+    `-- ImplementationContext.validateFiles(files) -> ConfigError on invalid
+
+  CHECK TIME: checkers, after the harness stopped
+
+  checker ($type: shell, or extension)
+    |  CheckerContext.checkSandbox.run(run, { files })
+    v
+  engine: stages files into check-*/staged/ (read-only inside the sandbox)
+    v
+  HOST: sandbox-exec -f check-*/sandbox.sb -- /bin/sh -c <supervisor.sh>
+    |     open reads; writes only workspace/, private home/ and tmp/
+    v  Seatbelt boundary
+  SANDBOX: supervisor.sh starts check-runner.ts
+    |  1. place check-*/staged/ into workspace/ (files only at check time)
+    |     refuse symlinked ancestors; unlink a leaf before copying
+    |  2. spawn the command with exactly PATH, HOME and TMPDIR
+    |  3. report exit, signal or placement failure on private FD 5
+    v
+  HOST: checkSandbox reads FD 5 -> CheckSandboxOutcome (exited/signalled/failed)
+    `-- shell checker maps exit 0 pass, other exit fail, signal/failure error
+
+  $type: judge -> separate tool-free Pi invocation in its own sandbox
+```
+
 - **CLI** parses commands and flags, registers built-ins, loads trusted extension directories and maps outcomes to exit codes. `view` stops at the resolver and prints the resolved declaration; it starts no runtime. `run` hands the resolved case to the engine. `config` and `login` take a standalone agent file and use the ACP preparation helpers instead.
 - **Engine** validates parameters, prepares the run root, sequences the runner, checks and cleanup, and retains the result. It owns the mock host's lifecycle and the retained records.
 - **Runner** drives one harness and stops its owned processes. The native Pi route is an isolated JSONL RPC session under Seatbelt; the generic route speaks ACP with a caller-prepared harness home.
 - **Mock host** owns mock rules, actions and call records, plus authors' `run` programs. It lives outside the evaluated sandbox; [Mocks](mocks.md#how-a-run-uses-mocks) owns the mechanism.
-- **Checkers** read evidence and produce judgments. The `file` checker evaluates RE2 patterns in-process; the judge starts its own tool-free Pi invocation from selected evidence and never shares the evaluated agent's session or tools.
+- **Checkers** read evidence and produce judgments. The `file` checker evaluates RE2 patterns in-process; `mock` matches the run's recorded mock calls with the same argument grammar and RE2 engine the mock rules use; `shell` passes its check-time `files` to `CheckerContext.checkSandbox.run(run, { files })`, and the engine stages them into the workspace inside the sandbox; the judge starts its own tool-free Pi invocation from selected evidence and never shares the evaluated agent's session or tools.
+- **Check sandbox** is an engine capability on `CheckerContext`, not a checker's own policy. `run(command, { files })` validates and stages any `files` (the same validation is offered at load through `ImplementationContext.validateFiles`), launches `sandbox-exec` -> `supervisor.sh` -> `check-runner.ts`, and that runner places `check-*/staged/` into the workspace before starting the command with open reads, writes only beneath the workspace and a private HOME and temporary directory, no network, and a minimal environment. `check-runner.ts` reports the exit status, signal or placement failure on a private FD 5 pipe back to the engine. `judge` does not use it because it needs the network for its model.
 - **ACP preparation helpers** reuse the same agent schema and HOME/login assembly for `config` and `login`; they do not run a case.
 
 The judge reuses Pi transport/session mechanics, not the evaluated runner's session or the engine's full execution loop. The supervisor and shell wrapper cover tracked shell-process teardown inside the same Seatbelt instance. Registry files writable by the agent never authorize unsandboxed host signals.
@@ -79,13 +109,17 @@ Definitions expose a `type`, a Zod `params` schema, and `create(params, context)
 
 1. The registry selects the definition by `$type`.
 2. The engine substitutes parameter [placeholders](configuration.md#placeholders), then runs the declared schema once.
-3. The factory receives ordinary typed fields plus the YAML declaring directory. It does not receive an environment-source or credential-lookup interface.
+3. The factory receives an `ImplementationContext`: the YAML declaring directory (`authoringDir`), the run's placeholder `values`, declared `mockTargets` when the case has mocks, and `validateFiles`, which validates and stages a checker's check-time `files` against `authoringDir`. It does not receive an environment-source or credential-lookup interface.
 4. The instance keeps its parameters; execution receives only runtime state:
 
 ```text
 Runner.run(RunnerContext)     -> RunnerOutcome
 Runner.stop()                -> completion, safe to call again
 Checker.check(CheckerContext) -> CheckResult[]
+
+ImplementationContext: authoringDir, values, mockTargets?, validateFiles
+CheckerContext:        workspace, baseline, trace?, mockRecords?,
+                       checkSandbox, input, runRootDir, timeoutMs, signal
 ```
 
 **The engine owns sourcing, declared-schema validation and lifecycle—not business meaning.** Schemas define parameter types, defaults and declared constraints. Implementations own their logic, operational requirements, authentication and outputs. The engine does not infer extra rules from names such as `apiKey`, proactively verify credentials, or automatically redact values.
@@ -99,8 +133,8 @@ A run follows the test lifecycle in [Writing Cases](cases.md#the-test-model): se
 1. **Load.** Resolve one case and preserve its declaration. Choose the run root's path without creating it. Select definitions; substitute placeholders from the invocation `.env` and the chosen run directories, validate schemas, create instances and validate the fixture. The engine never interprets provider/key names. [Configuration](configuration.md#placeholders) owns placeholder semantics.
 2. **Set up.** Create the chosen root exclusively; an existing path is an error. The engine copies the fixture into `workspace` or starts empty, places each `files` entry on top, and prepares independent `home`, `config` and `scratch`; source fixtures remain unchanged. For a case declaring [`mocks`](mocks.md), the engine writes the forwarders, workspace scripts included, starts the host service that answers them, and only afterwards captures the initial `baseline` snapshot, so a replaced script compares forwarder with forwarder. The runner assembles its harness configuration, for Pi by staging selected skills with discovery disabled. The platform module builds the Seatbelt policy; a runner that wires mocks adds the forwarder directory as a readable, non-writable root and first on `PATH`.
 3. **Act.** The runner receives the input, directories, deadline, cancellation signal and optional mock wiring, and drives the harness. Pi runs its isolated RPC session under Seatbelt, with autonomous tool calls after one initial message.
-4. **Collect.** Await supported runner teardown before checks; the runner returns its final text. The mock host closes only after that teardown, so a call from a process that outlived the turn is still answered and recorded. Timeouts, cancellation and execution failures are not negative judgments. See [M1 limits](m1-plan.md#known-limitations).
-5. **Assert.** Checkers inspect the still-live workspace/baseline. File patterns and mock argument patterns share the linear-time RE2 engine; the judge reads selected evidence and starts a separate tool-free Pi invocation.
+4. **Collect.** Await supported runner teardown before checks; the runner returns its final text, its trace and its reported usage. The mock host closes only after that teardown, so a call from a process that outlived the turn is still answered and recorded. Timeouts, cancellation and execution failures are not negative judgments. See [M1 limits](m1-plan.md#known-limitations).
+5. **Assert.** Checkers inspect the still-live workspace/baseline, the recorded mock calls and the runner's trace. File and mock argument patterns share the linear-time RE2 engine; `shell` runs its program in the engine's check sandbox, after the harness stopped and the mock host closed; the judge reads selected evidence and starts a separate tool-free Pi invocation.
 6. **Tear down and record.** Remove runtime state, then save outcomes, declared configuration and cleanup status. Early load errors need not produce a run record.
 
 The ACP runner and the standalone `config` and `login` preparation helpers live in [`runners/acp/`](../src/runners/acp/) and share one agent schema, HOME/login assembly and ACP session setup. These are implementation-owned; generic authoring/value-source/schema utilities are shared with cases. macOS system read roots, default command paths, terminal discovery and Seatbelt policy preparation stay in `platform/macos/`. Both use a sandbox-wide supervisor with a private completion pipe, not the native Pi shell registry. The runner assembles into the engine's run HOME and workspace; the helpers allocate their own temporary directory.
@@ -151,6 +185,10 @@ RUN ROOT  <tempParent>/run-<id>/                       temporary, removed after
   forward                         the shared forwarder script text
   replaced/                       real workspace scripts moved out of reach
   files/       internal           transient files staging, gone before launch
+  check-*/     one per check      home/ and tmp/ private; sandbox.sb policy;
+                                  staged/ read-only check-time files, placed
+                                  into workspace/ by the sandboxed
+                                  check-runner; removed after the check
 
 HOST STATE OUTSIDE THE SANDBOX
   engine        case, checks, rubric, policy, run bookkeeping, cancellation
@@ -166,9 +204,9 @@ AFTER THE RUN
 - **Authoring assets:** operator-owned YAML, fixtures, skills and extensions. Config-relative resources resolve from the declaring file; executable extensions are not discovered from the agent-writable workspace. Extension code and `.env` lookup commands are trusted host code, not sandboxed test subjects.
 - **Evaluated runtime:** writable workspace and explicitly permitted per-run state. The initial baseline, case/check definitions, rubric and retained results stay outside the evaluated agent's intended access.
 - **Observations:** directory identity and path/symlink containment are checked before file reads. Non-regular and oversized evidence is an error, not a vacuous pass. A missing observation cannot prove a restraint was respected.
-- **Results:** declarations, source/case identity, outcomes, diagnostics and cleanup. Expanded parameters do not replace the declaration; runtime outputs remain the implementation's responsibility. No full resource snapshot is retained.
+- **Results:** declarations, source/case identity, outcomes, reported usage, diagnostics and cleanup. Expanded parameters do not replace the declaration; runtime outputs remain the implementation's responsibility. No full resource snapshot is retained.
 
-Observations come from three sources defined in [Writing Cases](cases.md#why-the-trace-matters): the runner's trace (with output as its user-facing view), mock call records, and environment side effects. Today the ACP runner retains `trace.json` (which `judge` can take as evidence), a case declaring [shell mocks](mocks.md) retains `mocks.json`, and `file`/`judge` inspect workspace files. Interaction checks are planned in [M4](m4-plan.md); M3's shell-collaborator work is delivered.
+Observations come from three sources defined in [Writing Cases](cases.md#why-the-trace-matters): the runner's trace (with output as its user-facing view), mock call records, and environment side effects. Today the ACP runner retains `trace.json` (which `judge` can take as evidence), a case declaring [shell mocks](mocks.md) retains `mocks.json` (which `mock` asserts on), and `file`/`shell` inspect the workspace while `judge` reads selected evidence. Recorded usage is a measurement in `result.json`, not check evidence.
 
 ## Source Map
 
@@ -178,7 +216,7 @@ Observations come from three sources defined in [Writing Cases](cases.md#why-the
 | Resolution and contracts      | [`authoring.ts`](../src/engine/authoring.ts), [`config.ts`](../src/engine/config.ts), [`registry.ts`](../src/engine/registry.ts)                                                                                                                                                                   |
 | Preparation and lifecycle     | [`params.ts`](../src/engine/params.ts), [`env-source.ts`](../src/engine/env-source.ts), [`run.ts`](../src/engine/run.ts), [`mocks.ts`](../src/engine/mocks.ts), [`mock-match.ts`](../src/engine/mock-match.ts), [`regex.ts`](../src/engine/regex.ts), [`forwarder.sh`](../src/engine/forwarder.sh) |
 | Files and retained records    | [`workspace.ts`](../src/engine/workspace.ts), [`results.ts`](../src/engine/results.ts)                                                                                                                                                                                                             |
-| Harness adapter and transport | [`runners/pi/`](../src/runners/pi/)                                                                                                                                                                                                                                                                |
+| Harness adapter and transport | [`runners/pi/`](../src/runners/pi/), [`runners/noop/`](../src/runners/noop/)                                                                                                                                                                                                                       |
 | ACP runner and helpers        | [`runners/acp/`](../src/runners/acp/)                                                                                                                                                                                                                                                              |
-| Assertions and model judgment | [`checkers/file/`](../src/checkers/file/), [`checkers/judge/`](../src/checkers/judge/)                                                                                                                                                                                                             |
-| OS enforcement and packaging  | [`platform/macos/`](../src/platform/macos/), [`build.mjs`](../scripts/build.mjs)                                                                                                                                                                                                                   |
+| Assertions and model judgment | [`checkers/file/`](../src/checkers/file/), [`checkers/mock/`](../src/checkers/mock/), [`checkers/shell/`](../src/checkers/shell/), [`checkers/judge/`](../src/checkers/judge/), [`check-sandbox.ts`](../src/engine/check-sandbox.ts), [`check-runner.ts`](../src/engine/check-runner.ts)           |
+| OS enforcement and packaging  | [`platform/macos/`](../src/platform/macos/) ([`supervisor.sh`](../src/platform/macos/supervisor.sh)), [`build.mjs`](../scripts/build.mjs)                                                                                                                                                          |

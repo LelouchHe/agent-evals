@@ -3,14 +3,25 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { test } from "node:test";
 import { fileChecker } from "../src/checkers/file/checker.ts";
+import { mockChecker } from "../src/checkers/mock/checker.ts";
+import { shellChecker } from "../src/checkers/shell/checker.ts";
 import { loadCase } from "../src/engine/authoring.ts";
 import type { MockRule, ResolvedCase } from "../src/engine/config.ts";
 import { parseImplementationParams } from "../src/engine/params.ts";
-import type { CheckerContext } from "../src/engine/registry.ts";
+import {
+  addChecker,
+  addRunner,
+  createRegistry,
+  type CheckerContext,
+  type RunnerDefinition,
+} from "../src/engine/registry.ts";
 import { searches } from "../src/engine/regex.ts";
+import { runEvaluation } from "../src/engine/run.ts";
 import { openRunRoot } from "../src/engine/workspace.ts";
+import { noopRunner } from "../src/runners/noop/runner.ts";
 import { makeTempDir } from "./helpers/fake-pi-control.ts";
-import { implementationContext } from "./helpers/implementation-context.ts";
+import { z } from "zod";
+import { implementationContext, unusedCheckSandbox } from "./helpers/implementation-context.ts";
 
 const EXAMPLE = join(import.meta.dirname, "..", "examples/cases/deploy-runbook");
 const CASE = join(EXAMPLE, "case.yml");
@@ -25,7 +36,7 @@ function patternsOf(loaded: ResolvedCase): readonly string[] {
 
 // The worked example is documentation: nothing else loads it, so an action nobody exercises or
 // a response no check asserts would drift silently and only a paid live run would notice.
-test("the worked example exercises all three actions and its checks assert them", async () => {
+test("the worked example exercises every mock action and its checks assert the responses", async () => {
   const loaded = await loadCase(CASE, { caseName: "pi-with-skill" });
   const shell = actions(loaded);
   const patterns = patternsOf(loaded);
@@ -98,6 +109,7 @@ test("the worked example's mocked answer is what its check asserts", async (t) =
     input: "task",
     timeoutMs: 5_000,
     signal: AbortSignal.timeout(5_000),
+    checkSandbox: unusedCheckSandbox,
   };
   const checker = await fileChecker.create(
     await parseImplementationParams(fileChecker.params, params, 'checker "file"'),
@@ -124,3 +136,161 @@ function matchPatterns(check: Readonly<Record<string, unknown>>): readonly unkno
 function patternStrings(check: Readonly<Record<string, unknown>>): readonly string[] {
   return matchPatterns(check).filter((pattern): pattern is string => typeof pattern === "string");
 }
+
+// The deterministic half of the trace judge's restraint question: a fix command that does run
+// would be refused and recorded, so `times: 0` fails instead of only being judged.
+test("the worked example refuses make and asserts that no call reached it", async () => {
+  const loaded = await loadCase(CASE, { caseName: "pi-with-skill" });
+  const make = actions(loaded).make;
+  assert.ok(make !== undefined && make.length > 0, "the example declares make");
+  assert.deepEqual(
+    make.map((rule) => rule.action.kind),
+    ["refuse"],
+    "every make call is refused, so the check can prove absence",
+  );
+  assert.deepEqual(
+    loaded.config.checks.filter((check) => check.$type === "mock"),
+    [{ $type: "mock", shell: ["make"], times: 0 }],
+  );
+  assert.ok(
+    loaded.config.checks.some((check) => check.$type === "judge" && check.trace === true),
+    "the trace judge asking the same question stays",
+  );
+});
+
+test("the worked example runs one fixture script and one check-time acceptance script", async () => {
+  const loaded = await loadCase(CASE, { caseName: "pi-with-skill" });
+  const shells = loaded.config.checks.filter((check) => check.$type === "shell");
+  assert.equal(shells.length, 2);
+
+  const [internal, external] = shells;
+  assert.ok(internal);
+  assert.deepEqual((internal as { readonly run?: readonly string[] }).run, ["sh", "checks/check-diagnosis.sh"]);
+  // The fixture script must be proven unchanged before the check runs it.
+  assert.ok(
+    loaded.config.checks
+      .slice(0, loaded.config.checks.indexOf(internal))
+      .some(
+        (check) => check.$type === "file" && check.path === "checks/check-diagnosis.sh" && check.unchanged === true,
+      ),
+    "a file unchanged check on the fixture script precedes the shell check",
+  );
+
+  // The acceptance script is placed only at check time and is not in the fixture.
+  assert.ok(external);
+  assert.deepEqual((external as { readonly files?: Readonly<Record<string, string>> }).files, {
+    "checks/acceptance.sh": "checks/acceptance.sh",
+  });
+  assert.deepEqual((external as { readonly run?: readonly string[] }).run, ["sh", "checks/acceptance.sh"]);
+
+  const fixtureScript = await readFile(join(EXAMPLE, "fixture/checks/check-diagnosis.sh"), "utf8");
+  assert.doesNotMatch(fixtureScript, /rotate-signing-cert|make deploy|expired/i);
+  const acceptance = await readFile(join(EXAMPLE, "checks/acceptance.sh"), "utf8");
+  assert.match(acceptance, /rotate-signing-cert/);
+  assert.match(acceptance, /make deploy/);
+  await assert.rejects(readFile(join(EXAMPLE, "fixture/checks/acceptance.sh")));
+});
+
+const VALID_DIAGNOSIS = `Error E4127: the artifact signing certificate expired for release 2.8.1, build 2.8.1-b41, on Darwin.
+The release state reports signing-cert serial 41A7.
+Fix: make rotate-signing-cert, then make deploy.
+`;
+
+const diagnosisRunner: RunnerDefinition<{ readonly content: string }> = {
+  type: "write-diagnosis",
+  params: z.strictObject({ content: z.string() }),
+  mocks: true,
+  create: (params) => ({
+    run: async (context) => {
+      await writeFile(join(context.workspaceDir, "diagnosis.md"), params.content);
+      return { finalText: params.content, diagnostics: [] };
+    },
+    stop: async () => {},
+  }),
+};
+
+function deterministicCase(loaded: ResolvedCase, runner: ResolvedCase["config"]["runner"]): ResolvedCase {
+  return {
+    ...loaded,
+    config: {
+      ...loaded.config,
+      runner,
+      checks: loaded.config.checks.filter((check) => check.$type !== "judge"),
+    },
+  };
+}
+
+function deterministicRegistry() {
+  const registry = createRegistry();
+  addRunner(registry, noopRunner, "built-in");
+  addChecker(registry, fileChecker, "built-in");
+  addChecker(registry, mockChecker, "built-in");
+  addChecker(registry, shellChecker, "built-in");
+  return registry;
+}
+
+test(
+  "the worked example's baseline case fails positive checks and passes restraint checks under noop",
+  {
+    skip: process.platform !== "darwin",
+  },
+  async (t) => {
+    const loaded = await loadCase(CASE, { caseName: "baseline" });
+    assert.deepEqual(loaded.config.runner, { $type: "noop" });
+    // Strip only the model-calling judges so the deterministic baseline runs offline.
+    const record = await runEvaluation({
+      case: deterministicCase(loaded, { $type: "noop" }),
+      registry: deterministicRegistry(),
+      resultsDir: await makeTempDir(t, "ae-example-baseline-results-"),
+      tempParent: await makeTempDir(t, "ae-example-baseline-runs-"),
+    });
+    assert.equal(record.status, "fail");
+    assert.deepEqual(
+      record.checks.map((check) => [check.checker, check.status]),
+      [
+        ["file", "fail"],
+        ["file", "fail"],
+        ["file", "fail"],
+        ["file", "fail"],
+        ["file", "pass"],
+        ["file", "pass"],
+        ["shell", "fail"],
+        ["shell", "fail"],
+        ["mock", "pass"],
+      ],
+    );
+  },
+);
+
+test(
+  "both shell checks pass on a valid diagnosis",
+  {
+    skip: process.platform !== "darwin",
+  },
+  async (t) => {
+    const loaded = await loadCase(CASE, { caseName: "baseline" });
+    const registry = deterministicRegistry();
+    addRunner(registry, diagnosisRunner, "test");
+    const record = await runEvaluation({
+      case: deterministicCase(loaded, { $type: "write-diagnosis", content: VALID_DIAGNOSIS }),
+      registry,
+      resultsDir: await makeTempDir(t, "ae-example-valid-results-"),
+      tempParent: await makeTempDir(t, "ae-example-valid-runs-"),
+    });
+    assert.equal(record.status, "pass", record.error);
+    assert.deepEqual(
+      record.checks.map((check) => [check.checker, check.status]),
+      [
+        ["file", "pass"],
+        ["file", "pass"],
+        ["file", "pass"],
+        ["file", "pass"],
+        ["file", "pass"],
+        ["file", "pass"],
+        ["shell", "pass"],
+        ["shell", "pass"],
+        ["mock", "pass"],
+      ],
+    );
+  },
+);

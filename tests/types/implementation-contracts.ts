@@ -37,10 +37,12 @@ const checkerContext: CheckerContext = {
   input: "task",
   timeoutMs: 1_000,
   signal: new AbortController().signal,
+  checkSandbox: { run: async () => ({ kind: "exited", exitCode: 0, output: "" }) },
 };
 
 const implementationContext: ImplementationContext = {
   authoringDir: "/authoring",
+  validateFiles: async () => {},
   values: { env: { require: async (name) => name }, run: { HOME: "/run/home", TMPDIR: "/run/tmp" } },
 };
 

@@ -10,6 +10,11 @@ export interface SandboxPolicy {
   readonly writableRoots: readonly string[];
   /** Read-only access. */
   readonly readableRoots: readonly string[];
+  /**
+   * Read everything the host user can read, as the check sandbox does after the evaluated agent
+   * stopped. It replaces `readableRoots` for the read clauses.
+   */
+  readonly readAll?: boolean;
   /** Read-only single files, such as a launcher script. */
   readonly readableFiles?: readonly string[];
   /** Executables the sandbox may not start, such as the real binary behind a mocked command. */
@@ -86,9 +91,9 @@ export function renderSeatbeltPolicy(policy: SandboxPolicy): string {
     "(allow process-fork)",
     "(allow signal (target same-sandbox))",
     "(allow sysctl-read)",
-    `(allow file-read* ${readClauses.join(" ")})`,
+    policy.readAll === true ? "(allow file-read*)" : `(allow file-read* ${readClauses.join(" ")})`,
   ];
-  if (metadata.size > 0) {
+  if (policy.readAll !== true && metadata.size > 0) {
     lines.push(
       `(allow file-read-metadata ${[...metadata]
         .sort()

@@ -14,10 +14,12 @@ import {
   requireRunner,
   type CheckResult,
   type Checker,
+  type ImplementationContext,
   type MockRecord,
   type Registry,
   type Runner,
   type RunnerOutcome,
+  type RunnerUsage,
   type TraceEntry,
 } from "./registry.ts";
 import {
@@ -29,8 +31,9 @@ import {
   type RunnerStatus,
 } from "./results.ts";
 import { createEnvSource, type EnvSource } from "./env-source.ts";
-import { placeCaseFiles } from "./files.ts";
+import { placeCaseFiles, validateCheckFiles } from "./files.ts";
 import { startMockHost, type MockHost } from "./mocks.ts";
+import { createCheckSandbox } from "./check-sandbox.ts";
 import { parseImplementationParams } from "./params.ts";
 import { truncate, truncateNullable } from "./truncate.ts";
 import { substituteValues, type ValueSource } from "./values.ts";
@@ -78,10 +81,14 @@ export async function runEvaluation(request: RunRequest): Promise<EvaluationReco
 
   let registered: Awaited<ReturnType<typeof prepareImplementations>>;
   try {
-    registered = await prepareImplementations(request, {
-      env: request.envSource ?? createEnvSource(process.cwd(), abort.signal),
-      run: { HOME: homeDir, TMPDIR: scratchDir },
-    });
+    registered = await prepareImplementations(
+      request,
+      {
+        env: request.envSource ?? createEnvSource(process.cwd(), abort.signal),
+        run: { HOME: homeDir, TMPDIR: scratchDir },
+      },
+      abort.signal,
+    );
     await validateAuthoringAssets(request.case);
     // Exclusive creation, like mkdtemp: an existing path is an error, not reused.
     await mkdir(root, { mode: 0o700 });
@@ -100,6 +107,7 @@ export async function runEvaluation(request: RunRequest): Promise<EvaluationReco
   };
   let checks: CheckResult[] = [];
   let trace: readonly TraceEntry[] | undefined;
+  let usage: RunnerUsage | undefined;
   let mockRecords: readonly MockRecord[] | undefined;
   let mockHost: MockHost | undefined;
   let mockFailed = false;
@@ -195,6 +203,7 @@ export async function runEvaluation(request: RunRequest): Promise<EvaluationReco
         }
       } finally {
         trace = runner.trace?.();
+        usage = runner.usage?.();
       }
     }
 
@@ -212,6 +221,7 @@ export async function runEvaluation(request: RunRequest): Promise<EvaluationReco
       status: runnerStatus,
       durationMs: Math.round(performance.now() - started),
       finalText: outcome === undefined ? null : truncateNullable(outcome.finalText, MAX_RECORDED_TEXT),
+      ...(usage === undefined ? {} : { usage }),
     };
     if (outcome !== undefined) {
       diagnostics.push(...outcome.diagnostics);
@@ -222,6 +232,7 @@ export async function runEvaluation(request: RunRequest): Promise<EvaluationReco
         workspaceRoot,
         baselineRoot,
         trace,
+        mockRecords,
         timeoutMs,
         abort.signal,
         () => {
@@ -305,12 +316,20 @@ export async function runEvaluation(request: RunRequest): Promise<EvaluationReco
 async function prepareImplementations(
   request: RunRequest,
   values: ValueSource,
+  signal: AbortSignal,
 ): Promise<{
   runnerType: string;
   runner: Runner;
   checks: readonly { readonly type: string; readonly checker: Checker }[];
 }> {
-  const context = { authoringDir: request.case.dir, values };
+  const mockTargets =
+    request.case.config.mocks === undefined ? undefined : Object.keys(request.case.config.mocks.shell);
+  const context: ImplementationContext = {
+    authoringDir: request.case.dir,
+    values,
+    validateFiles: (files) => validateCheckFiles(files, request.case.dir, "check files", signal),
+    ...(mockTargets === undefined ? {} : { mockTargets }),
+  };
   const runnerDefinition = requireRunner(request.registry, request.case.config.runner.$type);
   if (request.case.config.mocks !== undefined && runnerDefinition.mocks !== true) {
     throw new ConfigError(`runner "${runnerDefinition.type}" does not support mocks`);
@@ -369,6 +388,7 @@ async function runChecks(
   workspaceRoot: RunRoot,
   baselineRoot: RunRoot,
   trace: readonly TraceEntry[] | undefined,
+  mockRecords: readonly MockRecord[] | undefined,
   timeoutMs: number,
   signal: AbortSignal,
   markCancelled: () => void,
@@ -399,6 +419,14 @@ async function runChecks(
       runRootDir: root,
       input: request.case.config.input,
       ...(trace === undefined ? {} : { trace }),
+      ...(mockRecords === undefined ? {} : { mockRecords }),
+      checkSandbox: createCheckSandbox({
+        workspaceDir: workspaceRoot.path,
+        runRootDir: root,
+        authoringDir: request.case.dir,
+        signal: combined,
+        cancelled: signal,
+      }),
       timeoutMs,
       signal: combined,
     });

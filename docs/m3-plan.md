@@ -8,7 +8,7 @@ Replace or observe shell collaborators at the environment boundary and record ev
 
 1. **Shell collaborators.** Intercept `PATH` programs and workspace scripts through thin forwarders, run mock actions or delegate to the real target, and retain structured interaction records.
 
-Asserting on those records is [M4](m4-plan.md).
+Asserting on those records is the [`mock` checker](configuration.md#mock-checker-type-mock) delivered by [M4](m4-plan.md).
 
 Not in scope: MCP collaborators, which are milestone M5, with their configuration, input matching and spy behavior still open (see [Open Questions](#open-questions)); harness-internal tools (`Read`, `Edit`, `WebFetch` and similar built-ins), shell builtins (`cd`, `export`), HTTP/network interception, model-provider fault injection, Linux.
 
@@ -30,7 +30,7 @@ Not in scope: MCP collaborators, which are milestone M5, with their configuratio
 - **The engine owns mock behavior; the runner owns the wiring.** The engine parses `mocks`, runs the host service, matches rules, performs actions, keeps the records and generates forwarders, so that logic exists once. A runner receives an optional `mocks` value on `RunnerContext` (forwarder directory, socket path, targets whose real binaries to deny) and is responsible for `PATH` and sandbox policy. Forwarder generation stays in the engine until a second platform needs it elsewhere.
 - **Runners without mock support fail at load time.** A runner definition declares `mocks: true` when it can wire them. Running a case that declares `mocks` on a runner without it (such as the native `pi` runner) is a `ConfigError` before any run directory exists, never a silent run against real commands.
 - **A record holds the target and its arguments.** No output or exit code, since `pass` cannot observe one after `exec` and all three actions keep one record shape.
-- **Engine stays assertion-agnostic; `judge` is unchanged.** The engine writes `mocks.json` beside `trace.json` and, once [M4](m4-plan.md) adds the call checker, exposes raw interaction records on `CheckerContext`. Checking lives in a replaceable `$type` checker; asserting on an unmocked target is a checker `error` rather than a vacuous pass. `judge` does not take `mockRecords` unless a real case later needs qualitative judgment over indirect script calls absent from `trace.json`.
+- **Engine stays assertion-agnostic; `judge` is unchanged.** The engine writes `mocks.json` beside `trace.json` and exposes raw interaction records on `CheckerContext` for the [`mock` checker](m4-plan.md#the-mock-checker). Checking lives in a replaceable `$type` checker; asserting on an undeclared target is a `ConfigError` at load time rather than a vacuous pass ([M4](m4-plan.md#decisions)). `judge` does not take `mockRecords` unless a real case later needs qualitative judgment over indirect script calls absent from `trace.json`.
 
 ### Shell argument matching
 
