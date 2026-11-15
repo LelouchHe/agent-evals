@@ -68,13 +68,15 @@ Responsibility and wiring, not execution order ([One Run in Order](#one-run-in-o
 The check-time path from the same checkers box, after the harness stopped:
 
 ```text
+  LOAD TIME: checker.create(params, context)
+    `-- ImplementationContext.validateFiles(files) -> ConfigError on invalid
+
   CHECK TIME: checkers, after the harness stopped
 
-  $type: shell
+  checker ($type: shell, or extension)
     |  CheckerContext.checkSandbox.run(run, { files })
     v
-  engine: ImplementationContext.validateFiles at load
-    |     -> check-*/staged/, read-only inside the sandbox
+  engine: stages files into check-*/staged/ (read-only inside the sandbox)
     v
   HOST: sandbox-exec -f check-*/sandbox.sb -- /bin/sh -c <supervisor.sh>
     |     open reads; writes only workspace/, private home/ and tmp/
@@ -85,7 +87,8 @@ The check-time path from the same checkers box, after the harness stopped:
     |  2. spawn the command with exactly PATH, HOME and TMPDIR
     |  3. report exit, signal or placement failure on private FD 5
     v
-  HOST: engine reads FD 5: exit 0 pass, other exit fail, failure error
+  HOST: checkSandbox reads FD 5 -> CheckSandboxOutcome (exited/signalled/failed)
+    `-- shell checker maps exit 0 pass, other exit fail, signal/failure error
 
   $type: judge -> separate tool-free Pi invocation in its own sandbox
 ```
