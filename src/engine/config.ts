@@ -177,7 +177,7 @@ function expectNonEmptyString(value: unknown, label: string): string {
   return value;
 }
 
-function expectRelativePath(value: unknown, label: string): string {
+export function expectRelativePath(value: unknown, label: string): string {
   const path = expectNonEmptyString(value, label);
   assertRelativePath(path, label);
   return path;
@@ -197,7 +197,7 @@ function expectFiles(value: unknown, label: string): Readonly<Record<string, str
   );
 }
 
-function expectWorkspaceDestination(destination: string, label: string): void {
+export function expectWorkspaceDestination(destination: string, label: string): void {
   expectNonEmptyString(destination, label);
   if (destination.includes("\0")) {
     throw new ConfigError(`${label} contains a NUL byte`);

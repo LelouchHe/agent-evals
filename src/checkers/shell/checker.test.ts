@@ -1,10 +1,12 @@
 import assert from "node:assert/strict";
-import { mkdir } from "node:fs/promises";
+import { execFileSync } from "node:child_process";
+import { lstat, mkdir, readFile, readdir, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { test, type TestContext } from "node:test";
+import { fileChecker } from "../file/checker.ts";
 import { ConfigError, type ImplementationParams } from "../../engine/config.ts";
 import { parseImplementationParams } from "../../engine/params.ts";
-import type { CheckerContext, CheckSandbox, CheckSandboxOutcome } from "../../engine/registry.ts";
+import type { CheckerContext, CheckResult, CheckSandbox, CheckSandboxOutcome } from "../../engine/registry.ts";
 import { openRunRoot } from "../../engine/workspace.ts";
 import { makeTempDir } from "../../../tests/helpers/fake-pi-control.ts";
 import { implementationContext } from "../../../tests/helpers/implementation-context.ts";
@@ -14,21 +16,38 @@ function sandbox(outcome: CheckSandboxOutcome): CheckSandbox {
   return { run: () => Promise.resolve(outcome) };
 }
 
-async function context(t: TestContext, checkSandbox: CheckSandbox): Promise<CheckerContext> {
+async function makeWorkspace(t: TestContext, checkSandbox: CheckSandbox) {
   const root = await makeTempDir(t, "ae-shell-check-");
-  const workspace = join(root, "workspace");
-  const baseline = join(root, "baseline");
-  await mkdir(workspace);
-  await mkdir(baseline);
+  const workspaceDir = join(root, "workspace");
+  const baselineDir = join(root, "baseline");
+  await mkdir(workspaceDir);
+  await mkdir(baselineDir);
   return {
-    workspace: await openRunRoot(workspace),
-    baseline: await openRunRoot(baseline),
-    runRootDir: root,
-    input: "task",
-    checkSandbox,
-    timeoutMs: 5_000,
-    signal: AbortSignal.timeout(5_000),
+    root,
+    workspaceDir,
+    context: {
+      workspace: await openRunRoot(workspaceDir),
+      baseline: await openRunRoot(baselineDir),
+      runRootDir: root,
+      input: "task",
+      checkSandbox,
+      timeoutMs: 5_000,
+      signal: AbortSignal.timeout(5_000),
+    } satisfies CheckerContext,
   };
+}
+
+async function context(t: TestContext, checkSandbox: CheckSandbox): Promise<CheckerContext> {
+  return (await makeWorkspace(t, checkSandbox)).context;
+}
+
+async function runFiles(
+  authoringDir: string,
+  raw: ImplementationParams,
+  contextValue: CheckerContext,
+): Promise<readonly CheckResult[]> {
+  const params = await parseImplementationParams(shellChecker.params, raw, 'checker "shell"');
+  return (await shellChecker.create(params, implementationContext(authoringDir))).check(contextValue);
 }
 
 async function check(t: TestContext, raw: ImplementationParams, checkSandbox: CheckSandbox) {
@@ -88,4 +107,195 @@ test("a signal or an unstartable program is an error, not a failed judgment", as
       },
     ],
   );
+});
+
+test("check-time files reject unsafe destinations, sources and overlap at load", async (t) => {
+  const authoring = await makeTempDir(t, "ae-shell-files-authoring-");
+  await writeFile(join(authoring, "source.txt"), "source\n");
+
+  const parse = (files: Record<string, string>) =>
+    parseImplementationParams(shellChecker.params, { run: ["true"], files }, 'checker "shell"');
+  for (const destination of ["../escape", "/absolute", "", ".", "./", "C:\\temp\\x", "\\rooted"]) {
+    await assert.rejects(parse({ [destination]: "source.txt" }), ConfigError, destination);
+  }
+  for (const source of ["/absolute.txt", "", "nul\0byte"]) {
+    await assert.rejects(parse({ "tests/file.txt": source }), ConfigError, source);
+  }
+  await assert.rejects(
+    parseImplementationParams(shellChecker.params, { run: ["true"], files: {}, other: 1 }, 'checker "shell"'),
+    ConfigError,
+  );
+
+  // A source is an authoring-relative path, so a parent-relative asset is valid.
+  await mkdir(join(authoring, "nested"));
+  await writeFile(join(authoring, "nested/source.txt"), "shared\n");
+  await parseImplementationParams(
+    shellChecker.params,
+    { run: ["true"], files: { "tests/file.txt": "../source.txt" } },
+    'checker "shell"',
+  ).then((params) => shellChecker.create(params, implementationContext(join(authoring, "nested"))));
+
+  const missing = await parseImplementationParams(
+    shellChecker.params,
+    { run: ["true"], files: { "tests/file.txt": "missing.txt" } },
+    'checker "shell"',
+  );
+  await assert.rejects(
+    async () => shellChecker.create(missing, implementationContext(authoring)),
+    (error: unknown) => error instanceof ConfigError && /is not accessible/.test(error.message),
+  );
+
+  // A FIFO is not a regular file, and staging must not block on it.
+  const fifo = join(authoring, "pipe");
+  execFileSync("/usr/bin/mkfifo", [fifo]);
+  const special = await parseImplementationParams(
+    shellChecker.params,
+    { run: ["true"], files: { "tests/pipe": "pipe" } },
+    'checker "shell"',
+  );
+  await assert.rejects(
+    async () => shellChecker.create(special, implementationContext(authoring)),
+    (error: unknown) => error instanceof ConfigError && /must be a regular file or directory/.test(error.message),
+  );
+
+  await mkdir(join(authoring, "tree"));
+  await writeFile(join(authoring, "tree/inner.txt"), "inner\n");
+  await writeFile(join(authoring, "other.txt"), "other\n");
+  const overlap = await parseImplementationParams(
+    shellChecker.params,
+    { run: ["true"], files: { tests: "tree", "tests/inner.txt": "other.txt" } },
+    'checker "shell"',
+  );
+  await assert.rejects(
+    async () => shellChecker.create(overlap, implementationContext(authoring)),
+    (error: unknown) => error instanceof ConfigError && /overwrites tests\/inner\.txt/.test(error.message),
+  );
+});
+
+test("check-time files appear only when the check runs and a later check sees them", async (t) => {
+  const authoring = await makeTempDir(t, "ae-shell-files-authoring-");
+  await mkdir(join(authoring, "checks"));
+  await writeFile(join(authoring, "checks/acceptance.test.js"), "acceptance body\n");
+  const dirs = await makeWorkspace(t, sandbox({ kind: "exited", exitCode: 0, output: "" }));
+
+  await assert.rejects(readFile(join(dirs.workspaceDir, "tests/acceptance.test.js")));
+  const [result] = await runFiles(
+    authoring,
+    { run: ["node", "tests/acceptance.test.js"], files: { "tests/acceptance.test.js": "checks/acceptance.test.js" } },
+    dirs.context,
+  );
+  assert.equal(result?.status, "pass", result?.reason);
+  assert.equal(await readFile(join(dirs.workspaceDir, "tests/acceptance.test.js"), "utf8"), "acceptance body\n");
+
+  const fileParams = await parseImplementationParams(
+    fileChecker.params,
+    { path: "tests/acceptance.test.js", matches: "^acceptance body\\n?$" },
+    'checker "file"',
+  );
+  const [seen] = await (await fileChecker.create(fileParams, implementationContext(authoring))).check(dirs.context);
+  assert.equal(seen?.status, "pass");
+});
+
+test("check-time files replace the agent's file and copy directory trees", async (t) => {
+  const parent = await makeTempDir(t, "ae-shell-files-parent-");
+  const authoring = join(parent, "case");
+  await mkdir(join(authoring, "checks"), { recursive: true });
+  await writeFile(join(authoring, "checks/acceptance.test.js"), "real body\n");
+  await mkdir(join(parent, "shared"));
+  await writeFile(join(parent, "shared/support.txt"), "support\n");
+
+  const dirs = await makeWorkspace(t, sandbox({ kind: "exited", exitCode: 0, output: "" }));
+  await mkdir(join(dirs.workspaceDir, "tests"));
+  await writeFile(join(dirs.workspaceDir, "tests/acceptance.test.js"), "agent's fake\n");
+  await mkdir(join(dirs.workspaceDir, "existing"));
+  await writeFile(join(dirs.workspaceDir, "existing/keep.txt"), "keep\n");
+
+  const [result] = await runFiles(
+    authoring,
+    {
+      run: ["true"],
+      files: {
+        tests: "checks",
+        "existing/support.txt": "../shared/support.txt",
+      },
+    },
+    dirs.context,
+  );
+  assert.equal(result?.status, "pass", result?.reason);
+  assert.equal(await readFile(join(dirs.workspaceDir, "tests/acceptance.test.js"), "utf8"), "real body\n");
+  assert.equal(await readFile(join(dirs.workspaceDir, "existing/keep.txt"), "utf8"), "keep\n");
+  assert.equal(await readFile(join(dirs.workspaceDir, "existing/support.txt"), "utf8"), "support\n");
+});
+
+test("a leaf symlink is replaced instead of written through", async (t) => {
+  const authoring = await makeTempDir(t, "ae-shell-files-authoring-");
+  await mkdir(join(authoring, "checks"));
+  await writeFile(join(authoring, "checks/acceptance.test.js"), "real body\n");
+  const outside = await makeTempDir(t, "ae-shell-files-outside-");
+  const outsideFile = join(outside, "authorized_keys");
+  await writeFile(outsideFile, "do not touch\n");
+
+  const dirs = await makeWorkspace(t, sandbox({ kind: "exited", exitCode: 0, output: "" }));
+  await mkdir(join(dirs.workspaceDir, "tests"));
+  await symlink(outsideFile, join(dirs.workspaceDir, "tests/acceptance.test.js"));
+  await symlink(join(outside, "missing.txt"), join(dirs.workspaceDir, "tests/broken.test.js"));
+
+  const [result] = await runFiles(
+    authoring,
+    {
+      run: ["true"],
+      files: {
+        "tests/acceptance.test.js": "checks/acceptance.test.js",
+        "tests/broken.test.js": "checks/acceptance.test.js",
+      },
+    },
+    dirs.context,
+  );
+  assert.equal(result?.status, "pass", result?.reason);
+  assert.equal(await readFile(outsideFile, "utf8"), "do not touch\n");
+  await assert.rejects(readFile(join(outside, "missing.txt")));
+  assert.equal(await readFile(join(dirs.workspaceDir, "tests/acceptance.test.js"), "utf8"), "real body\n");
+  assert.equal((await lstat(join(dirs.workspaceDir, "tests/acceptance.test.js"))).isSymbolicLink(), false);
+  assert.equal((await lstat(join(dirs.workspaceDir, "tests/broken.test.js"))).isSymbolicLink(), false);
+});
+
+test("check-time files refuse to follow an ancestor symlink", async (t) => {
+  const authoring = await makeTempDir(t, "ae-shell-files-authoring-");
+  await mkdir(join(authoring, "checks"));
+  await writeFile(join(authoring, "checks/acceptance.test.js"), "real body\n");
+
+  for (const inside of [false, true]) {
+    const dirs = await makeWorkspace(t, sandbox({ kind: "exited", exitCode: 0, output: "" }));
+    const outside = await makeTempDir(t, "ae-shell-files-outside-");
+    const target = inside ? join(dirs.workspaceDir, "real") : outside;
+    if (inside) await mkdir(target);
+    await symlink(target, join(dirs.workspaceDir, "tests"));
+
+    const [result] = await runFiles(
+      authoring,
+      { run: ["true"], files: { "tests/acceptance.test.js": "checks/acceptance.test.js" } },
+      dirs.context,
+    );
+    assert.equal(result?.status, "error");
+    assert.match(result?.reason ?? "", /symlink/);
+    assert.equal((await lstat(join(dirs.workspaceDir, "tests"))).isSymbolicLink(), true);
+    assert.deepEqual(await readdir(target), []);
+  }
+});
+
+test("a directory where a check-time file goes is an error, not a replacement", async (t) => {
+  const authoring = await makeTempDir(t, "ae-shell-files-authoring-");
+  await mkdir(join(authoring, "checks"));
+  await writeFile(join(authoring, "checks/acceptance.test.js"), "real body\n");
+  const dirs = await makeWorkspace(t, sandbox({ kind: "exited", exitCode: 0, output: "" }));
+  await mkdir(join(dirs.workspaceDir, "tests/acceptance.test.js"), { recursive: true });
+
+  const [result] = await runFiles(
+    authoring,
+    { run: ["true"], files: { "tests/acceptance.test.js": "checks/acceptance.test.js" } },
+    dirs.context,
+  );
+  assert.equal(result?.status, "error");
+  assert.match(result?.reason ?? "", /where a directory exists/);
+  assert.equal((await lstat(join(dirs.workspaceDir, "tests/acceptance.test.js"))).isDirectory(), true);
 });
