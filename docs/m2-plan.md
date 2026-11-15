@@ -167,7 +167,7 @@ The implemented helpers now use ACP SDK 2.6.0 and its stable ACP v1 app API (`cl
 | -------------------------- | -------------------------------------------------------------------------- | --------------------------------------------------------------------------- |
 | Messages, tool calls, kind | Yes; `rawInput` complete on the first `tool_call`                          | Yes; first `tool_call` has empty `rawInput`, the command arrives in updates |
 | Reasoning                  | `agent_thought_chunk`                                                      | None observed with `haiku`                                                  |
-| Per-turn tokens            | Not in the prompt response                                                 | `session/prompt` result `usage` (marked unstable in ACP)                    |
+| Prompt-response tokens     | `session/prompt` result `usage` (from `pi-acp` `1565f7e`; absent earlier)  | `session/prompt` result `usage` (marked unstable in ACP)                    |
 | Context and cost           | `usage_update`                                                             | `usage_update`                                                              |
 | Permission requests        | None                                                                       | Before commands and MCP calls in `default` mode                             |
 | Skill loading              | Listed in `available_commands_update`; use shows as a `read` of `SKILL.md` | Listed in `available_commands_update`                                       |
