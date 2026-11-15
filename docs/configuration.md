@@ -130,6 +130,7 @@ Select a name explicitly, even with one entry. `cases` must be a non-empty mappi
 | `fixture`   | Optional directory relative to this YAML, copied into the workspace root. Omission starts an empty workspace.                                       |
 | `files`     | Optional mapping from a workspace-relative destination (`.` is the root) to an authoring file or directory, placed after the fixture.               |
 | `timeoutMs` | Optional positive integer milliseconds; defaults to 300000. Bounds runner execution and is also each check's budget, not the whole run's wall time. |
+| `mocks`     | Optional declared collaborator substitutes; see [Mocks](#mocks).                                                                                    |
 | `cases`     | Optional document-level selection control; not passed to execution.                                                                                 |
 
 Unknown common fields, invalid shapes and duplicate YAML keys are errors. There is one document/file: no `extends`, imported collections or nested `cases`. Implementation parameters may contain [placeholders](#placeholders). Null is a value, not omission or deletion.
@@ -148,6 +149,21 @@ Authoring resources are relative to the YAML file; checker targets are relative 
 - Placement happens after the fixture copy and before the baseline snapshot, so placed files are part of the baseline and `unchanged` covers them.
 
 The engine only copies; it assigns no meaning to a destination and knows no harness paths. A project-level skill is one use: place its directory where the harness discovers it, for example `.agents/skills/` for Pi or `.claude/skills/` for Claude Code.
+
+## Mocks
+
+A case may replace a `PATH` command with a fixed result for one run:
+
+```yaml
+mocks:
+  shell:
+    make:
+      return:
+        exitCode: 1
+        stderr: "release commands are disabled\n"
+```
+
+[Mocks](mocks.md) owns what mocks do, the supported fields and defaults, a complete case, `mocks.json` and the current limitations.
 
 ## Placeholders
 
@@ -203,10 +219,9 @@ runner:
 A path-referenced file resolves its own directories from its location and its placeholders like the case's own parameters; an inline object is part of them. Missing deps or an invalid login root are configuration errors before any run resource exists.
 
 Each run assembles the harness home in the run's own HOME exactly as the helpers do, starts `acpCommand` in the workspace under the same sandbox, creates one session, applies `config`, then sends the input as one prompt. `agent-evals config <agent.yml>` lists the offered options. A key matching no option, or a value the agent does not offer, fails the run before prompting; set `model` first because other choices may depend on it. Skills and project settings come from the prepared workspace (`fixture` and `files`), not runner parameters.
+The run completes only when the turn ends with `end_turn`; any other stop reason, an agent exit or a protocol error is an execution error. The runner records a [trace](#inspecting-and-recording); output is the agent's text after its last tool call. Permission requests are approved (`allow_once`, else `allow_always`): the sandbox is the boundary. On completion, timeout or cancellation the whole sandbox is stopped, then changed original login files are copied back. Only the workspace, the run HOME and its temporary directory are writable; deps is read-only, and the baseline, policy and case files are unreadable. With [`mocks`](#mocks), the runner puts the forwarder directory first on the process `PATH` and makes it readable but not writable inside the sandbox.
 
-The run completes only when the turn ends with `end_turn`; any other stop reason, an agent exit or a protocol error is an execution error. The runner records a [trace](#inspecting-and-recording); output is the agent's text after its last tool call. Permission requests are approved (`allow_once`, else `allow_always`): the sandbox is the boundary. On completion, timeout or cancellation the whole sandbox is stopped, then changed original login files are copied back. Only the workspace, the run HOME and its temporary directory are writable; deps is read-only, and the baseline, policy and case files are unreadable.
-
-Example: [`deploy-runbook`](../examples/cases/deploy-runbook/case.yml), whose Pi and Claude cases share one fixture and differ in agent, model and whether `files` places `skill` where that harness discovers it (`.agents/skills/` or `.claude/skills/`).
+Example: [`deploy-runbook`](../examples/cases/deploy-runbook/case.yml), whose Pi and Claude cases share one fixture and one [`mocks`](mocks.md) declaration and differ in agent, model and whether `files` places `skill` where that harness discovers it (`.agents/skills/` or `.claude/skills/`).
 
 ### File Checker (`$type: file`)
 
@@ -245,7 +260,7 @@ The judge receives the task, the selected regular-file evidence (or an explicit 
 
 `view` uses the same authoring resolver as `run`, then prints the resolved declaration and each top-level field's source file, 1-based declaration line, and common/selected-case origin. Case labels are JSON-escaped. Placeholders are shown unsubstituted. It does not show implementation defaults or invoke implementation schemas, factories, environment lookups or harnesses; it is not a runtime-readiness check.
 
-`run` writes `.agent-evals/<run-id>/result.json` in the invocation directory by default; `--results-dir` changes the root. This is retained report data, not the evaluated workspace. Schema version 1 retains source path/optional case name, declared `resolvedConfig`, runner outcome, individual checks, overall status, diagnostics and cleanup status. Substituted and schema-normalized/defaulted values do not replace the declaration; implementation outputs are retained normally. A runner that records a trace (currently `acp`) also writes `trace.json` beside it, including for failed, timed-out or cancelled runs: an ordered list of `message` and `thought` entries (consecutive chunks joined) and `tool` entries. ACP updates replace the fields they carry, so each tool entry is one `toolCallId` in its final state with the harness's own fields (`title`, `kind`, `status`, `rawInput`, `content`, ...); intermediate states are not kept. Non-text content and other session updates are not recorded. The [judge](#judge-checker-type-judge) can take the trace as evidence; field meanings differ between harnesses, so there are no field-level trace assertions. Literal keys authored in YAML are declaration data and are not automatically masked. No resource hashes or workspace snapshots are retained, so old resource contents cannot be reconstructed from their unchanged paths.
+`run` writes `.agent-evals/<run-id>/result.json` in the invocation directory by default; `--results-dir` changes the root. This is retained report data, not the evaluated workspace. Schema version 1 retains source path/optional case name, declared `resolvedConfig`, runner outcome, individual checks, overall status, diagnostics and cleanup status. Substituted and schema-normalized/defaulted values do not replace the declaration; implementation outputs are retained normally. A runner that records a trace (currently `acp`) also writes `trace.json` beside it, including for failed, timed-out or cancelled runs: an ordered list of `message` and `thought` entries (consecutive chunks joined) and `tool` entries. ACP updates replace the fields they carry, so each tool entry is one `toolCallId` in its final state with the harness's own fields (`title`, `kind`, `status`, `rawInput`, `content`, ...); intermediate states are not kept. Non-text content and other session updates are not recorded. A case that declares [`mocks`](#mocks) also writes `mocks.json`: the calls that reached a mocked command in arrival order, each as a `target` and its `arguments`. It is run evidence, not a copy of the `mocks` declaration, and holds no output or exit code and no judgment. The [judge](#judge-checker-type-judge) can take the trace as evidence; field meanings differ between harnesses, so there are no field-level trace assertions. Literal keys authored in YAML are declaration data and are not automatically masked. No resource hashes or workspace snapshots are retained, so old resource contents cannot be reconstructed from their unchanged paths.
 
 Overall statuses are `pass`, `fail`, `error`, `timeout`, and `cancelled`; individual checks are `pass`, `fail`, or `error`. Pass/fail summarizes satisfaction of the configured checks, not model/skill quality or an improvement claim. A normal negative judgment is `fail`; inability to execute or evaluate is `error`, with timeout/cancellation reported separately. Exit codes are 0 for pass, 1 for failed checks, and 2 for configuration/execution/checker/timeout/cancellation errors. Early configuration errors need not produce a run record.
 

@@ -1,20 +1,21 @@
 # M3: Controlled Collaborators
 
-Status: planned. Mocks and interaction checks moved out of [M2](m2-plan.md) into this milestone so M2 closes cleanly on ACP execution and trace evidence. Nothing here is implemented yet; syntax below records agreed structure where settled, including shell argument matching; the call checker and MCP input matching stay open.
+Status: step 1 implemented, later steps planned. Mocks and interaction checks moved out of [M2](m2-plan.md) into this milestone so M2 closes cleanly on ACP execution and trace evidence. This milestone now covers shell collaborators only; the call checker moved to [M4](m4-plan.md). Step 1 delivers `PATH` commands with one `return` rule each, the forwarder wiring, the host service and `mocks.json`; `run`/`pass`, argument matching, rule lists, workspace scripts, unmatched-call behavior and Seatbelt denial remain planned, and MCP collaborators are M5. The syntax below records agreed structure where settled, including shell argument matching, which stays open.
 
 ## Scope
 
-Replace or observe external collaborators at the environment boundary, record every call that reaches them outside the sandbox, and assert on those records through deterministic checks.
+Replace or observe shell collaborators at the environment boundary and record every call that reaches them outside the sandbox.
 
 1. **Shell collaborators.** Intercept `PATH` programs and workspace scripts through thin forwarders, run mock actions or delegate to the real target, and retain structured interaction records.
-2. **Deterministic call checker.** Assert on recorded interactions through an ordinary `$type` checker without engine assertion magic.
 
-Not in scope: MCP collaborators, which move to the next milestone with their configuration, input matching and spy behavior still open (see [Open Questions](#open-questions)); harness-internal tools (`Read`, `Edit`, `WebFetch` and similar built-ins), shell builtins (`cd`, `export`), HTTP/network interception, model-provider fault injection, Linux.
+Asserting on those records is [M4](m4-plan.md).
+
+Not in scope: MCP collaborators, which are milestone M5, with their configuration, input matching and spy behavior still open (see [Open Questions](#open-questions)); harness-internal tools (`Read`, `Edit`, `WebFetch` and similar built-ins), shell builtins (`cd`, `export`), HTTP/network interception, model-provider fault injection, Linux.
 
 ## Decisions
 
 - **Mocks live at the environment boundary, not in ACP.** ACP session updates are reports rather than interception hooks, and harness-native tool schemas vary across harnesses. Process questions over internal tools belong to a judge reading `trace.json`; deterministic call evidence comes from boundary mocks.
-- **Behavior and interaction records stay outside the sandbox.** Inside the sandbox, a mock is only a thin forwarder to the engine host; mock handlers, static responses and call logs live outside everything the agent can read or write. Mocks are not assumed undetectable (`which`, reading the forwarder or a denied direct exec can still reveal substitution), so the goal is unforgeable records and hidden mock logic rather than stealth.
+- **Behavior and interaction records stay outside the sandbox.** Inside the sandbox, a mock is only a thin forwarder to the engine host; mock handlers, static responses and call logs live outside everything the agent can read or write. Mocks are not assumed undetectable (`which`, reading the forwarder or a denied direct exec can still reveal substitution), so the goal is records the sandbox cannot read, alter or erase, plus hidden mock logic, rather than stealth. Any process in the sandbox can cause a record by making a call, either through a forwarder or by writing to its socket directly; it cannot read, change or remove one.
 - **Arrange (`mocks`) and Assert (`checks`) are separate.** Top-level `mocks` owns runtime interception, actions and call recording (like gMock `ON_CALL`) and never produces pass/fail judgments; `checks` inspects recorded interactions after the run (like `EXPECT_CALL`). Shared `mocks` can be reused across named cases with different inputs or checks.
 - **Stub, fake and spy are three actions of one mechanism.** Every call reaching a declared mock is recorded before its action runs:
   - `return`: fixed `exitCode`, `stdout` and `stderr` (stub).
@@ -28,7 +29,7 @@ Not in scope: MCP collaborators, which move to the next milestone with their con
 - **The engine owns mock behavior; the runner owns the wiring.** The engine parses `mocks`, runs the host service, matches rules, performs actions, keeps the records and generates forwarders, so that logic exists once. A runner receives an optional `mocks` value on `RunnerContext` (forwarder directory, socket path, targets whose real binaries to deny) and is responsible for `PATH` and sandbox policy. Forwarder generation stays in the engine until a second platform needs it elsewhere.
 - **Runners without mock support fail at load time.** A runner definition declares `mocks: true` when it can wire them. Running a case that declares `mocks` on a runner without it (such as the native `pi` runner) is a `ConfigError` before any run directory exists, never a silent run against real commands.
 - **A record holds the target and its arguments.** No output or exit code, since `pass` cannot observe one after `exec` and all three actions keep one record shape.
-- **Engine stays assertion-agnostic; `judge` is unchanged.** The engine exposes raw interaction records on `CheckerContext` and writes `interactions.json` beside `trace.json`. Checking lives in a replaceable `$type` checker; asserting on an unmocked target is a checker `error` rather than a vacuous pass. `judge` does not take `interactions` unless a real case later needs qualitative judgment over indirect script calls absent from `trace.json`.
+- **Engine stays assertion-agnostic; `judge` is unchanged.** The engine writes `mocks.json` beside `trace.json` and, once [M4](m4-plan.md) adds the call checker, exposes raw interaction records on `CheckerContext`. Checking lives in a replaceable `$type` checker; asserting on an unmocked target is a checker `error` rather than a vacuous pass. `judge` does not take `mockRecords` unless a real case later needs qualitative judgment over indirect script calls absent from `trace.json`.
 
 ### Shell argument matching
 
@@ -62,6 +63,8 @@ Interception relies on command lookup and on nothing else: no hook, injected lib
 
 ### Agreed outer shape
 
+The full agreed shape, only partly implemented: today one `return` rule for a bare `PATH` name runs, and the rest is planned ([current usage](mocks.md)).
+
 ```yaml
 mocks:
   shell:
@@ -90,16 +93,25 @@ mocks:
           stdout: "https://example.test/foo/bar/pull/1\n"
 ```
 
+## Implemented Step
+
+Step 1 is implemented: the engine writes the forwarders, runs the host service, records every call and retains `mocks.json` beside `trace.json`; the `acp` runner declares mock support and wires the forwarder directory into `PATH` and its sandbox policy, while the native `pi` runner refuses a case that declares mocks. [Mocks](mocks.md) owns current usage, defaults, `mocks.json` and limitations.
+
+- **Lifecycle.** The host starts before `Runner.run` and closes after `Runner.stop` resolves, so a call from a process that outlives the turn is still answered and recorded.
+- **Socket location.** The per-run socket lives directly in the temporary directory as `run-<id>.sock`, not beside the run directories: a Unix socket path is limited to about 104 bytes and the run root's own path plus the socket name can exceed it. The forwarder receives the path in its text. The engine removes the socket when it closes the host.
+- **Not yet enforced.** Seatbelt denial of real binaries, `run`/`pass` faults ending the run, and unmatched-call denial are later steps, so an absolute-path call still reaches the real command.
+
 ## Verified Constraints
 
 From the M2 spikes on Pi 1.5.2 (`pi-acp` fork 0.0.34) and Claude Code 2.1.318 (`claude-agent-acp` 0.101.0) under macOS Seatbelt:
 
 - **Command shim and Seatbelt deny:** a `PATH` shim for `make` ahead of `home.path` recorded both direct shell calls and calls made from inside a script in both harnesses; direct execution of `/usr/bin/make` by absolute path was denied by Seatbelt with exit code `126`. Needs nothing in `deps`.
 - **MCP injection:** an MCP mock server injected through `session/new` was called through the harness tool in both harnesses; tool names surfaced as `mcp__<server>__<tool>` in both. Pi through `pi-acp` needed `_meta.directTools: true` on the injected server entry, and any `--tools` allowlist had to include `mcp__<server>__*`.
-- **Forwarder transport:** in a standalone Seatbelt test, a `/bin/sh` forwarder using `nc -U` and `base64` returned separate stdout, stderr and exit code from a host process, and an argument containing a space reached the host intact. Allowing only the socket path with `(allow network-outbound (literal ...))` was enough; without a network rule the call failed. The sandbox could neither read the host's record nor write into the forwarder directory. Not covered: `pass`, `run`, stdin, binary output, empty arguments, and the real harnesses.
+- **Forwarder transport:** in a standalone Seatbelt test, a `/bin/sh` forwarder using `nc -U` and `base64` returned separate stdout, stderr and exit code from a host process, and an argument containing a space reached the host intact. Allowing only the socket path with `(allow network-outbound (literal ...))` was enough; without a network rule the call failed. The sandbox could neither read the host's record nor write into the forwarder directory.
+- **Step 1 in the real runner (2026-11-14):** the same transport now runs inside the `acp` runner's own environment and generated policy: a delegated shell call to a mocked `PATH` command received the declared stdout, stderr and exit code; both calls reached the host as target plus arguments outside the sandbox; an argument containing a space arrived intact, and so did an empty argument; output containing a NUL and a non-ASCII character arrived byte for byte; the command's real binary did not run. The sandbox could neither list the run root nor write to the forwarder, but could read the forwarder itself. Under this project's policy the reply works with the existing `(allow network-outbound)` rule, not a socket-literal rule.
+- **Still unverified:** `pass`, `run`, stdin forwarding, workspace-script targets, Seatbelt denial of real binaries, M5's MCP input matching, and any call made through a real harness (all step-1 evidence uses the model-free ACP peer).
 - **Observed agent probing:** during spikes, an unprompted agent listed its run directory, read mock logs and source, recognized the mocks and ran a mock server by hand, producing a false call record when logs lived inside the sandbox.
 
 ## Open Questions
 
-- **Call checker `$type` name and schema.** Naming (`call` vs `interactions`), whether it takes the same `args` as a mock rule, count constraints (`times: 0`, exact count, bounds) and whether one generic matcher checker later spans calls, JSON files and output or stays per-evidence-source first.
-- **MCP collaborators (next milestone).** Exact `mocks.mcp` syntax, how a rule matches a tool's JSON object input (shell `args` does not have to cover it), server naming and harness-specific `_meta` (such as Pi's `_meta.directTools: true`), whether MCP supports `pass` to a real server, and HTTP service mocks / model-provider fault injection (which depend on the deferred proxy).
+- **MCP collaborators (M5).** Exact `mocks.mcp` syntax, how a rule matches a tool's JSON object input (shell `args` does not have to cover it), server naming and harness-specific `_meta` (such as Pi's `_meta.directTools: true`), whether MCP supports `pass` to a real server, and HTTP service mocks / model-provider fault injection (which depend on the deferred proxy).

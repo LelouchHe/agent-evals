@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
-import { readFile, readdir, writeFile } from "node:fs/promises";
+import { execFile, spawn } from "node:child_process";
+import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { test } from "node:test";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { stringify } from "yaml";
 import { runCliProcess } from "./helpers/cli-process.ts";
 import { createFakePi, makeTempDir } from "./helpers/fake-pi-control.ts";
@@ -42,6 +44,7 @@ test("package metadata and built runtime assets point at the sole CLI implementa
   assert.ok(cli.startsWith("#!/usr/bin/env node\n"), "dist/cli.js must keep its executable shebang");
   for (const asset of [
     "dist/checkers/file/regex-worker.js",
+    "dist/engine/forwarder.sh",
     "dist/engine/runtime-assets.js",
     "dist/runners/pi/supervisor.js",
     "dist/runners/pi/safe-process-group.js",
@@ -150,3 +153,91 @@ test("built CLI runs packaged supervisor, wrapper, regex worker, and judge asset
   );
   assert.ok(record.checks.some((check) => check.checker === "judge"));
 });
+
+/** Run one command to completion, keeping its last stderr line for the failure message. */
+async function run(command: string, args: readonly string[], cwd: string): Promise<void> {
+  await new Promise<void>((resolve, reject) => {
+    execFile(command, args, { cwd, maxBuffer: 10 * 1024 * 1024 }, (error, _stdout, stderr) => {
+      if (error === null) resolve();
+      else reject(new Error(`${command} ${args[0] ?? ""} failed: ${stderr.trim() || error.message}`));
+    });
+  });
+}
+
+test(
+  "the packed artifact carries the forwarder its own host loads",
+  { skip: process.platform !== "darwin" },
+  async (t) => {
+    const packDir = await makeTempDir(t, "ae-pack-");
+    await run("npm", ["pack", "--ignore-scripts", "--pack-destination", packDir], root);
+    const [tarball] = (await readdir(packDir)).filter((name) => name.endsWith(".tgz"));
+    assert.ok(tarball !== undefined, "npm pack produced a tarball");
+    await run("/usr/bin/tar", ["-xzf", join(packDir, tarball), "-C", packDir], packDir);
+    const packageRoot = join(packDir, "package");
+    const mocksModule = pathToFileURL(join(packageRoot, "dist", "engine", "mocks.js"));
+    // The host must resolve the asset beside itself inside the package, not from this worktree.
+    assert.equal(
+      fileURLToPath(new URL("./forwarder.sh", mocksModule)),
+      join(packageRoot, "dist", "engine", "forwarder.sh"),
+    );
+    await readFile(join(packageRoot, "dist", "engine", "forwarder.sh"), "utf8");
+
+    const { startMockHost } = (await import(mocksModule.href)) as typeof import("../src/engine/mocks.ts");
+    const runRoot = join(packDir, "run");
+    await mkdir(runRoot);
+    const host = await startMockHost({
+      runRootDir: runRoot,
+      shell: { release: { exitCode: 4, stdout: "packed out\n", stderr: "packed err\n" } },
+    });
+    // Close once, however the test ends: a failed call must not leave the host listening.
+    let closing: ReturnType<typeof host.close> | undefined;
+    const closeHost = (): ReturnType<typeof host.close> => (closing ??= host.close());
+    t.after(async () => {
+      await closeHost().catch(() => {});
+    });
+
+    const calls = [];
+    for (const args of [["--now", ""], ["next"]]) {
+      calls.push(await callForwarder(join(host.wiring.forwarderDir, "release"), args));
+    }
+    const mockRecords = await closeHost();
+
+    assert.deepEqual(calls, [
+      { status: 4, stdout: "packed out\n", stderr: "packed err\n" },
+      { status: 4, stdout: "packed out\n", stderr: "packed err\n" },
+    ]);
+    assert.deepEqual(mockRecords, [
+      { target: "release", arguments: ["--now", ""] },
+      { target: "release", arguments: ["next"] },
+    ]);
+  },
+);
+
+/**
+ * Run one generated forwarder to completion, keeping both streams and the exit status apart.
+ * A spawn failure rejects instead of surfacing as an unhandled error, and no child survives it.
+ */
+async function callForwarder(
+  path: string,
+  args: readonly string[],
+): Promise<{ status: number | null; stdout: string; stderr: string }> {
+  const child = spawn(path, args, { stdio: ["ignore", "pipe", "pipe"] });
+  const exited = new Promise<number | null>((resolve, reject) => {
+    child.once("close", resolve);
+    child.once("error", reject);
+  });
+  const collect = async (stream: NodeJS.ReadableStream | null): Promise<string> => {
+    if (stream === null) return "";
+    const chunks: Buffer[] = [];
+    for await (const chunk of stream) chunks.push(chunk as Buffer);
+    return Buffer.concat(chunks).toString("utf8");
+  };
+  try {
+    const [stdout, stderr] = await Promise.all([collect(child.stdout), collect(child.stderr)]);
+    return { status: await exited, stdout, stderr };
+  } catch (error) {
+    child.kill("SIGKILL");
+    await exited.catch(() => {});
+    throw error;
+  }
+}

@@ -16,6 +16,16 @@ export interface RunnerContext {
   readonly input: string;
   readonly timeoutMs: number;
   readonly signal: AbortSignal;
+  /** Present when the case declares mocks and the runner wires them into its environment. */
+  readonly mocks?: MockWiring;
+}
+
+/** What a runner needs to place the engine's mocked commands. */
+export interface MockWiring {
+  /** Directory of one forwarder per mocked `PATH` command; the runner puts it first on `PATH`. */
+  readonly forwarderDir: string;
+  /** Unix socket the forwarders use to reach the engine's host service. */
+  readonly socketPath: string;
 }
 
 export interface RunnerOutcome {
@@ -31,6 +41,12 @@ export interface RunnerOutcome {
 export type TraceEntry =
   | { readonly type: "message" | "thought"; readonly text: string }
   | { readonly type: "tool"; readonly toolCallId: string; readonly [field: string]: unknown };
+
+/** One call that reached a mocked collaborator: what was asked for and with which arguments. */
+export interface MockRecord {
+  readonly target: string;
+  readonly arguments: readonly string[];
+}
 
 /** A prepared runner instance; its factory already captured validated parameters. */
 export interface Runner {
@@ -51,6 +67,8 @@ export interface RunnerDefinition<P> {
   readonly type: string;
   /** Declarative Zod parameter schema; the engine validates raw data once. */
   readonly params: ZodType<P>;
+  /** True when the runner wires the mocks it receives into `PATH` and its sandbox. */
+  readonly mocks?: true;
   /** Validate operational readiness for parsed params, then create the instance. */
   readonly create: (params: P, context: ImplementationContext) => Runner | Promise<Runner>;
 }
@@ -60,6 +78,8 @@ export interface RegisteredRunnerDefinition {
   readonly type: string;
   readonly params: ZodType<unknown>;
   readonly create: (params: unknown, context: ImplementationContext) => Runner | Promise<Runner>;
+  /** Declared by the definition when the runner wires mocks. */
+  readonly mocks?: boolean;
 }
 
 export interface CheckerContext {

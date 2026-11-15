@@ -2,13 +2,13 @@
 
 A toolkit for evaluating AI agent systems.
 
-Evaluate instructions, skills, workflows, configurations and harnesses through explicit tasks, controlled environments and evidence-based checks. Harnesses run through a generic [ACP runner](docs/configuration.md#acp-runner-type-acp) (verified with Pi and Claude Code) or the native Pi runner, under macOS Seatbelt, with `file`/`judge` checkers. [M2](docs/m2-plan.md) delivered ACP execution and trace evidence; [M3](docs/m3-plan.md) plans collaborator mocks, and [Roadmap](docs/roadmap.md) describes the broader target system.
+Evaluate instructions, skills, workflows, configurations and harnesses through explicit tasks, controlled environments and evidence-based checks. Harnesses run through a generic [ACP runner](docs/configuration.md#acp-runner-type-acp) (verified with Pi and Claude Code) or the native Pi runner, under macOS Seatbelt, with `file`/`judge` checkers. [M2](docs/m2-plan.md) delivered ACP execution and trace evidence; [M3](docs/m3-plan.md) plans shell collaborator mocks, [M4](docs/m4-plan.md) plans the interaction checker, M5 covers MCP collaborators and has no plan yet, and [Roadmap](docs/roadmap.md) describes the broader target system.
 
 Requirements: Node.js 24+; macOS with `sandbox-exec`. ACP runs need caller-prepared harness directories; the native runner needs an installed `pi` CLI. `view` needs neither a harness nor credentials. The package/repository remain private and unpublished; visibility and publication require explicit approval.
 
 ## Quick Start
 
-[`examples/cases/deploy-runbook`](examples/cases/deploy-runbook/case.yml) asks an agent to diagnose a failed deploy. Its skill supplies private error-code knowledge the task and log do not reveal, so `with-skill` and `without-skill` cases are expected to differ; one run of each is a sample, not a pass rate. Names are labels, not built-in A/B modes. It has four cases: `pi-with-skill`, `pi-without-skill`, `claude-with-skill` and `claude-without-skill`, each using a standalone agent configuration from [`examples/agents/`](examples/agents/).
+[`examples/cases/deploy-runbook`](examples/cases/deploy-runbook/case.yml) asks an agent to diagnose a failed deploy. Its skill supplies private error-code knowledge the task and log do not reveal, so `with-skill` and `without-skill` cases are expected to differ; one run of each is a sample, not a pass rate. Names are labels, not built-in A/B modes. It has four cases: `pi-with-skill`, `pi-without-skill`, `claude-with-skill` and `claude-without-skill`, each using a standalone agent configuration from [`examples/agents/`](examples/agents/). It also exercises `mocks.shell`: the read-only `deployctl status` call is answered by a fixed result on the host, a file check asserts the certificate serial that only that answer contains, and the call is retained in `mocks.json` beside `result.json` and `trace.json`. [Mocks](docs/mocks.md) owns the semantics; only `PATH` lookups are intercepted.
 
 ```sh
 npm ci
@@ -85,10 +85,12 @@ The pinned development toolchain's `minimatch@10.2.6` has [GHSA-g3hv-75wg-m249](
 | [Architecture](docs/architecture.md)             | Which modules cooperate, through which interfaces, to execute a case?                 |
 | [Configuration Reference](docs/configuration.md) | How do YAML, selection, parameters, view and results work?                            |
 | [Writing Cases](docs/cases.md)                   | How should tasks, fixtures and assertions be designed?                                |
+| [Mocks](docs/mocks.md)                           | How do I substitute a command, and what does `mocks.json` contain?                    |
 | [Roadmap](docs/roadmap.md)                       | What is the target shape, and which capabilities are planned rather than implemented? |
 | [M1 Delivery](docs/m1-plan.md)                   | What shipped in M1, what was verified, and which limits remain?                       |
 | [M2 Delivery](docs/m2-plan.md)                   | How do ACP harnesses, isolated HOME assembly and trace evidence work?                 |
-| [M3 Plan](docs/m3-plan.md)                       | What is decided and still open for collaborator mocks and interaction checks?         |
+| [M3 Plan](docs/m3-plan.md)                       | What is decided and still open for shell collaborator mocks?                          |
+| [M4 Plan](docs/m4-plan.md)                       | What is decided and still open for interaction checks?                                |
 
 Module tests live beside source; cross-module/hook/package tests live under `tests/`. Runtime code is under `src/engine`, `src/runners`, `src/checkers`, and `src/platform`; see the [source map](docs/architecture.md#source-map). Known runtime limitations belong in [M1](docs/m1-plan.md#known-limitations), not a second list here.
 

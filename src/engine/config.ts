@@ -22,8 +22,23 @@ export interface CaseConfig {
   /** Authoring asset placed at a workspace-relative destination path. */
   readonly files?: Readonly<Record<string, string>>;
   readonly timeoutMs?: number;
+  readonly mocks?: MocksConfig;
   readonly checks: readonly ImplementationRecord[];
   readonly runner: ImplementationRecord;
+}
+
+/** A fixed result returned to a called command. */
+export interface MockResult {
+  readonly exitCode: number;
+  readonly stdout: string;
+  readonly stderr: string;
+}
+
+/** One fixed result per bare `PATH` command name. */
+export type ShellMocks = Readonly<Record<string, MockResult>>;
+
+export interface MocksConfig {
+  readonly shell: ShellMocks;
 }
 
 /** Where one final top-level case field was declared. Nested values share this origin. */
@@ -51,12 +66,16 @@ export const CASE_FIELD_KEYS: ReadonlySet<string> = new Set([
   "fixture",
   "files",
   "timeoutMs",
+  "mocks",
   "checks",
   "runner",
 ]);
 
 /** The document-level authoring control for named cases. */
 export const CASES_KEY = "cases";
+
+const MOCK_KEYS: ReadonlySet<string> = new Set(["shell"]);
+const MOCK_RESULT_KEYS: ReadonlySet<string> = new Set(["exitCode", "stdout", "stderr"]);
 
 /** Resolve an authoring asset relative to the file that declares it. */
 export function resolveAuthoringAsset(declaringDir: string, relativePath: string, label: string): string {
@@ -73,6 +92,7 @@ export function expectCaseConfig(value: unknown, label: string): CaseConfig {
   const fixture = record.fixture === undefined ? undefined : expectRelativePath(record.fixture, `${label}.fixture`);
   const files = record.files === undefined ? undefined : expectFiles(record.files, label);
   const timeoutMs = record.timeoutMs === undefined ? undefined : expectTimeout(record.timeoutMs, `${label}.timeoutMs`);
+  const mocks = record.mocks === undefined ? undefined : expectMocks(record.mocks, `${label}.mocks`);
   if (!Array.isArray(record.checks) || record.checks.length === 0) {
     throw new ConfigError(`${label}.checks must be a non-empty list`);
   }
@@ -84,6 +104,7 @@ export function expectCaseConfig(value: unknown, label: string): CaseConfig {
     ...(fixture === undefined ? {} : { fixture }),
     ...(files === undefined ? {} : { files }),
     ...(timeoutMs === undefined ? {} : { timeoutMs }),
+    ...(mocks === undefined ? {} : { mocks }),
     checks,
     runner,
   };
@@ -168,6 +189,90 @@ function isAbsoluteLike(path: string): boolean {
 function expectTimeout(value: unknown, label: string): number {
   if (typeof value !== "number" || !Number.isSafeInteger(value) || value <= 0) {
     throw new ConfigError(`${label} must be a positive integer number of milliseconds`);
+  }
+  return value;
+}
+
+/**
+ * Read the declared shell mocks. Only the first supported subset is implemented: one `return`
+ * rule per bare `PATH` command name. Every other action, rule list or target shape is rejected
+ * instead of ignored, so a case cannot silently fall back to the real command.
+ */
+function expectMocks(value: unknown, label: string): MocksConfig {
+  const record = expectRecord(value, label);
+  rejectUnknownKeys(record, MOCK_KEYS, label);
+  if (record.shell === undefined) {
+    throw new ConfigError(`${label} must declare shell targets`);
+  }
+  const shell = expectRecord(record.shell, `${label}.shell`);
+  return {
+    shell: Object.fromEntries(
+      Object.entries(shell).map(([target, rule]) => [
+        expectMockTarget(target, `${label}.shell`),
+        expectMockRule(rule, `${label}.shell["${target}"]`),
+      ]),
+    ),
+  };
+}
+
+function expectMockTarget(target: string, label: string): string {
+  if (target.trim().length === 0) {
+    throw new ConfigError(`${label} has an empty target name`);
+  }
+  if (target.includes("\0")) {
+    throw new ConfigError(`${label} target "${target}" contains a NUL byte`);
+  }
+  if (target.includes("/")) {
+    throw new ConfigError(
+      `${label} target "${target}" must be a bare command name; workspace-relative targets are not supported yet`,
+    );
+  }
+  if (target === "." || target === "..") {
+    throw new ConfigError(`${label} target "${target}" is not a command name`);
+  }
+  return target;
+}
+
+function expectMockRule(value: unknown, label: string): MockResult {
+  if (Array.isArray(value)) {
+    throw new ConfigError(`${label} must be a single rule; ordered rule lists are not supported yet`);
+  }
+  const rule = expectRecord(value, label);
+  for (const key of Object.keys(rule)) {
+    if (key !== "return") {
+      throw new ConfigError(
+        key === "args" || key === "run" || key === "pass"
+          ? `${label}.${key} is not supported yet`
+          : `${label} has unknown field: ${key}`,
+      );
+    }
+  }
+  if (rule.return === undefined) {
+    throw new ConfigError(`${label} must declare a return rule; only "return" is supported yet`);
+  }
+  return expectMockResult(rule.return, `${label}.return`);
+}
+
+function expectMockResult(value: unknown, label: string): MockResult {
+  const result = expectRecord(value, label);
+  rejectUnknownKeys(result, MOCK_RESULT_KEYS, label);
+  return {
+    exitCode: result.exitCode === undefined ? 0 : expectExitCode(result.exitCode, `${label}.exitCode`),
+    stdout: result.stdout === undefined ? "" : expectText(result.stdout, `${label}.stdout`),
+    stderr: result.stderr === undefined ? "" : expectText(result.stderr, `${label}.stderr`),
+  };
+}
+
+function expectExitCode(value: unknown, label: string): number {
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0 || value > 255) {
+    throw new ConfigError(`${label} must be an integer from 0 to 255`);
+  }
+  return value;
+}
+
+function expectText(value: unknown, label: string): string {
+  if (typeof value !== "string") {
+    throw new ConfigError(`${label} must be a string`);
   }
   return value;
 }
