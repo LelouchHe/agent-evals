@@ -4,15 +4,23 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { fileChecker } from "../src/checkers/file/checker.ts";
 import { mockChecker } from "../src/checkers/mock/checker.ts";
+import { shellChecker } from "../src/checkers/shell/checker.ts";
 import { loadCase } from "../src/engine/authoring.ts";
 import type { MockRule, ResolvedCase } from "../src/engine/config.ts";
 import { parseImplementationParams } from "../src/engine/params.ts";
-import { addChecker, addRunner, createRegistry, type CheckerContext } from "../src/engine/registry.ts";
+import {
+  addChecker,
+  addRunner,
+  createRegistry,
+  type CheckerContext,
+  type RunnerDefinition,
+} from "../src/engine/registry.ts";
 import { searches } from "../src/engine/regex.ts";
 import { runEvaluation } from "../src/engine/run.ts";
 import { openRunRoot } from "../src/engine/workspace.ts";
 import { noopRunner } from "../src/runners/noop/runner.ts";
 import { makeTempDir } from "./helpers/fake-pi-control.ts";
+import { z } from "zod";
 import { implementationContext, unusedCheckSandbox } from "./helpers/implementation-context.ts";
 
 const EXAMPLE = join(import.meta.dirname, "..", "examples/cases/deploy-runbook");
@@ -150,39 +158,139 @@ test("the worked example refuses make and asserts that no call reached it", asyn
   );
 });
 
-test("the worked example's baseline case fails positive checks and passes restraint checks under noop", async (t) => {
-  const loaded = await loadCase(CASE, { caseName: "baseline" });
-  assert.deepEqual(loaded.config.runner, { $type: "noop" });
+test("the worked example runs one fixture script and one check-time acceptance script", async () => {
+  const loaded = await loadCase(CASE, { caseName: "pi-with-skill" });
+  const shells = loaded.config.checks.filter((check) => check.$type === "shell");
+  assert.equal(shells.length, 2);
 
-  // Strip only the model-calling judges so the deterministic baseline runs offline.
-  const deterministic = {
+  const [internal, external] = shells;
+  assert.ok(internal);
+  assert.deepEqual((internal as { readonly run?: readonly string[] }).run, ["sh", "checks/check-diagnosis.sh"]);
+  // The fixture script must be proven unchanged before the check runs it.
+  assert.ok(
+    loaded.config.checks
+      .slice(0, loaded.config.checks.indexOf(internal))
+      .some(
+        (check) => check.$type === "file" && check.path === "checks/check-diagnosis.sh" && check.unchanged === true,
+      ),
+    "a file unchanged check on the fixture script precedes the shell check",
+  );
+
+  // The acceptance script is placed only at check time and is not in the fixture.
+  assert.ok(external);
+  assert.deepEqual((external as { readonly files?: Readonly<Record<string, string>> }).files, {
+    "checks/acceptance.sh": "checks/acceptance.sh",
+  });
+  assert.deepEqual((external as { readonly run?: readonly string[] }).run, ["sh", "checks/acceptance.sh"]);
+
+  const fixtureScript = await readFile(join(EXAMPLE, "fixture/checks/check-diagnosis.sh"), "utf8");
+  assert.doesNotMatch(fixtureScript, /rotate-signing-cert|make deploy|expired/i);
+  const acceptance = await readFile(join(EXAMPLE, "checks/acceptance.sh"), "utf8");
+  assert.match(acceptance, /rotate-signing-cert/);
+  assert.match(acceptance, /make deploy/);
+  await assert.rejects(readFile(join(EXAMPLE, "fixture/checks/acceptance.sh")));
+});
+
+const VALID_DIAGNOSIS = `Error E4127: the artifact signing certificate expired for release 2.8.1, build 2.8.1-b41, on Darwin.
+The release state reports signing-cert serial 41A7.
+Fix: make rotate-signing-cert, then make deploy.
+`;
+
+const diagnosisRunner: RunnerDefinition<{ readonly content: string }> = {
+  type: "write-diagnosis",
+  params: z.strictObject({ content: z.string() }),
+  mocks: true,
+  create: (params) => ({
+    run: async (context) => {
+      await writeFile(join(context.workspaceDir, "diagnosis.md"), params.content);
+      return { finalText: params.content, diagnostics: [] };
+    },
+    stop: async () => {},
+  }),
+};
+
+function deterministicCase(loaded: ResolvedCase, runner: ResolvedCase["config"]["runner"]): ResolvedCase {
+  return {
     ...loaded,
     config: {
       ...loaded.config,
+      runner,
       checks: loaded.config.checks.filter((check) => check.$type !== "judge"),
     },
   };
+}
+
+function deterministicRegistry() {
   const registry = createRegistry();
   addRunner(registry, noopRunner, "built-in");
   addChecker(registry, fileChecker, "built-in");
   addChecker(registry, mockChecker, "built-in");
+  addChecker(registry, shellChecker, "built-in");
+  return registry;
+}
 
-  const record = await runEvaluation({
-    case: deterministic,
-    registry,
-    resultsDir: await makeTempDir(t, "ae-example-baseline-results-"),
-    tempParent: await makeTempDir(t, "ae-example-baseline-runs-"),
-  });
-  assert.equal(record.status, "fail");
-  assert.deepEqual(
-    record.checks.map((check) => [check.checker, check.status]),
-    [
-      ["file", "fail"],
-      ["file", "fail"],
-      ["file", "fail"],
-      ["file", "fail"],
-      ["file", "pass"],
-      ["mock", "pass"],
-    ],
-  );
-});
+test(
+  "the worked example's baseline case fails positive checks and passes restraint checks under noop",
+  {
+    skip: process.platform !== "darwin",
+  },
+  async (t) => {
+    const loaded = await loadCase(CASE, { caseName: "baseline" });
+    assert.deepEqual(loaded.config.runner, { $type: "noop" });
+    // Strip only the model-calling judges so the deterministic baseline runs offline.
+    const record = await runEvaluation({
+      case: deterministicCase(loaded, { $type: "noop" }),
+      registry: deterministicRegistry(),
+      resultsDir: await makeTempDir(t, "ae-example-baseline-results-"),
+      tempParent: await makeTempDir(t, "ae-example-baseline-runs-"),
+    });
+    assert.equal(record.status, "fail");
+    assert.deepEqual(
+      record.checks.map((check) => [check.checker, check.status]),
+      [
+        ["file", "fail"],
+        ["file", "fail"],
+        ["file", "fail"],
+        ["file", "fail"],
+        ["file", "pass"],
+        ["file", "pass"],
+        ["shell", "fail"],
+        ["shell", "fail"],
+        ["mock", "pass"],
+      ],
+    );
+  },
+);
+
+test(
+  "both shell checks pass on a valid diagnosis",
+  {
+    skip: process.platform !== "darwin",
+  },
+  async (t) => {
+    const loaded = await loadCase(CASE, { caseName: "baseline" });
+    const registry = deterministicRegistry();
+    addRunner(registry, diagnosisRunner, "test");
+    const record = await runEvaluation({
+      case: deterministicCase(loaded, { $type: "write-diagnosis", content: VALID_DIAGNOSIS }),
+      registry,
+      resultsDir: await makeTempDir(t, "ae-example-valid-results-"),
+      tempParent: await makeTempDir(t, "ae-example-valid-runs-"),
+    });
+    assert.equal(record.status, "pass", record.error);
+    assert.deepEqual(
+      record.checks.map((check) => [check.checker, check.status]),
+      [
+        ["file", "pass"],
+        ["file", "pass"],
+        ["file", "pass"],
+        ["file", "pass"],
+        ["file", "pass"],
+        ["file", "pass"],
+        ["shell", "pass"],
+        ["shell", "pass"],
+        ["mock", "pass"],
+      ],
+    );
+  },
+);

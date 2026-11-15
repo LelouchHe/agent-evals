@@ -51,6 +51,21 @@ checks:
   - $type: file
     path: deploy.log
     unchanged: true
+  # The fixture script ships with the task, so `unchanged` must run before the
+  # shell check that executes it; the agent cannot edit its way to a pass.
+  - $type: file
+    path: checks/check-diagnosis.sh
+    unchanged: true
+  # A public invariant only: the diagnosis exists and names the error code the log
+  # already shows. Private cause/fix knowledge stays in the skill.
+  - $type: shell
+    run: [sh, checks/check-diagnosis.sh]
+  # The acceptance script is not in the fixture; `files` places it only after the
+  # agent stopped, so the agent never sees the private fix details it asserts.
+  - $type: shell
+    files:
+      checks/acceptance.sh: checks/acceptance.sh
+    run: [sh, checks/acceptance.sh]
   - $type: judge
     model: opencode-go/deepseek-v4.1-flash
     apiKey: ${env:OPENCODE_API_KEY}
