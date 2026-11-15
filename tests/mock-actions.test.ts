@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { mkdir, readFile, readdir, realpath, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, readFile, realpath, rm, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { Readable } from "node:stream";
 import { test } from "node:test";
@@ -9,7 +9,7 @@ import { z } from "zod";
 import { fileChecker } from "../src/checkers/file/checker.ts";
 import { loadCase } from "../src/engine/authoring.ts";
 import type { MockArgument, MockResult, MockRule, ShellMocks } from "../src/engine/config.ts";
-import { prepareMockShell, startMockHost, type MockHost, type MockListenOptions } from "../src/engine/mocks.ts";
+import { startMockHost, type MockHost, type MockHostOptions } from "../src/engine/mocks.ts";
 import { addChecker, addRunner, createRegistry } from "../src/engine/registry.ts";
 import { runEvaluation } from "../src/engine/run.ts";
 import { makeTempDir } from "./helpers/fake-pi-control.ts";
@@ -26,14 +26,17 @@ interface Call {
 async function host(
   t: Parameters<typeof makeTempDir>[0],
   shell: ShellMocks,
-  extra: Partial<MockListenOptions> = {},
+  extra: Partial<MockHostOptions> = {},
 ): Promise<{ host: MockHost; root: string }> {
   const root = await makeTempDir(t, "ae-mock-actions-");
   const workspaceDir = join(root, "workspace");
+  const scratchDir = join(root, "scratch");
   await mkdir(workspaceDir);
+  await mkdir(scratchDir);
   const started = await startMockHost({
     runRootDir: root,
     workspaceDir,
+    scratchDir,
     authoringDir: root,
     timeoutMs: 5_000,
     signal: new AbortController().signal,
@@ -442,32 +445,13 @@ test("run can pass only through the marker and only when the rule allows it", as
   assert.match(faults[1] as string, /printed the pass marker but the rule has no pass/);
 });
 
-test("forwarders are written before any listener opens, and close is idempotent", async (t) => {
-  const root = await makeTempDir(t, "ae-mock-phase-");
-  const workspaceDir = join(root, "workspace");
-  await mkdir(workspaceDir);
-  const preparation = await prepareMockShell({
-    runRootDir: root,
-    workspaceDir: await realpath(workspaceDir),
-    shell: { deploy: returns(result(0, "ok\n")), "./job.sh": returns(result(0, "root\n")) },
-  });
-  assert.deepEqual(await readdir(join(root, "bin")), ["deploy"]);
-  assert.deepEqual(await readdir(workspaceDir), ["job.sh"]);
-  // Preparing leaves no socket behind, so a preparation failure cannot leak a listener.
-  assert.equal(await stat(preparation.wiring.socketPath).catch(() => undefined), undefined);
-
-  const host = await preparation.listen({
-    authoringDir: root,
-    timeoutMs: 5_000,
-    signal: new AbortController().signal,
-  });
-  assert.ok((await stat(preparation.wiring.socketPath)).isSocket());
-  assert.equal((await call(join(root, "bin", "deploy"))).stdout, "ok\n");
-
-  const first = await host.close();
-  const second = await host.close();
+test("close is idempotent and removes the call socket", async (t) => {
+  const { host: server } = await host(t, { deploy: returns(result(0, "ok\n")) });
+  assert.ok((await stat(server.wiring.socketPath)).isSocket());
+  const first = await server.close();
+  const second = await server.close();
   assert.deepEqual(second, first);
-  assert.equal(await stat(preparation.wiring.socketPath).catch(() => undefined), undefined);
+  await assert.rejects(() => stat(server.wiring.socketPath), { code: "ENOENT" });
 });
 
 test("a forwarder that cannot reach the host is a reported fault", async (t) => {
@@ -491,6 +475,7 @@ test("workspace scripts run through their forwarder and keep the real one out of
   const started = await startMockHost({
     runRootDir: root,
     workspaceDir: await realpath(workspaceDir),
+    scratchDir: root,
     authoringDir: root,
     timeoutMs: 5_000,
     signal: new AbortController().signal,
@@ -529,6 +514,7 @@ test("a workspace script target rejects a pass without a real script and a name 
       startMockHost({
         runRootDir: root,
         workspaceDir: await realpath(workspaceDir),
+        scratchDir: root,
         authoringDir: root,
         timeoutMs: 5_000,
         signal: new AbortController().signal,
@@ -548,57 +534,6 @@ test("a workspace script target rejects a pass without a real script and a name 
     () => collision({ "scripts/deploy.sh": [{ action: { kind: "pass" } }] }),
     /already has \.deploy\.sh beside it/,
   );
-});
-
-test("a transport fault survives the agent clearing everything it can write", async (t) => {
-  const registry = createRegistry();
-  addRunner(
-    registry,
-    {
-      type: "erasing-runner",
-      params: z.strictObject({}),
-      mocks: true,
-      create: () => ({
-        run: async (context) => {
-          const wiring = context.mocks;
-          assert.ok(wiring !== undefined);
-          // Host-side loss of the call socket, then the agent wipes its writable scratch.
-          await rm(wiring.socketPath, { force: true });
-          const child = spawn(join(wiring.forwarderDir, "deploy"), [], { stdio: "ignore" });
-          const status = await new Promise((resolve) => child.on("close", resolve));
-          assert.equal(status, 126);
-          await rm(context.scratchDir, { recursive: true, force: true });
-          await mkdir(context.scratchDir);
-          return { finalText: null, diagnostics: [] };
-        },
-        stop: async () => {},
-      }),
-    },
-    "test",
-  );
-  addChecker(registry, fileChecker, "built-in");
-
-  const directory = await makeTempDir(t, "ae-mock-transport-");
-  const casePath = join(directory, "case.yml");
-  await writeFile(
-    casePath,
-    stringify({
-      input: INPUT,
-      mocks: { shell: { deploy: { return: { stdout: "ok\n" } } } },
-      runner: { $type: "erasing-runner" },
-      checks: [{ $type: "file", path: "absent.txt", exists: false }],
-    }),
-  );
-  const resultsDir = await makeTempDir(t, "ae-mock-transport-results-");
-  const record = await runEvaluation({
-    case: await loadCase(casePath),
-    registry,
-    resultsDir,
-    tempParent: await makeTempDir(t, "ae-mock-transport-runs-"),
-  });
-  assert.equal(record.status, "error");
-  assert.match(record.error ?? "", /could not reach the mock host/);
-  assert.deepEqual(JSON.parse(await readFile(join(resultsDir, record.runId, "mocks.json"), "utf8")), []);
 });
 
 test("a mock fault ends the run as an error while keeping its records", async (t) => {

@@ -37,8 +37,8 @@ Mocks are prepared with the other run state and answered while the harness runs;
               |-- workspace-script forwarders -> at their target path;
               |                                  real scripts moved out
               |-- PATH forwarders and script  -> outside the workspace
-              |-- baseline snapshot           -> after the forwarders
               |-- host sockets opened         -> outside the sandbox
+              |-- baseline snapshot           -> after the forwarders
               `-- runner starts the harness   -> forwarder dir first on PATH
 
  3. act       the harness works; every mocked call is answered and recorded
@@ -104,7 +104,7 @@ Mocks are prepared with the other run state and answered while the harness runs;
 
 The two regions are the trust boundary. Inside the sandbox there is only a forwarder — a readable `sh` script — plus, for a `pass`, the real command it starts; rules, actions, call records and the author's `run` programs stay on the host. `which` and `cat` reveal the forwarder, never the rules or the records.
 
-The host records the call **before** it chooses a rule, so evidence does not depend on which action ran or whether one matched. A `return` or `run` reply is data for the caller; a `run` program is trusted author code on the host, started without a shell with the call's arguments appended, never agent code and never executed in the sandbox. A `pass` reply is a decision: the real command runs only in the sandbox, from the forwarder, so its stdin, output, signals and exit status stay its own and the host never runs it. An unmatched call is refused with `126` and still recorded; that refusal is a normal decision, not a fault. A mock fault looks the same to the caller but is different in the record: transport failure (the forwarder prints `Service unavailable` and reports it on a second, host-side socket), and a `run` program that cannot start, dies or overruns, or prints the reserved marker where the rule does not allow it. Any fault ends the run as `error`: checks may still run and their results are retained, but they cannot make the run pass. `mocks.json` is written whenever the case declares mocks, so a faulting run still shows the calls that did arrive, possibly none. `mocks.json` holds these calls — target and arguments, in arrival order — as evidence: no output, exit status or judgment.
+The host records the call **before** it chooses a rule, so evidence does not depend on which action ran or whether one matched. A `return` or `run` reply is data for the caller; a `run` program is trusted author code on the host, started without a shell with the call's arguments appended, never agent code and never executed in the sandbox. A `pass` reply is a decision: the real command runs only in the sandbox, from the forwarder, so its stdin, output, signals and exit status stay its own and the host never runs it. An unmatched call is refused with `126` and still recorded; that refusal is a normal decision, not a fault. A mock fault looks the same to the caller but is different in the record: transport failure (the forwarder prints `Service unavailable` and reports the target in the run's scratch directory, which the engine reads at close), and a `run` program that cannot start, dies or overruns, or prints the reserved marker where the rule does not allow it. Any fault ends the run as `error`: checks may still run and their results are retained, but they cannot make the run pass. `mocks.json` is written whenever the case declares mocks, so a faulting run still shows the calls that did arrive, possibly none. `mocks.json` holds these calls — target and arguments, in arrival order — as evidence: no output, exit status or judgment.
 
 ## Targets
 
@@ -176,7 +176,7 @@ Mock faults make the run finish as `error`, whatever the checks say; their indiv
 
 - a `run` program that cannot start, dies from a signal, or exceeds the run's `timeoutMs`;
 - a `run` program that prints the complete pass marker where the rule does not allow it, or with a nonzero exit;
-- a forwarder that cannot reach the host: it prints `<target>: Service unavailable` and reports the loss on a second socket the evaluated side cannot erase, so the fault survives.
+- a forwarder that cannot reach the host: it prints `<target>: Service unavailable` and reports the target in the run's scratch directory, which the engine reads when the host closes.
 
 The agent only sees the failed command (exit `126`), never a fault detail. An unmatched rule or a broken rule condition is ordinary denial instead: `126` with `<target>: Operation not permitted`, recorded, and not a fault. A `run` program's ordinary nonzero exit is a returned response, not a fault. Programs are started in their own process group and killed with their descendants on timeout, cancellation and teardown, including descendants that outlive a program which exited normally.
 

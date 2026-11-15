@@ -38,36 +38,28 @@ export interface MockHost {
   readonly close: () => Promise<MockOutcome>;
 }
 
-export interface MockShellOptions {
+export interface MockHostOptions {
   readonly runRootDir: string;
   /** Prepared workspace root; its real path, as the runner's sandbox sees it. */
   readonly workspaceDir: string;
-  readonly shell: ShellMocks;
-}
-
-export interface MockListenOptions {
+  /** Run scratch directory; a forwarder that cannot reach the host reports there. */
+  readonly scratchDir: string;
   /** Directory of the case file, the working directory of `run` programs. */
   readonly authoringDir: string;
+  readonly shell: ShellMocks;
   readonly timeoutMs: number;
   readonly signal: AbortSignal;
 }
 
-/** Forwarders written, listeners not yet open: only a failure-free step separates the two. */
-export interface MockPreparation {
-  readonly wiring: MockWiring;
-  /** Start answering calls. Call after the workspace baseline exists. */
-  readonly listen: (options: MockListenOptions) => Promise<MockHost>;
-}
-
 /**
- * Write every forwarder, workspace scripts included, so the caller can snapshot the baseline.
- * Nothing listens yet: the preparation that can fail leaves no open socket behind.
+ * Write every forwarder, workspace scripts included, and start answering calls. The caller
+ * runs this before the baseline snapshot, so the snapshot already holds the forwarders.
  */
-export async function prepareMockShell(options: MockShellOptions): Promise<MockPreparation> {
+export async function startMockHost(options: MockHostOptions): Promise<MockHost> {
   const forwarderDir = join(options.runRootDir, "bin");
   // A Unix socket path is limited to about 100 bytes, so it cannot live under the run root.
   const socketPath = join(tmpdir(), `${basename(options.runRootDir)}.sock`);
-  const faultSocketPath = join(tmpdir(), `${basename(options.runRootDir)}.fault.sock`);
+  const faultPath = join(options.scratchDir, ".forward-fault");
   const scriptPath = join(options.runRootDir, "forward");
   const rules = compileShellMocks(options.shell);
   const workspaceRoot = await openRunRoot(options.workspaceDir);
@@ -78,7 +70,7 @@ export async function prepareMockShell(options: MockShellOptions): Promise<MockP
   const forwarder = (await readFile(FORWARDER_ASSET, "utf8"))
     .replace("__BINDIR__", quote(forwarderRoot))
     .replace("__SOCKET__", quote(socketPath))
-    .replace("__FAULTSOCK__", quote(faultSocketPath));
+    .replace("__FAULT__", quote(faultPath));
   await writeFile(scriptPath, forwarder, { mode: 0o500, flag: "wx" });
 
   for (const target of Object.keys(options.shell).sort()) {
@@ -90,43 +82,6 @@ export async function prepareMockShell(options: MockShellOptions): Promise<MockP
   }
 
   const wiring: MockWiring = { forwarderDir, socketPath, denyTargets: denyTargetsOf(options.shell) };
-  return {
-    wiring,
-    listen: (listenOptions) =>
-      listenMockHost({
-        wiring,
-        faultSocketPath,
-        rules,
-        forwarderRoot,
-        workspaceDir: workspaceRoot.path,
-        signal: listenOptions.signal,
-        runOptions: {
-          authoringDir: listenOptions.authoringDir,
-          timeoutMs: listenOptions.timeoutMs,
-          signal: listenOptions.signal,
-        },
-      }),
-  };
-}
-
-/** Prepare and immediately start the host, for callers with no step in between. */
-export async function startMockHost(options: MockShellOptions & MockListenOptions): Promise<MockHost> {
-  const preparation = await prepareMockShell(options);
-  return preparation.listen(options);
-}
-
-interface ListenInput {
-  readonly wiring: MockWiring;
-  readonly faultSocketPath: string;
-  readonly rules: CompiledShellMocks;
-  readonly forwarderRoot: string;
-  readonly workspaceDir: string;
-  readonly signal: AbortSignal;
-  readonly runOptions: MockListenOptions;
-}
-
-async function listenMockHost(input: ListenInput): Promise<MockHost> {
-  const { wiring, rules, forwarderRoot, workspaceDir, runOptions } = input;
   const records: MockRecord[] = [];
   const faults: string[] = [];
   /** Process-group leaders still owning descendants we must not leave behind. */
@@ -135,31 +90,7 @@ async function listenMockHost(input: ListenInput): Promise<MockHost> {
 
   // The forwarder half-closes after sending, then reads the reply: keep the writable side open
   // until the answer (which may await a run program) has been written.
-  const server = accepting((socket) => {
-    readRequest(socket, (message) => {
-      void answer(socket, message).catch((error: unknown) => {
-        faults.push(`failed to answer a call: ${errorMessage(error)}`);
-        socket.end(denied(""));
-      });
-    });
-  });
-  // A forwarder that cannot reach the call socket reports it here, outside the sandbox, so a
-  // fault cannot be erased from the evaluated side.
-  const faultServer = accepting((socket) => {
-    readRequest(socket, (message) => {
-      const lines = message.toString("utf8").split("\n");
-      const self = lines.length > 0 ? decode(lines[0] as string) : "";
-      const call = self.length === 0 ? undefined : resolveCall(self, forwarderRoot, workspaceDir, rules);
-      faults.push(
-        `a forwarder for "${call?.target ?? (self === "" ? "a call" : basename(self))}" could not reach the mock host`,
-      );
-      socket.end("");
-    });
-  });
-  await listen(server, wiring.socketPath);
-  await listen(faultServer, input.faultSocketPath);
-
-  function readRequest(socket: Socket, onMessage: (message: Buffer) => void): void {
+  const server = createServer({ allowHalfOpen: true }, (socket) => {
     sockets.add(socket);
     socket.on("close", () => sockets.delete(socket));
     socket.on("error", () => {});
@@ -173,16 +104,22 @@ async function listenMockHost(input: ListenInput): Promise<MockHost> {
       }
       chunks.push(chunk);
     });
-    socket.on("end", () => onMessage(Buffer.concat(chunks)));
-  }
+    socket.on("end", () => {
+      void answer(socket, Buffer.concat(chunks)).catch((error: unknown) => {
+        faults.push(`failed to answer a call: ${errorMessage(error)}`);
+        socket.end(denied(""));
+      });
+    });
+  });
+  await listen(server, socketPath);
 
   async function answer(socket: Socket, message: Buffer): Promise<void> {
     const lines = message.toString("utf8").split("\n");
     if (lines.pop() !== "" || lines.length === 0) {
-      socket.end(denied(""));
+      socket.end(denied("call"));
       return;
     }
-    const call = resolveCall(decode(lines[0] as string), forwarderRoot, workspaceDir, rules);
+    const call = resolveCall(decode(lines[0] as string), forwarderRoot, workspaceRoot.path, rules);
     if (call === undefined) {
       socket.end(denied("call"));
       return;
@@ -202,7 +139,7 @@ async function listenMockHost(input: ListenInput): Promise<MockHost> {
         Buffer.from(action.result.stderr, "utf8"),
       );
     }
-    const program = await runProgram(target, action, argv, groups, runOptions);
+    const program = await runProgram(target, action, argv, groups, options);
     if (program.fault !== undefined) {
       faults.push(program.fault);
       return denied(target);
@@ -228,30 +165,21 @@ async function listenMockHost(input: ListenInput): Promise<MockHost> {
   async function shutdown(): Promise<MockOutcome> {
     for (const pid of groups) killGroupPid(pid);
     groups.clear();
-    await Promise.all([closeServer(server), closeServer(faultServer)]);
+    const closed = new Promise<void>((resolve) => server.close(() => resolve()));
+    const grace = new AbortController();
+    try {
+      await Promise.race([closed, delay(CLOSE_GRACE_MS, undefined, { signal: grace.signal })]);
+    } finally {
+      grace.abort();
+    }
     for (const socket of sockets) socket.destroy();
-    await rm(wiring.socketPath, { force: true });
-    await rm(input.faultSocketPath, { force: true });
+    await closed;
+    await rm(socketPath, { force: true });
+    faults.push(...(await transportFaults(faultPath)));
     return { records: [...records], faults: [...faults] };
   }
 
   return { wiring, close };
-}
-
-/** Close a listener, but not at the price of hanging on a caller that never disconnects. */
-async function closeServer(server: Server): Promise<void> {
-  const closed = new Promise<void>((resolve) => server.close(() => resolve()));
-  const grace = new AbortController();
-  try {
-    await Promise.race([closed, delay(CLOSE_GRACE_MS, undefined, { signal: grace.signal })]);
-  } finally {
-    grace.abort();
-  }
-  await closed;
-}
-
-function accepting(handler: (socket: Socket) => void): Server {
-  return createServer({ allowHalfOpen: true }, handler);
 }
 
 /** PATH targets without any `pass` rule, whose real binaries the runner must deny. */
@@ -302,7 +230,7 @@ function resolveCall(
  */
 async function placeWorkspaceForwarder(
   workspaceDir: string,
-  options: MockShellOptions,
+  options: MockHostOptions,
   target: string,
   forwarder: string,
 ): Promise<void> {
@@ -358,7 +286,7 @@ async function runProgram(
   action: Extract<MockAction, { kind: "run" }>,
   argv: readonly string[],
   groups: Set<number>,
-  options: MockListenOptions,
+  options: MockHostOptions,
 ): Promise<RunOutcome> {
   const [program, ...prefix] = action.command;
   const child = spawn(program as string, [...prefix, ...argv], {
@@ -425,6 +353,19 @@ function killGroup(child: ChildProcess): void {
     // Already gone.
   }
   if (child.pid !== undefined) killGroupPid(child.pid);
+}
+
+/** Faults a forwarder wrote when it could not reach the call socket. */
+async function transportFaults(path: string): Promise<readonly string[]> {
+  try {
+    const text = await readFile(path, "utf8");
+    return text
+      .split("\n")
+      .filter((line) => line.length > 0)
+      .map((line) => `a forwarder for "${line}" could not reach the mock host`);
+  } catch {
+    return [];
+  }
 }
 
 function resultReply(exitCode: number, stdout: Buffer, stderr: Buffer): string {
