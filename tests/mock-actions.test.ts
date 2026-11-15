@@ -9,7 +9,7 @@ import { z } from "zod";
 import { fileChecker } from "../src/checkers/file/checker.ts";
 import { loadCase } from "../src/engine/authoring.ts";
 import type { MockArgument, MockResult, MockRule, ShellMocks } from "../src/engine/config.ts";
-import { startMockHost, type MockHostOptions } from "../src/engine/mocks.ts";
+import { startMockHost, type MockHost, type MockHostOptions } from "../src/engine/mocks.ts";
 import { addChecker, addRunner, createRegistry } from "../src/engine/registry.ts";
 import { runEvaluation } from "../src/engine/run.ts";
 import { makeTempDir } from "./helpers/fake-pi-control.ts";
@@ -27,7 +27,7 @@ async function host(
   t: Parameters<typeof makeTempDir>[0],
   shell: ShellMocks,
   extra: Partial<MockHostOptions> = {},
-): Promise<{ host: Awaited<ReturnType<typeof startMockHost>>; root: string }> {
+): Promise<{ host: MockHost; root: string }> {
   const root = await makeTempDir(t, "ae-mock-actions-");
   const workspaceDir = join(root, "workspace");
   const scratchDir = join(root, "scratch");
@@ -43,7 +43,13 @@ async function host(
     shell,
     ...extra,
   });
-  return { host: started, root };
+  // Close once, however the test ends: a failed assertion must not leave the host listening.
+  let closing: ReturnType<typeof started.close> | undefined;
+  const close = (): ReturnType<typeof started.close> => (closing ??= started.close());
+  t.after(async () => {
+    await close().catch(() => {});
+  });
+  return { host: { wiring: started.wiring, close }, root };
 }
 
 function result(exitCode = 0, stdout = "", stderr = ""): MockResult {
