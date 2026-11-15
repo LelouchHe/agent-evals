@@ -275,7 +275,7 @@ export function workspaceTargetPath(target: string): string {
 }
 
 /** A bare command name is placed on `PATH`; a path containing `/` is workspace-relative. */
-function expectMockTarget(target: string, label: string): string {
+export function expectMockTarget(target: string, label: string): string {
   if (target.trim().length === 0) {
     throw new ConfigError(`${label} has an empty target name`);
   }

@@ -71,6 +71,10 @@ test("the mock checker rejects unknown, malformed and regex-shaped parameters", 
   await assert.rejects(parse({ shell: ["git"], times: 1.5 }), ConfigError);
   // Position 0 names one target, so it cannot be a pattern.
   await assert.rejects(parse({ shell: ["/git|svn/"] }), ConfigError);
+  // It must also have a declared target's shape, not something identity would normalise away.
+  for (const target of ["/scripts/x", "scripts/x/", "../scripts/x", "./scripts/../x"]) {
+    await assert.rejects(parse({ shell: [target] }), ConfigError, target);
+  }
   // The rest keeps the mock rule's argument grammar.
   await assert.rejects(parse({ shell: ["git", "push", { "-f": true }, "later"] }), ConfigError);
 });

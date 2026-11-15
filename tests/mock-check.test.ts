@@ -28,13 +28,14 @@ const callingRunner: RunnerDefinition<CallingRunnerParams> = {
     run: async (context) => {
       const wiring = context.mocks;
       if (wiring === undefined) throw new Error("the runner received no mocks wiring");
+      const statuses: (number | null)[] = [];
       for (const [target, ...args] of params.calls) {
         const program = target!.includes("/")
           ? join(context.workspaceDir, target!)
           : join(wiring.forwarderDir, target!);
-        await call(program, args);
+        statuses.push(await call(program, args));
       }
-      return { finalText: null, diagnostics: [] };
+      return { finalText: statuses.length === 0 ? null : statuses.join(" "), diagnostics: [] };
     },
     stop: async () => {},
   }),
@@ -74,7 +75,8 @@ test("a mock check counts recorded calls, including refused and unmatched ones",
     mocks: {
       shell: {
         refused: { pass: false },
-        allowed: { return: { stdout: "ok\n" } },
+        // Only the listed argument reaches the rule, so the second call below is unmatched.
+        allowed: { args: ["ok-only"], return: { stdout: "ok\n" } },
       },
     },
     runner: {
@@ -93,6 +95,8 @@ test("a mock check counts recorded calls, including refused and unmatched ones",
     ],
   });
   assert.equal(record.status, "pass", record.error);
+  // 126 is the forwarder's refusal for both a declared refusal and a call no rule matched.
+  assert.equal(record.runner.finalText, "126 126");
   assert.deepEqual(
     record.checks.map((check) => [check.subject, check.status]),
     [

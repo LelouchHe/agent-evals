@@ -3,6 +3,7 @@ import {
   ConfigError,
   errorMessage,
   expectMockArgs,
+  expectMockTarget,
   mockTargetIdentity,
   type MockArgs,
   type MockArgument,
@@ -31,6 +32,13 @@ const mockCheckParamsSchema = z
         path: ["shell", 0],
         message: "must be a literal declared target, not a /…/ pattern",
       });
+    } else {
+      try {
+        // The same shape a `mocks.shell` target must have, so identity cannot normalise it away.
+        expectMockTarget(target, "shell[0]");
+      } catch (error) {
+        context.addIssue({ code: "custom", path: ["shell", 0], message: errorMessage(error) });
+      }
     }
     try {
       expectMockArgs(rest, "shell");
