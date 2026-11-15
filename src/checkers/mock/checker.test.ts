@@ -3,6 +3,7 @@ import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { test, type TestContext } from "node:test";
 import { ConfigError, type ImplementationParams } from "../../engine/config.ts";
+import { validateCheckFiles } from "../../engine/files.ts";
 import { parseImplementationParams } from "../../engine/params.ts";
 import type { CheckerContext, MockRecord } from "../../engine/registry.ts";
 import { openRunRoot } from "../../engine/workspace.ts";
@@ -13,6 +14,7 @@ import { mockChecker } from "./checker.ts";
 function implementationContext(mockTargets?: readonly string[]) {
   return {
     authoringDir: process.cwd(),
+    validateFiles: (files: Readonly<Record<string, string>>) => validateCheckFiles(files, process.cwd()),
     values: {
       env: { require: (name: string) => Promise.reject(new Error(`no environment value ${name}`)) },
       run: { HOME: "/run/home", TMPDIR: "/run/tmp" },

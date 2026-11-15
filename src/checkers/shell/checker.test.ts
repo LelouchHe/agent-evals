@@ -215,38 +215,31 @@ test("a symlink to a directory inside an authored directory is rejected", async 
   );
 });
 
-test("check-time files are staged for the sandbox, not placed by the checker", async (t) => {
+test("check-time files are handed to the check sandbox, not placed by the checker", async (t) => {
   const authoring = await makeTempDir(t, "ae-shell-files-authoring-");
   await mkdir(join(authoring, "checks"));
   await writeFile(join(authoring, "checks/acceptance.test.js"), "acceptance body\n");
-  let staged: string | undefined;
+  let handed: Readonly<Record<string, string>> | undefined;
   const dirs = await makeWorkspace(t, {
     run: async (_command, options) => {
-      staged = options?.stagingDir;
-      assert.ok(staged !== undefined, "the checker passes its staging tree");
-      assert.equal(await readFile(join(staged, "tests/acceptance.test.js"), "utf8"), "acceptance body\n");
+      handed = options?.files;
       return { kind: "exited", exitCode: 0, output: "" };
     },
   });
 
-  const [result] = await runFiles(
-    authoring,
-    { run: ["node", "tests/acceptance.test.js"], files: { "tests/acceptance.test.js": "checks/acceptance.test.js" } },
-    dirs.context,
-  );
+  const files = { "tests/acceptance.test.js": "checks/acceptance.test.js" };
+  const [result] = await runFiles(authoring, { run: ["node", "tests/acceptance.test.js"], files }, dirs.context);
   assert.equal(result?.status, "pass", result?.reason);
-  assert.ok(staged !== undefined);
-  // Placement into the live workspace belongs to the check sandbox, whose tests cover it.
+  assert.deepEqual(handed, files);
+  // Staging and placement belong to the engine's check sandbox, whose tests cover them.
   await assert.rejects(readFile(join(dirs.workspaceDir, "tests/acceptance.test.js")));
-  // The host's staging tree does not outlive the check.
-  await assert.rejects(readdir(staged));
   assert.deepEqual(
     (await readdir(dirs.root)).filter((name) => name.startsWith("check-files-")),
     [],
   );
 });
 
-test("check-time files stage directory trees and parent-relative sources", async (t) => {
+test("check-time files pass directory trees and parent-relative sources to the sandbox", async (t) => {
   const parent = await makeTempDir(t, "ae-shell-files-parent-");
   const authoring = join(parent, "case");
   await mkdir(join(authoring, "checks"), { recursive: true });
@@ -254,31 +247,21 @@ test("check-time files stage directory trees and parent-relative sources", async
   await mkdir(join(parent, "shared"));
   await writeFile(join(parent, "shared/support.txt"), "support\n");
 
-  let staged: string | undefined;
+  let handed: Readonly<Record<string, string>> | undefined;
   const dirs = await makeWorkspace(t, {
     run: async (_command, options) => {
-      staged = options?.stagingDir;
-      assert.ok(staged !== undefined);
-      assert.equal(await readFile(join(staged, "tests/acceptance.test.js"), "utf8"), "real body\n");
-      assert.equal(await readFile(join(staged, "existing/support.txt"), "utf8"), "support\n");
+      handed = options?.files;
       return { kind: "exited", exitCode: 0, output: "" };
     },
   });
 
-  const [result] = await runFiles(
-    authoring,
-    {
-      run: ["true"],
-      files: {
-        tests: "checks",
-        "existing/support.txt": "../shared/support.txt",
-      },
-    },
-    dirs.context,
-  );
+  const files = {
+    tests: "checks",
+    "existing/support.txt": "../shared/support.txt",
+  };
+  const [result] = await runFiles(authoring, { run: ["true"], files }, dirs.context);
   assert.equal(result?.status, "pass", result?.reason);
-  assert.ok(staged !== undefined);
-  await assert.rejects(readdir(staged));
+  assert.deepEqual(handed, files);
 });
 
 test("staging check-time files stops on an aborted signal and leaves nothing behind", async (t) => {
@@ -319,7 +302,7 @@ test("staging check-time files stops on an aborted signal and leaves nothing beh
   await assert.rejects(readdir(join(stagedMid, "second")));
 });
 
-test("an aborted check stops before the sandbox and removes its staging directory", async (t) => {
+test("an aborted check never reaches the sandbox", async (t) => {
   const authoring = await makeTempDir(t, "ae-shell-files-authoring-");
   await mkdir(join(authoring, "checks"));
   await writeFile(join(authoring, "checks/acceptance.test.js"), "body\n");

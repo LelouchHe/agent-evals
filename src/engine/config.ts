@@ -3,8 +3,8 @@ import { compilePattern } from "./regex.ts";
 
 /** A configuration problem detected before any runtime resource is created. */
 export class ConfigError extends Error {
-  constructor(message: string) {
-    super(message);
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, options);
     this.name = "ConfigError";
   }
 }

@@ -31,7 +31,7 @@ import {
   type RunnerStatus,
 } from "./results.ts";
 import { createEnvSource, type EnvSource } from "./env-source.ts";
-import { placeCaseFiles } from "./files.ts";
+import { placeCaseFiles, validateCheckFiles } from "./files.ts";
 import { startMockHost, type MockHost } from "./mocks.ts";
 import { createCheckSandbox } from "./check-sandbox.ts";
 import { parseImplementationParams } from "./params.ts";
@@ -81,10 +81,14 @@ export async function runEvaluation(request: RunRequest): Promise<EvaluationReco
 
   let registered: Awaited<ReturnType<typeof prepareImplementations>>;
   try {
-    registered = await prepareImplementations(request, {
-      env: request.envSource ?? createEnvSource(process.cwd(), abort.signal),
-      run: { HOME: homeDir, TMPDIR: scratchDir },
-    });
+    registered = await prepareImplementations(
+      request,
+      {
+        env: request.envSource ?? createEnvSource(process.cwd(), abort.signal),
+        run: { HOME: homeDir, TMPDIR: scratchDir },
+      },
+      abort.signal,
+    );
     await validateAuthoringAssets(request.case);
     // Exclusive creation, like mkdtemp: an existing path is an error, not reused.
     await mkdir(root, { mode: 0o700 });
@@ -312,6 +316,7 @@ export async function runEvaluation(request: RunRequest): Promise<EvaluationReco
 async function prepareImplementations(
   request: RunRequest,
   values: ValueSource,
+  signal: AbortSignal,
 ): Promise<{
   runnerType: string;
   runner: Runner;
@@ -322,6 +327,7 @@ async function prepareImplementations(
   const context: ImplementationContext = {
     authoringDir: request.case.dir,
     values,
+    validateFiles: (files) => validateCheckFiles(files, request.case.dir, "check files", signal),
     ...(mockTargets === undefined ? {} : { mockTargets }),
   };
   const runnerDefinition = requireRunner(request.registry, request.case.config.runner.$type);
@@ -417,6 +423,7 @@ async function runChecks(
       checkSandbox: createCheckSandbox({
         workspaceDir: workspaceRoot.path,
         runRootDir: root,
+        authoringDir: request.case.dir,
         signal: combined,
         cancelled: signal,
       }),

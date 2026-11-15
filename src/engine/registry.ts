@@ -83,12 +83,12 @@ export type CheckSandboxOutcome =
 export interface CheckSandbox {
   /**
    * Start `command` in the workspace root; program and arguments are never given to a shell.
-   * A `stagingDir` is a tree the sandbox copies into the workspace immediately before starting,
-   * so the placement runs under the sandbox's write policy instead of on the host.
+   * `files` maps workspace destinations to authoring sources; the engine validates and stages
+   * them inside the sandbox, copying them into the workspace immediately before the program.
    */
   readonly run: (
     command: readonly string[],
-    options?: { readonly stagingDir?: string },
+    options?: { readonly files?: Readonly<Record<string, string>> },
   ) => Promise<CheckSandboxOutcome>;
 }
 
@@ -107,6 +107,8 @@ export interface ImplementationContext {
   readonly authoringDir: string;
   /** The run's placeholder sources, for parameters an implementation loads itself. */
   readonly values: ValueSource;
+  /** Validate and stage a checker's check-time `files` at load time, relative to `authoringDir`. */
+  readonly validateFiles: (files: Readonly<Record<string, string>>) => Promise<void>;
   /** The case's declared `mocks.shell` targets, for a checker that must name one at load time. */
   readonly mockTargets?: readonly string[];
 }

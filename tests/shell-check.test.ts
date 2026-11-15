@@ -10,7 +10,14 @@ import { mockChecker } from "../src/checkers/mock/checker.ts";
 import { shellChecker } from "../src/checkers/shell/checker.ts";
 import { loadCase } from "../src/engine/authoring.ts";
 import { ConfigError } from "../src/engine/config.ts";
-import { addChecker, addRunner, createRegistry, type Registry, type RunnerDefinition } from "../src/engine/registry.ts";
+import {
+  addChecker,
+  addRunner,
+  createRegistry,
+  type CheckerDefinition,
+  type Registry,
+  type RunnerDefinition,
+} from "../src/engine/registry.ts";
 import { runEvaluation } from "../src/engine/run.ts";
 import { noopRunner } from "../src/runners/noop/runner.ts";
 import { makeTempDir } from "./helpers/fake-pi-control.ts";
@@ -333,7 +340,7 @@ test("a missing check-time file source is a configuration error before any run d
   const tempParent = await makeTempDir(t, "ae-shell-files-load-runs-");
   await assert.rejects(
     async () => runEvaluation({ case: await loadCase(casePath), registry, resultsDir, tempParent }),
-    (error: unknown) => error instanceof ConfigError && /shell checker files.*is not accessible/.test(error.message),
+    (error: unknown) => error instanceof ConfigError && /check files.*is not accessible/.test(error.message),
   );
   assert.deepEqual(await readdir(tempParent), []);
   assert.deepEqual(await readdir(resultsDir), []);
@@ -398,5 +405,65 @@ test(
     assert.equal(record.checks[0]?.status, "error");
     assert.match(record.checks[0]?.reason ?? "", /symlink/);
     assert.deepEqual(await readdir(outside), []);
+  },
+);
+
+test(
+  "a custom checker gets engine files validation and sandbox staging",
+  {
+    skip: process.platform !== "darwin",
+  },
+  async (t) => {
+    const customChecker: CheckerDefinition<{ readonly files: Record<string, string>; readonly run: string[] }> = {
+      type: "custom-shell",
+      params: z.strictObject({
+        files: z.record(z.string(), z.string()),
+        run: z.array(z.string()).min(1),
+      }),
+      async create(params, context) {
+        await context.validateFiles(params.files);
+        return {
+          check: async (checkContext) => {
+            const outcome = await checkContext.checkSandbox.run(params.run, { files: params.files });
+            const pass = outcome.kind === "exited" && outcome.exitCode === 0;
+            return [
+              { checker: "custom-shell", subject: "custom", status: pass ? "pass" : "fail", reason: outcome.kind },
+            ];
+          },
+        };
+      },
+    };
+    const options = {
+      assets: { "checks/acceptance.txt": "custom body\n" },
+      register: (registry: Registry) => addChecker(registry, customChecker, "test"),
+    };
+
+    const { record } = await runCase(
+      t,
+      {
+        checks: [
+          {
+            $type: "custom-shell",
+            files: { "tests/acceptance.txt": "checks/acceptance.txt" },
+            run: ["/bin/sh", "-c", 'test "$(cat tests/acceptance.txt)" = "custom body"'],
+          },
+        ],
+      },
+      options,
+    );
+    assert.equal(record.status, "pass", record.error);
+
+    // The same public validateFiles rejects an unsafe destination without any checker schema.
+    await assert.rejects(
+      () =>
+        runCase(
+          t,
+          {
+            checks: [{ $type: "custom-shell", files: { "../escape": "checks/acceptance.txt" }, run: ["/bin/true"] }],
+          },
+          options,
+        ),
+      (error: unknown) => error instanceof ConfigError && /must not contain "\.\."/.test(error.message),
+    );
   },
 );

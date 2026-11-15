@@ -1,6 +1,15 @@
-import { copyFile, lstat, mkdir, readdir, rm, stat } from "node:fs/promises";
+import { copyFile, lstat, mkdir, mkdtemp, readdir, rm, stat } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
-import { errorMessage, resolveAuthoringAsset, type ResolvedCase } from "./config.ts";
+import {
+  ConfigError,
+  errorMessage,
+  expectRelativePath,
+  expectWorkspaceDestination,
+  resolveAuthoringAsset,
+  workspaceTargetPath,
+  type ResolvedCase,
+} from "./config.ts";
 import { isMissing } from "./workspace.ts";
 
 /**
@@ -21,6 +30,64 @@ export async function placeCaseFiles(
   await stageFiles(files, loadedCase.dir, stagingDir, "files");
   await copyInto(stagingDir, workspaceDir, ".", "files", true);
   await rm(stagingDir, { recursive: true, force: true });
+}
+
+/**
+ * Validate a checker's check-time `files`: workspace destinations and authoring sources, with
+ * the same rules as `case.files` destinations plus a non-root destination. Throws `ConfigError`
+ * so an extension checker that did no schema validation of its own still gets safe paths.
+ */
+export function expectCheckFiles(files: Readonly<Record<string, unknown>>): void {
+  for (const [destination, source] of Object.entries(files)) {
+    expectWorkspaceDestination(destination, `check files destination "${destination}"`);
+    if (workspaceTargetPath(destination) === "") {
+      throw new ConfigError(
+        `check files destination "${destination}" must name a file or directory inside the workspace`,
+      );
+    }
+    if (typeof source !== "string") {
+      throw new ConfigError(`check files["${destination}"] must be a string`);
+    }
+    expectRelativePath(source, `check files["${destination}"]`);
+  }
+}
+
+/**
+ * Validate a checker's files, then stage them for the check sandbox. The destination is created
+ * by the caller and is read-only inside the sandbox.
+ */
+export async function stageCheckFiles(
+  files: Readonly<Record<string, string>>,
+  authoringDir: string,
+  stagingDir: string,
+  signal?: AbortSignal,
+  label = "check files",
+): Promise<void> {
+  expectCheckFiles(files);
+  await stageFiles(files, authoringDir, stagingDir, label, signal);
+}
+
+/**
+ * Validate and stage a checker's files once at load, then discard the staging tree. A missing or
+ * special source, a nested symlink that is not a regular file, or two entries producing one file
+ * is a `ConfigError` before any run directory exists.
+ */
+export async function validateCheckFiles(
+  files: Readonly<Record<string, string>>,
+  authoringDir: string,
+  label = "check files",
+  signal?: AbortSignal,
+): Promise<void> {
+  if (Object.keys(files).length === 0) return;
+  const staging = await mkdtemp(join(tmpdir(), "agent-evals-check-files-"));
+  try {
+    await stageCheckFiles(files, authoringDir, staging, signal, label);
+  } catch (error) {
+    if (signal?.aborted) throw error;
+    throw new ConfigError(`${label}: ${errorMessage(error)}`, { cause: error });
+  } finally {
+    await rm(staging, { recursive: true, force: true, maxRetries: 3 });
+  }
 }
 
 /**

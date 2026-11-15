@@ -2,6 +2,7 @@ import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { errorMessage } from "./config.ts";
+import { stageCheckFiles } from "./files.ts";
 import type { CheckSandbox, CheckSandboxOutcome } from "./registry.ts";
 import { siblingRuntimeModule } from "./runtime-assets.ts";
 import { SYSTEM_PATH } from "../platform/macos/policy.ts";
@@ -16,6 +17,8 @@ export interface CheckSandboxOptions {
   readonly workspaceDir: string;
   /** The run root, where the private HOME, temporary directory and policy are created. */
   readonly runRootDir: string;
+  /** Where a checker's `files` sources resolve from, normally the case file's directory. */
+  readonly authoringDir: string;
   /** The check's deadline or cancellation. */
   readonly signal: AbortSignal;
   /** The run's own abort signal; when it fired, an aborted check was cancelled, not timed out. */
@@ -27,7 +30,7 @@ export interface CheckSandboxOptions {
  * stay beneath the workspace and a private HOME and temporary directory and the network is denied.
  */
 export function createCheckSandbox(options: CheckSandboxOptions): CheckSandbox {
-  return { run: (command, runOptions) => runProgram(options, command, runOptions?.stagingDir) };
+  return { run: (command, runOptions) => runProgram(options, command, runOptions?.files) };
 }
 
 /** The outcome the wrapper reports, before the launcher attaches the program's output. */
@@ -39,7 +42,7 @@ type ReportedOutcome =
 async function runProgram(
   options: CheckSandboxOptions,
   command: readonly string[],
-  stagingDir: string | undefined,
+  files: Readonly<Record<string, string>> | undefined,
 ): Promise<CheckSandboxOutcome> {
   const [program, ...args] = command;
   if (program === undefined) {
@@ -50,8 +53,27 @@ async function runProgram(
   const homeDir = join(directory, "home");
   const tmpDir = join(directory, "tmp");
   let supervised: SupervisedProcess | undefined;
+  let stagingDir: string | undefined;
   try {
     await Promise.all([mkdir(homeDir, { mode: 0o700 }), mkdir(tmpDir, { mode: 0o700 })]);
+    if (files !== undefined && Object.keys(files).length > 0) {
+      if (options.signal.aborted) {
+        return { kind: "failed", reason: abortReason(options), output: "" };
+      }
+      stagingDir = join(directory, "staged");
+      try {
+        await mkdir(stagingDir);
+        await stageCheckFiles(files, options.authoringDir, stagingDir, options.signal, "check files");
+      } catch (error) {
+        if (options.signal.aborted) {
+          return { kind: "failed", reason: abortReason(options), output: "" };
+        }
+        return { kind: "failed", reason: `could not place files: ${errorMessage(error)}`, output: "" };
+      }
+    }
+    if (options.signal.aborted) {
+      return { kind: "failed", reason: abortReason(options), output: "" };
+    }
     supervised = await spawnSupervised({
       policy: {
         writableRoots: [options.workspaceDir, homeDir, tmpDir],
