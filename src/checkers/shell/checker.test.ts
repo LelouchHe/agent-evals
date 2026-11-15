@@ -299,6 +299,24 @@ test("staging check-time files stops on an aborted signal and leaves nothing beh
     (error: unknown) => error instanceof Error && error.name === "AbortError",
   );
   assert.deepEqual(await readdir(staging), []);
+
+  // Also abort mid-traversal across an empty directory tree so directory branches cannot slip past.
+  await mkdir(join(authoring, "empty-tree/sub"), { recursive: true });
+  const midController = new AbortController();
+  const stagedMid = await makeTempDir(t, "ae-shell-files-mid-");
+  const promise = stageFiles(
+    { first: "checks/acceptance.test.js", second: "empty-tree" },
+    authoring,
+    stagedMid,
+    "files",
+    midController.signal,
+  );
+  queueMicrotask(() => midController.abort());
+  await assert.rejects(
+    () => promise,
+    (error: unknown) => error instanceof Error && error.name === "AbortError",
+  );
+  await assert.rejects(readdir(join(stagedMid, "second")));
 });
 
 test("an aborted check stops before the sandbox and removes its staging directory", async (t) => {

@@ -94,17 +94,21 @@ async function copyInto(
     throw new Error(`${label} source for ${destination} must be a regular file or directory`);
   }
 
+  signal?.throwIfAborted();
   await expectTarget(target, destination, label, kind, overwrite);
+  signal?.throwIfAborted();
   if (kind === "file") {
-    signal?.throwIfAborted();
     await mkdir(dirname(target), { recursive: true });
     signal?.throwIfAborted();
     await copyFile(source, target);
+    signal?.throwIfAborted();
     return;
   }
   await mkdir(target, { recursive: true });
-  for (const name of await readdir(source)) {
-    signal?.throwIfAborted();
+  signal?.throwIfAborted();
+  const entries = await readdir(source);
+  signal?.throwIfAborted();
+  for (const name of entries) {
     await copyInto(join(source, name), join(target, name), join(destination, name), label, overwrite, signal);
   }
 }

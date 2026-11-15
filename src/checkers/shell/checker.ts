@@ -83,11 +83,13 @@ class ShellChecker implements Checker {
 
   readonly check = async (context: CheckerContext): Promise<readonly CheckResult[]> => {
     const subject = truncate(`run ${this.#params.run.join(" ")}`, MAX_SUBJECT);
+    context.signal.throwIfAborted();
     const files = this.#params.files;
     let stagingDir: string | undefined;
     if (files !== undefined && Object.keys(files).length > 0) {
       try {
         stagingDir = await mkdtemp(join(context.runRootDir, "check-files-"));
+        context.signal.throwIfAborted();
         await stageFiles(files, this.#authoringDir, stagingDir, "shell checker files", context.signal);
       } catch (error) {
         if (stagingDir !== undefined) {
@@ -107,6 +109,7 @@ class ShellChecker implements Checker {
     }
 
     try {
+      context.signal.throwIfAborted();
       const outcome = await context.checkSandbox.run(
         this.#params.run,
         stagingDir === undefined ? undefined : { stagingDir },
