@@ -104,3 +104,6 @@ cases:
       agent: ../../agents/claude.yml
       config:
         model: haiku
+  baseline:
+    runner:
+      $type: noop

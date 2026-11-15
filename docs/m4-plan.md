@@ -124,7 +124,7 @@ It starts no harness and no sandbox and completes at once with no final text and
 
 ## End-to-End Example
 
-[`deploy-runbook`](../examples/cases/deploy-runbook/case.yml) gains a refused `make` (`pass: false`) and a `mock` check with `times: 0`, beside the trace judge that asks the same question, so the deterministic and the judged answer to "no fix command was run" can be compared.
+[`deploy-runbook`](../examples/cases/deploy-runbook/case.yml) gains a refused `make` (`pass: false`), a `mock` check with `times: 0` beside the trace judge that asks the same question (so the deterministic and the judged answer to "no fix command was run" can be compared), and a `baseline` case on the `noop` runner.
 
 ## Verified
 

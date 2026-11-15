@@ -3,12 +3,15 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { test } from "node:test";
 import { fileChecker } from "../src/checkers/file/checker.ts";
+import { mockChecker } from "../src/checkers/mock/checker.ts";
 import { loadCase } from "../src/engine/authoring.ts";
 import type { MockRule, ResolvedCase } from "../src/engine/config.ts";
 import { parseImplementationParams } from "../src/engine/params.ts";
-import type { CheckerContext } from "../src/engine/registry.ts";
+import { addChecker, addRunner, createRegistry, type CheckerContext } from "../src/engine/registry.ts";
 import { searches } from "../src/engine/regex.ts";
+import { runEvaluation } from "../src/engine/run.ts";
 import { openRunRoot } from "../src/engine/workspace.ts";
+import { noopRunner } from "../src/runners/noop/runner.ts";
 import { makeTempDir } from "./helpers/fake-pi-control.ts";
 import { implementationContext, unusedCheckSandbox } from "./helpers/implementation-context.ts";
 
@@ -144,5 +147,42 @@ test("the worked example refuses make and asserts that no call reached it", asyn
   assert.ok(
     loaded.config.checks.some((check) => check.$type === "judge" && check.trace === true),
     "the trace judge asking the same question stays",
+  );
+});
+
+test("the worked example's baseline case fails positive checks and passes restraint checks under noop", async (t) => {
+  const loaded = await loadCase(CASE, { caseName: "baseline" });
+  assert.deepEqual(loaded.config.runner, { $type: "noop" });
+
+  // Strip only the model-calling judges so the deterministic baseline runs offline.
+  const deterministic = {
+    ...loaded,
+    config: {
+      ...loaded.config,
+      checks: loaded.config.checks.filter((check) => check.$type !== "judge"),
+    },
+  };
+  const registry = createRegistry();
+  addRunner(registry, noopRunner, "built-in");
+  addChecker(registry, fileChecker, "built-in");
+  addChecker(registry, mockChecker, "built-in");
+
+  const record = await runEvaluation({
+    case: deterministic,
+    registry,
+    resultsDir: await makeTempDir(t, "ae-example-baseline-results-"),
+    tempParent: await makeTempDir(t, "ae-example-baseline-runs-"),
+  });
+  assert.equal(record.status, "fail");
+  assert.deepEqual(
+    record.checks.map((check) => [check.checker, check.status]),
+    [
+      ["file", "fail"],
+      ["file", "fail"],
+      ["file", "fail"],
+      ["file", "fail"],
+      ["file", "pass"],
+      ["mock", "pass"],
+    ],
   );
 });
