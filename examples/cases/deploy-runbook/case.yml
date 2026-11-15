@@ -119,6 +119,20 @@ cases:
       agent: ../../agents/claude.yml
       config:
         model: haiku
+  copilot-with-skill:
+    runner:
+      $type: acp
+      agent: ../../agents/copilot.yml
+      config:
+        model: gpt-6-luna
+    files:
+      .agents/skills/deploy-runbook: skill
+  copilot-without-skill:
+    runner:
+      $type: acp
+      agent: ../../agents/copilot.yml
+      config:
+        model: gpt-6-luna
   baseline:
     runner:
       $type: noop

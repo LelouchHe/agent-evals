@@ -32,6 +32,10 @@ test("Seatbelt policy renders deny-default, scoped reads, writes, and network", 
   assert.match(policy, /\(literal "\/opt\/launcher"\)/);
   assert.match(policy, /\(allow file-read-metadata/);
   assert.match(policy, /\(allow network-outbound\)/);
+  assert.match(
+    policy,
+    /\(allow mach-lookup \(global-name "com\.apple\.SecurityServer" "com\.apple\.trustd\.agent" "com\.apple\.system\.opendirectoryd\.membership"\)\)/,
+  );
   assert.doesNotMatch(policy, /\(allow default\)/);
 });
 
@@ -53,6 +57,7 @@ test("the check sandbox policy opens reads and keeps the write and network limit
 test("Seatbelt policy omits network when not requested", () => {
   const policy = renderSeatbeltPolicy({ writableRoots: ["/tmp/ws"], readableRoots: [], allowNetwork: false });
   assert.doesNotMatch(policy, /network-outbound/);
+  assert.doesNotMatch(policy, /mach-lookup/);
   assert.doesNotMatch(policy, /file-ioctl/);
 });
 

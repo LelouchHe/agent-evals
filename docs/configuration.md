@@ -78,7 +78,7 @@ Sandbox cleanup covers ordinary, orphaned and new-session descendants. A private
 
 Pi may download `fd` and `rg` during interactive startup if they are missing. Prepare those tools in `deps` for normal use; an offline UI check can instead use `command: [/usr/bin/env, PI_OFFLINE=1, pi]` to skip automatic downloads. This is explicit harness configuration, not engine-specific behavior.
 
-Examples: [Pi](../examples/agents/pi.yml), [Claude](../examples/agents/claude.yml). Both run unchanged through the same implementation, which contains no harness-specific exceptions; their comments say what each `deps` holds.
+Examples: [Pi](../examples/agents/pi.yml), [Claude](../examples/agents/claude.yml), [Copilot](../examples/agents/copilot.yml). All three run unchanged through the same implementation, which contains no harness-specific exceptions; their comments say what each `deps` holds.
 
 ## One Case or Named Cases
 
@@ -148,7 +148,7 @@ Authoring resources are relative to the YAML file; checker targets are relative 
 - A file arriving where a directory exists, or a directory where a file exists, is an error rather than a replacement, whether the existing path came from `fixture` or from another entry.
 - Placement happens after the fixture copy and before the baseline snapshot, so placed files are part of the baseline and `unchanged` covers them.
 
-The engine only copies; it assigns no meaning to a destination and knows no harness paths. A project-level skill is one use: place its directory where the harness discovers it, for example `.agents/skills/` for Pi or `.claude/skills/` for Claude Code.
+The engine only copies; it assigns no meaning to a destination and knows no harness paths. A project-level skill is one use: place its directory where the harness discovers it, for example `.agents/skills/` for Pi and Copilot CLI or `.claude/skills/` for Claude Code.
 
 ## Mocks
 

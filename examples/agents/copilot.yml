@@ -1,0 +1,18 @@
+# deps holds the standalone `copilot` binary under .local/bin and .copilot/settings.json
+# (`"storeTokenPlaintext": true`, `"sandbox": { "enabled": false }`).
+# `COPILOT_ALLOW_ALL: "true"` trusts the evaluated workspace so project skills load;
+# `COPILOT_DISABLE_LOGIN_SHELL_ENV` keeps the operator's login shell out of tool runs.
+command: [copilot, login]
+acpCommand: [copilot, --acp, --context, long_context]
+environment:
+  COPILOT_ALLOW_ALL: "true"
+  COPILOT_AUTO_UPDATE: "false"
+  COPILOT_DISABLE_LOGIN_SHELL_ENV: "1"
+  COPILOT_SYSTEM_PROXY: "0"
+  COPILOT_TELEMETRY_DISABLED: "true"
+home:
+  deps: ${env:COPILOT_DEPS}
+  login: ${env:COPILOT_LOGIN}
+  path: [.local/bin]
+login:
+  - .copilot/config.json

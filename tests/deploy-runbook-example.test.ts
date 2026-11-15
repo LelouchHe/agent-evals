@@ -37,6 +37,17 @@ function patternsOf(loaded: ResolvedCase): readonly string[] {
 // The worked example is documentation: nothing else loads it, so an action nobody exercises or
 // a response no check asserts would drift silently and only a paid live run would notice.
 test("the worked example exercises every mock action and its checks assert the responses", async () => {
+  for (const caseName of [
+    "pi-with-skill",
+    "pi-without-skill",
+    "claude-with-skill",
+    "claude-without-skill",
+    "copilot-with-skill",
+    "copilot-without-skill",
+    "baseline",
+  ]) {
+    await loadCase(CASE, { caseName });
+  }
   const loaded = await loadCase(CASE, { caseName: "pi-with-skill" });
   const shell = actions(loaded);
   const patterns = patternsOf(loaded);

@@ -62,7 +62,7 @@ login:
 
 Per-case `runner.config` remains separate: keys match an ACP option's category, otherwise its ID. Set model first because other choices may depend on it. Offered values are validated after session creation and before prompting.
 
-Checked-in startup examples: [Pi](../examples/agents/pi.yml), [Claude](../examples/agents/claude.yml).
+Checked-in startup examples: [Pi](../examples/agents/pi.yml), [Claude](../examples/agents/claude.yml), [Copilot](../examples/agents/copilot.yml).
 
 ### Harness home
 
@@ -103,6 +103,12 @@ agent-evals-home/
       .claude/settings.json
     login/
       .claude.json               the token comes from .env, not a file
+  copilot/
+    deps/
+      .local/bin/                copilot (the standalone SEA binary)
+      .copilot/settings.json
+    login/
+      .copilot/config.json       plaintext OAuth account state
 ```
 
 Settings that make a harness usable for unattended, isolated runs:
@@ -111,6 +117,7 @@ Settings that make a harness usable for unattended, isolated runs:
 | ----------- | ------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Pi          | `.pi/agent/settings.json` | `"defaultProjectTrust": "always"` so project-level skills load without a prompt; `"quietStartup": true`, `"enableInstallTelemetry": false`, `"retry": { "enabled": false }`. |
 | Claude Code | `.claude/settings.json`   | `"syncClaudeAiSkills": false` and `"disableClaudeAiConnectors": true` keep account content out of the run.                                                                   |
+| Copilot CLI | `.copilot/settings.json`  | `"storeTokenPlaintext": true` keeps login credentials in `.copilot/config.json`; `"sandbox": { "enabled": false }` avoids nested Seatbelt.                                   |
 
 #### The assembled HOME
 
@@ -186,7 +193,7 @@ The implemented helpers now use ACP SDK 2.6.0 and its stable ACP v1 app API (`cl
 - A subscription login brings account content into every run: about 15 claude.ai skills and claude.ai MCP connectors such as Claude Docs. Connectors run on Anthropic's side, outside our sandbox. `"disableClaudeAiConnectors": true` and `"syncClaudeAiSkills": false` in `deps`'s `.claude/settings.json` removed both; the environment variable `ENABLE_CLAUDEAI_MCP_SERVERS=false` also removes connectors.
 - It needs `CLAUDE_CODE_TMPDIR`, because it otherwise uses the shared `/tmp/claude-<uid>`; it ignores `TMPDIR`. Without it, `claude-agent-acp` 0.107.0 fails `session/new` with `EPERM` on `/tmp/claude-501`. The [Claude example](../examples/agents/claude.yml) declares `CLAUDE_CODE_TMPDIR: ${TMPDIR}`; the runner stays harness-agnostic. It also refuses to start in an unreadable working directory.
 - Seatbelt cannot nest: `sandbox-exec` inside Seatbelt fails with `sandbox_apply: Operation not permitted`. Claude Code's own sandbox is off by default; with `sandbox.enabled: true` it fails to start, refuses that command, then disables itself for the session. A fixture's `.claude/settings.json` or managed settings under `/Library/Application Support/ClaudeCode/` can turn it on. Claude Code's own sandbox cannot be evaluated inside ours.
-- No `mach-lookup` is needed. The keychain is unreachable from the sandbox because the login keychain file under the real `HOME` is unreadable.
+- No `mach-lookup` was needed for Node-based harnesses (Pi and Claude Code). Native TLS stacks such as Copilot CLI's Rust runtime instead evaluate macOS system trust anchors through `/private/var/db/mds` and `com.apple.SecurityServer` / `com.apple.trustd.agent` / `com.apple.system.opendirectoryd.membership` when `allowNetwork` is on; the login keychain file under the real `HOME` remains unreadable, so operator keychain items stay inaccessible.
 
 ### Pi through pi-acp
 
@@ -194,7 +201,7 @@ The implemented helpers now use ACP SDK 2.6.0 and its stable ACP v1 app API (`cl
 
 ### Sandbox
 
-- Node's resolver needs read access to the `/var` symlink; without it DNS fails under Seatbelt.
+- Node's resolver needs read access to the `/var` symlink; native TLS clients also follow `/etc` (`/etc/ssl/cert.pem`) and system trust services when network access is enabled.
 - The agent's working directory must be readable, and only the prepared workspace is.
 - Interactive Pi needs terminal-mode ioctl permission, not just terminal reads/writes. A live offline UI check opened its `/login` menu and exited normally using the helper, without new authentication, credential-content changes or model prompts; automatic `fd`/`rg` downloads were disabled explicitly for that check. The initial prototype login policies allowed all file ioctls; the implemented helper scopes termios setters to the current terminal.
 

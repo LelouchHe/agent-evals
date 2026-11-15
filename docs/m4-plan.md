@@ -98,12 +98,12 @@ Running a program at check time is an engine capability, not a property of one c
 
 `result.json` gains the runner's reported usage beside the `durationMs` it already records:
 
-| Value          | Source                                                                                               | Pi  | Claude |
-| -------------- | ---------------------------------------------------------------------------------------------------- | --- | ------ |
-| Duration       | The engine's own clock; recorded today as `runner.durationMs`.                                       | yes | yes    |
-| Context tokens | The last ACP `usage_update`: tokens in context and the context window size.                          | yes | yes    |
-| Cost           | The same update's optional cumulative session cost, with its currency.                               | yes | yes    |
-| Total tokens   | The prompt response's `usage`, from ACP's unstable part: total, input, output, cache read and write. | yes | yes    |
+| Value          | Source                                                                                                        | Pi  | Claude | Copilot |
+| -------------- | ------------------------------------------------------------------------------------------------------------- | --- | ------ | ------- |
+| Duration       | The engine's own clock; recorded today as `runner.durationMs`.                                                | yes | yes    | yes     |
+| Context tokens | The last ACP `usage_update`: tokens in context and the context window size.                                   | yes | yes    | yes     |
+| Cost           | The same update's optional cumulative session cost, with its currency.                                        | yes | yes    | no      |
+| Total tokens   | The prompt response's `usage`, from ACP's unstable part: total, input, output, thought, cache read and write. | yes | yes    | yes     |
 
 - **Context tokens and total tokens are different values and are named apart.** Context tokens are the context's size at the end of the run, not what the run consumed. Total tokens are the cumulative consumption reported on the prompt response's unstable `usage` field (in our single-turn runs, the turn's total).
 - **Each value is optional.** A harness that omits one leaves it out; nothing is estimated from another value, and there is no price table or conversion. A runner that reports nothing, such as native Pi or `noop`, has no usage.
@@ -137,10 +137,10 @@ It also exercises both kinds of `shell` check:
 
 ## Verified
 
-Real single-turn runs of both harnesses through the `acp` environment (2026-11-15), with the `pi-acp` 0.0.34 fork (`1565f7e`) and `claude-agent-acp` 0.107.0:
+Real single-turn runs through the `acp` environment (2026-11-15), with the `pi-acp` 0.0.34 fork (`1565f7e`), `claude-agent-acp` 0.107.0 and GitHub Copilot CLI 1.0.112:
 
-- **Both send `usage_update`** with the context size and a cumulative cost in USD. Claude's cost under a subscription token is a notional figure.
-- **Both send the unstable `usage`** on the prompt response: total, input, output, and cache read and write counts (`thoughtTokens` stays absent on Pi because Pi tracks no separate reasoning count). On `deploy-runbook`, Pi `with-skill` recorded 15,223 total tokens (3,553 context tokens, $0.00113 USD) and `without-skill` recorded 34,662 total tokens (5,979 context tokens, $0.00261 USD); the earlier Claude wire probe recorded 35,246 total tokens and 17,640 context tokens.
+- **All three send `usage_update`** with the context size; Pi and Claude also include a cumulative cost in USD (Claude's cost under a subscription token is a notional figure), while Copilot omits `cost`.
+- **All three send the unstable `usage`** on the prompt response: total, input, output, and cache read and write counts, plus `thoughtTokens` on Copilot (`thoughtTokens` stays absent on Pi because Pi tracks no separate reasoning count). On `deploy-runbook`, Pi `with-skill` recorded 15,223 total tokens (3,553 context tokens, $0.00113 USD) and `without-skill` recorded 34,662 total tokens (5,979 context tokens, $0.00261 USD); Copilot (`gpt-6-luna`) `with-skill` recorded 99,897 total tokens (16,719 context tokens, 413 thought tokens) and `without-skill` recorded 149,561 total tokens (20,094 context tokens, 2,950 thought tokens); the earlier Claude wire probe recorded 35,246 total tokens and 17,640 context tokens.
 - **The stable SDK client delivers the unstable field unchanged**, so reading it needs no change of SDK entry point.
 
 The `shell` sandbox against real toolchains (2026-11-15), through `/usr/bin/sandbox-exec` on macOS 15.5 with a deny-default profile: open reads, writes limited to the workspace, a private `HOME` and a private `TMPDIR`, no `network` clause, and exactly `PATH`, `HOME` and `TMPDIR` in the environment.

@@ -46,9 +46,10 @@ export function createSandboxPolicy(
       "/dev",
       "/private/var/select",
       "/private/var/db/timezone",
+      ...(options.allowNetwork ? ["/private/var/db/mds"] : []),
       ...options.readableRoots,
     ],
-    readableFiles: ["/var"],
+    readableFiles: ["/var", "/etc"],
     ...(options.denyExecutables === undefined ? {} : { denyExecutables: options.denyExecutables }),
     allowNetwork: options.allowNetwork,
     ...(terminal === undefined ? {} : { terminal }),
@@ -114,7 +115,11 @@ export function renderSeatbeltPolicy(policy: SandboxPolicy): string {
     );
   }
   if (policy.allowNetwork) {
-    lines.push("(allow network-outbound)");
+    lines.push(
+      "(allow network-outbound)",
+      // System TLS trust evaluation and directory membership for native HTTPS stacks (e.g. Rust/Security.framework).
+      '(allow mach-lookup (global-name "com.apple.SecurityServer" "com.apple.trustd.agent" "com.apple.system.opendirectoryd.membership"))',
+    );
   }
   return lines.join("\n") + "\n";
 }
