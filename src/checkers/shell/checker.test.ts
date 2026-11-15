@@ -59,6 +59,15 @@ test("exit status 0 passes and another status fails with the output tail", async
   assert.equal(failed?.reason, "exit status 1: one\ntwo assertions failed");
 });
 
+test("a long output keeps its end, where the assertion failure is", async (t) => {
+  const output = `${"noise\n".repeat(400)}final assertion failed\n`;
+  const [failed] = await check(t, { run: ["npm", "test"] }, sandbox({ kind: "exited", exitCode: 1, output }));
+  assert.equal(failed?.status, "fail");
+  assert.ok((failed?.reason ?? "").endsWith("final assertion failed"), failed?.reason);
+  assert.match(failed?.reason ?? "", /^exit status 1: …/);
+  assert.ok((failed?.reason.length ?? 0) <= 800, `reason is ${failed?.reason.length} chars`);
+});
+
 test("a signal or an unstartable program is an error, not a failed judgment", async (t) => {
   assert.deepEqual(
     await check(t, { run: ["sleep", "60"] }, sandbox({ kind: "signalled", signal: "SIGKILL", output: "" })),

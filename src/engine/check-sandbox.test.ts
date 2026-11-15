@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import { createServer } from "node:net";
-import { mkdir, readFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { test, type TestContext } from "node:test";
@@ -127,11 +128,14 @@ test(
     const dirs = await setup(t);
 
     const missing = await dirs.run(["agent-evals-definitely-missing"]);
-    assert.deepEqual(missing, {
-      kind: "failed",
-      reason: "could not start agent-evals-definitely-missing: no executable",
-      output: "",
-    });
+    assert.deepEqual(
+      { ...missing, output: missing.output.trim() },
+      {
+        kind: "failed",
+        reason: "could not start agent-evals-definitely-missing: ENOENT",
+        output: "",
+      },
+    );
 
     const signalled = await dirs.run(["/bin/sh", "-c", "kill -KILL $$"]);
     assert.equal(signalled.kind, "signalled");
@@ -139,8 +143,21 @@ test(
 
     // A background process outlives the leader; the supervisor must still end both at the deadline.
     const pidFile = join(dirs.workspace, "background.pid");
+    // Registered before launch, so an assertion failure before the pid is read still cleans up.
+    // The run workspace may already be removed by its own hook, so find the unique sleep itself.
+    t.after(() => {
+      const table = execFileSync("/bin/ps", ["-A", "-o", "pid=,command="], { encoding: "utf8" });
+      for (const line of table.split("\n")) {
+        const [rawPid, ...command] = line.trim().split(/\s+/);
+        const pid = Number(rawPid);
+        if (!Number.isSafeInteger(pid) || pid <= 1 || command.join(" ") !== "/bin/sleep 65479") continue;
+        if (!alive(pid)) continue;
+        const actual = execFileSync("/bin/ps", ["-o", "command=", "-p", String(pid)], { encoding: "utf8" }).trim();
+        if (actual === "/bin/sleep 65479") process.kill(pid, "SIGKILL");
+      }
+    });
     const timedOut = await dirs.run(
-      ["/bin/sh", "-c", '/bin/sleep 30 & printf "%s" $! > background.pid; /bin/sleep 30'],
+      ["/bin/sh", "-c", '/bin/sleep 65479 & printf "%s" $! > background.pid; /bin/sleep 65479'],
       AbortSignal.timeout(500),
     );
     assert.equal(timedOut.kind, "failed");
@@ -151,5 +168,91 @@ test(
       await delay(50);
     }
     assert.equal(alive(pid), false, "the background process survived the check");
+  },
+);
+
+test(
+  "ordinary exit codes stay exits while a real signal is reported as signalled",
+  {
+    skip: process.platform !== "darwin",
+  },
+  async (t) => {
+    const dirs = await setup(t);
+    for (const code of [1, 126, 127, 130, 143]) {
+      const outcome = await dirs.run(["/bin/sh", "-c", `exit ${code}`]);
+      assert.equal(outcome.kind, "exited", `exit ${code}: ${outcome.output}`);
+      assert.equal(outcome.kind === "exited" ? outcome.exitCode : undefined, code);
+    }
+    for (const [name, signal] of [
+      ["KILL", "SIGKILL"],
+      ["TERM", "SIGTERM"],
+    ] as const) {
+      const outcome = await dirs.run(["/bin/sh", "-c", `kill -${name} $$`]);
+      assert.equal(outcome.kind, "signalled", `kill -${name}: ${outcome.output}`);
+      assert.equal(outcome.kind === "signalled" ? outcome.signal : undefined, signal);
+    }
+  },
+);
+
+test(
+  "a file that exists but cannot be executed is a start failure, not an exit status",
+  {
+    skip: process.platform !== "darwin",
+  },
+  async (t) => {
+    const dirs = await setup(t);
+
+    await writeFile(join(dirs.workspace, "not-executable.sh"), "#!/bin/sh\nexit 0\n", { mode: 0o644 });
+    const blocked = await dirs.run(["./not-executable.sh"]);
+    assert.equal(blocked.kind, "failed", blocked.output);
+    assert.match(blocked.kind === "failed" ? blocked.reason : "", /EACCES/);
+
+    // A valid shebang is required; the interpreter missing is an exec failure, not program output.
+    await writeFile(join(dirs.workspace, "broken-shebang.sh"), "#!/definitely/missing/interpreter\nexit 0\n", {
+      mode: 0o755,
+    });
+    const broken = await dirs.run(["./broken-shebang.sh"]);
+    assert.equal(broken.kind, "failed", broken.output);
+    assert.match(broken.kind === "failed" ? broken.reason : "", /ENOENT/);
+
+    // Without a shebang the kernel reports ENOEXEC instead of running it.
+    await writeFile(join(dirs.workspace, "no-shebang.sh"), "exit 0\n", { mode: 0o755 });
+    const noShebang = await dirs.run(["./no-shebang.sh"]);
+    assert.equal(noShebang.kind, "failed", noShebang.output);
+    assert.match(noShebang.kind === "failed" ? noShebang.reason : "", /ENOEXEC/);
+  },
+);
+
+test(
+  "relative and empty PATH entries resolve from the workspace, not the engine's directory",
+  {
+    skip: process.platform !== "darwin",
+  },
+  async (t) => {
+    const dirs = await setup(t);
+    const original = process.env.PATH;
+    t.after(() => {
+      process.env.PATH = original;
+    });
+
+    await mkdir(join(dirs.workspace, "bin"));
+    await writeFile(join(dirs.workspace, "bin", "relative-tool"), "#!/bin/sh\nprintf relative > relative.txt\n", {
+      mode: 0o755,
+    });
+    await writeFile(join(dirs.workspace, "current-tool"), "#!/bin/sh\nprintf current > current.txt\n", {
+      mode: 0o755,
+    });
+    // An entry without a slash is relative to the workspace; an empty entry names it directly.
+    process.env.PATH = "bin::/usr/bin:/bin";
+
+    const relative = await dirs.run(["relative-tool"]);
+    assert.equal(relative.kind, "exited", relative.output);
+    assert.equal(relative.kind === "exited" ? relative.exitCode : 1, 0, relative.output);
+    assert.equal(await readFile(join(dirs.workspace, "relative.txt"), "utf8"), "relative");
+
+    const current = await dirs.run(["current-tool"]);
+    assert.equal(current.kind, "exited", current.output);
+    assert.equal(current.kind === "exited" ? current.exitCode : 1, 0, current.output);
+    assert.equal(await readFile(join(dirs.workspace, "current.txt"), "utf8"), "current");
   },
 );

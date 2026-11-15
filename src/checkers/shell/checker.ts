@@ -38,13 +38,12 @@ class ShellChecker implements Checker {
         if (outcome.exitCode === 0) {
           return [{ checker: "shell", subject, status: "pass", reason: "exit status 0" }];
         }
-        const tail = outcome.output.trim();
         return [
           {
             checker: "shell",
             subject,
             status: "fail",
-            reason: truncate(`exit status ${outcome.exitCode}${tail === "" ? "" : `: ${tail}`}`, MAX_REASON),
+            reason: failureReason(outcome.exitCode, outcome.output),
           },
         ];
       }
@@ -54,4 +53,14 @@ class ShellChecker implements Checker {
         return [{ checker: "shell", subject, status: "error", reason: truncate(outcome.reason, MAX_REASON) }];
     }
   };
+}
+
+/** Keep the end of the output, where a test runner's assertion failure is. */
+function failureReason(exitCode: number, output: string): string {
+  const header = `exit status ${exitCode}`;
+  const text = output.trim();
+  if (text === "") return header;
+  const available = MAX_REASON - header.length - 2;
+  const body = text.length <= available ? text : `…${text.slice(-(available - 1))}`;
+  return `${header}: ${body}`;
 }

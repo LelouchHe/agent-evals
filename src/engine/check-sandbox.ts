@@ -1,22 +1,58 @@
-import { constants } from "node:fs";
-import { access, mkdir, mkdtemp, rm, stat } from "node:fs/promises";
-import { isAbsolute, join, resolve } from "node:path";
-import { constants as osConstants } from "node:os";
-import { spawnSupervised, type SupervisedProcess } from "../platform/macos/supervise.ts";
+import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { join } from "node:path";
+import { errorMessage } from "./config.ts";
 import type { CheckSandbox, CheckSandboxOutcome } from "./registry.ts";
 import { SYSTEM_PATH } from "../platform/macos/policy.ts";
+import { spawnSupervised, type SupervisedProcess } from "../platform/macos/supervise.ts";
 
 /** How much of a program's combined output a check may keep as its reason. */
 const MAX_OUTPUT_LENGTH = 4_096;
-/** A shell reports a child killed by a signal as this exit status. */
-const SIGNAL_STATUS_OFFSET = 128;
+/** Marks the wrapper's report line in the workload's stdout. */
+const REPORT_MARKER = "agent-evals-check";
+
+/**
+ * The workload's parent. It starts the author's program with exactly `PATH`, `HOME` and
+ * `TMPDIR`, and reports the exact wait status instead of letting a shell reduce it to `128+n`:
+ * `close` gives `code` or `signal`, and a failed `spawn` reports the exec error before any child
+ * runs. The report is the last line of the wrapper's stdout, after the program's own output.
+ */
+const RUNNER = String.raw`
+const { spawn } = require("node:child_process");
+const marker = process.argv[1];
+const program = process.argv[2];
+const args = process.argv.slice(3);
+let settled = false;
+function report(outcome) {
+  if (settled) return;
+  settled = true;
+  process.stdout.write("\n" + marker + JSON.stringify(outcome) + "\n");
+}
+try {
+  const child = spawn(program, args, {
+    cwd: process.cwd(),
+    env: { PATH: process.env.PATH, HOME: process.env.HOME, TMPDIR: process.env.TMPDIR },
+    stdio: ["ignore", "inherit", "inherit"],
+  });
+  child.on("error", (error) =>
+    report({ kind: "failed", reason: "could not start " + program + ": " + (error.code || error.message) }),
+  );
+  child.on("close", (code, signal) =>
+    report(signal === null ? { kind: "exited", exitCode: code } : { kind: "signalled", signal }),
+  );
+} catch (error) {
+  report({ kind: "failed", reason: "could not start " + program + ": " + (error.code || error.message) });
+}
+`;
 
 export interface CheckSandboxOptions {
   /** Prepared workspace root; the program starts here and may write in it. */
   readonly workspaceDir: string;
   /** The run root, where the private HOME, temporary directory and policy are created. */
   readonly runRootDir: string;
+  /** The check's deadline or cancellation. */
   readonly signal: AbortSignal;
+  /** The run's own abort signal; when it fired, an aborted check was cancelled, not timed out. */
+  readonly cancelled?: AbortSignal;
 }
 
 /**
@@ -27,17 +63,18 @@ export function createCheckSandbox(options: CheckSandboxOptions): CheckSandbox {
   return { run: (command) => runProgram(options, command) };
 }
 
+/** The outcome the wrapper reports, before the launcher attaches the program's output. */
+type ReportedOutcome =
+  | { readonly kind: "exited"; readonly exitCode: number }
+  | { readonly kind: "signalled"; readonly signal: string }
+  | { readonly kind: "failed"; readonly reason: string };
+
 async function runProgram(options: CheckSandboxOptions, command: readonly string[]): Promise<CheckSandboxOutcome> {
   const [program, ...args] = command;
   if (program === undefined) {
     return { kind: "failed", reason: "the check named no program", output: "" };
   }
   const path = process.env.PATH ?? SYSTEM_PATH.join(":");
-  const executable = await resolveProgram(program, path, options.workspaceDir);
-  if (executable === undefined) {
-    return { kind: "failed", reason: `could not start ${program}: no executable`, output: "" };
-  }
-
   const directory = await mkdtemp(join(options.runRootDir, "check-"));
   const homeDir = join(directory, "home");
   const tmpDir = join(directory, "tmp");
@@ -52,19 +89,14 @@ async function runProgram(options: CheckSandboxOptions, command: readonly string
         allowNetwork: false,
       },
       policyDirectory: directory,
-      // `env -i` keeps the supervisor's shell from adding PWD, SHLVL or `_` to the program.
-      command: ["/usr/bin/env", "-i", `PATH=${path}`, `HOME=${homeDir}`, `TMPDIR=${tmpDir}`, executable, ...args],
+      command: [process.execPath, "-e", RUNNER, REPORT_MARKER, program, ...args],
       cwd: options.workspaceDir,
       env: { PATH: path, HOME: homeDir, TMPDIR: tmpDir },
       interactive: false,
     });
     return await supervise(supervised, options);
   } catch (error) {
-    return {
-      kind: "failed",
-      reason: `could not start ${program}: ${error instanceof Error ? error.message : String(error)}`,
-      output: "",
-    };
+    return { kind: "failed", reason: `the check sandbox failed: ${errorMessage(error)}`, output: "" };
   } finally {
     try {
       await supervised?.stop();
@@ -78,13 +110,14 @@ async function runProgram(options: CheckSandboxOptions, command: readonly string
 }
 
 async function supervise(supervised: SupervisedProcess, options: CheckSandboxOptions): Promise<CheckSandboxOutcome> {
-  let output = "";
-  const append = (chunk: Buffer): void => {
-    output += chunk.toString("utf8");
-    if (output.length > MAX_OUTPUT_LENGTH) output = output.slice(-MAX_OUTPUT_LENGTH);
-  };
-  supervised.child.stdout?.on("data", append);
-  supervised.child.stderr?.on("data", append);
+  let stdout = "";
+  let stderr = "";
+  supervised.child.stdout?.on("data", (chunk: Buffer) => {
+    stdout = keepTail(stdout, chunk);
+  });
+  supervised.child.stderr?.on("data", (chunk: Buffer) => {
+    stderr = keepTail(stderr, chunk);
+  });
   // The check program reads no standard input, so it does not wait for the engine.
   supervised.child.stdin?.end();
 
@@ -100,47 +133,71 @@ async function supervise(supervised: SupervisedProcess, options: CheckSandboxOpt
     }
     options.signal.addEventListener("abort", () => resolveCancelled("cancelled"), { once: true });
   });
+  const closed = new Promise<void>((resolveClosed) => supervised.child.once("close", () => resolveClosed()));
   try {
-    const status = await Promise.race([supervised.completion, cancelled]);
+    const status = await Promise.race([supervised.completion.catch(() => undefined), cancelled]);
     if (status === "cancelled" || aborted) {
-      return { kind: "failed", reason: "the program did not finish before the check deadline", output };
+      return { kind: "failed", reason: abortReason(options), output: tail(stdout + stderr) };
     }
-    const signal = signalOf(status);
-    if (signal !== undefined) {
-      return { kind: "signalled", signal, output };
+    if (status === undefined) {
+      return { kind: "failed", reason: "the check sandbox ended without an outcome", output: tail(stdout + stderr) };
     }
-    return { kind: "exited", exitCode: status, output };
+    // The completion record arrives on its own pipe before stdout is drained.
+    await closed;
+    const report = readReport(stdout);
+    if (report === undefined) {
+      return { kind: "failed", reason: "the check program did not report an outcome", output: tail(stdout + stderr) };
+    }
+    return { ...report.outcome, output: tail(report.stdout + stderr) };
   } finally {
     options.signal.removeEventListener("abort", onAbort);
   }
 }
 
-/** A POSIX shell reports a child killed by signal n as 128+n; no other status distinguishes it. */
-function signalOf(status: number): string | undefined {
-  if (status <= SIGNAL_STATUS_OFFSET) return undefined;
-  const number = status - SIGNAL_STATUS_OFFSET;
-  for (const [name, value] of Object.entries(osConstants.signals)) {
-    if (value === number) return name;
+function abortReason(options: CheckSandboxOptions): string {
+  return options.cancelled?.aborted === true
+    ? "the run was cancelled while this check was running"
+    : "the program did not finish before the check deadline";
+}
+
+/** Read the wrapper's report, which is the last marker line in stdout. */
+function readReport(stdout: string): { readonly outcome: ReportedOutcome; readonly stdout: string } | undefined {
+  const marker = `\n${REPORT_MARKER}`;
+  const index = stdout.lastIndexOf(marker);
+  if (index < 0) return undefined;
+  const rest = stdout.slice(index + marker.length);
+  const newline = rest.indexOf("\n");
+  if (newline < 0) return undefined;
+  let value: unknown;
+  try {
+    value = JSON.parse(rest.slice(0, newline));
+  } catch {
+    return undefined;
+  }
+  const outcome = reportedOutcome(value);
+  return outcome === undefined ? undefined : { outcome, stdout: stdout.slice(0, index) };
+}
+
+function reportedOutcome(value: unknown): ReportedOutcome | undefined {
+  if (typeof value !== "object" || value === null) return undefined;
+  const record = value as Record<string, unknown>;
+  if (record.kind === "exited" && Number.isSafeInteger(record.exitCode)) {
+    return { kind: "exited", exitCode: record.exitCode as number };
+  }
+  if (record.kind === "signalled" && typeof record.signal === "string") {
+    return { kind: "signalled", signal: record.signal };
+  }
+  if (record.kind === "failed" && typeof record.reason === "string") {
+    return { kind: "failed", reason: record.reason };
   }
   return undefined;
 }
 
-/** Resolve the program the way the sandbox's `PATH` and working directory would. */
-async function resolveProgram(program: string, path: string, cwd: string): Promise<string | undefined> {
-  const candidates = program.includes("/")
-    ? [isAbsolute(program) ? program : resolve(cwd, program)]
-    : path
-        .split(":")
-        .filter((directory) => directory.length > 0)
-        .map((directory) => join(directory, program));
-  for (const candidate of candidates) {
-    try {
-      if (!(await stat(candidate)).isFile()) continue;
-      await access(candidate, constants.X_OK);
-      return candidate;
-    } catch {
-      // Try the next candidate.
-    }
-  }
-  return undefined;
+function keepTail(current: string, chunk: Buffer): string {
+  const next = current + chunk.toString("utf8");
+  return next.length > MAX_OUTPUT_LENGTH ? next.slice(-MAX_OUTPUT_LENGTH) : next;
+}
+
+function tail(value: string): string {
+  return value.length > MAX_OUTPUT_LENGTH ? value.slice(-MAX_OUTPUT_LENGTH) : value;
 }

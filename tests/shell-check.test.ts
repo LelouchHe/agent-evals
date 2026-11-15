@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
-import { writeFile } from "node:fs/promises";
+import { readdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { test } from "node:test";
+import { setTimeout as delay } from "node:timers/promises";
 import { stringify } from "yaml";
 import { fileChecker } from "../src/checkers/file/checker.ts";
 import { mockChecker } from "../src/checkers/mock/checker.ts";
@@ -141,5 +142,60 @@ test(
     }));
     assert.equal(record.status, "fail");
     assert.match(record.checks[0]?.reason ?? "", /Operation not permitted/);
+  },
+);
+
+test(
+  "cancelling the run during a shell check is reported as cancellation, not a deadline",
+  {
+    skip: process.platform !== "darwin",
+  },
+  async (t) => {
+    const directory = await makeTempDir(t, "ae-shell-cancel-case-");
+    const casePath = join(directory, "case.yml");
+    await writeFile(
+      casePath,
+      stringify({
+        input: "task",
+        timeoutMs: 60_000,
+        runner: { $type: "noop" },
+        checks: [{ $type: "shell", run: ["/bin/sh", "-c", "printf started > started.txt; /bin/sleep 30"] }],
+      }),
+    );
+    const registry = createRegistry();
+    addRunner(registry, noopRunner, "built-in");
+    addChecker(registry, shellChecker, "built-in");
+    const resultsDir = await makeTempDir(t, "ae-shell-cancel-results-");
+    const tempParent = await makeTempDir(t, "ae-shell-cancel-runs-");
+    const controller = new AbortController();
+    const running = runEvaluation({
+      case: await loadCase(casePath),
+      registry,
+      resultsDir,
+      tempParent,
+      signal: controller.signal,
+    });
+
+    // Wait until the check program is running before cancelling.
+    let started = false;
+    for (let attempt = 0; attempt < 500 && !started; attempt += 1) {
+      for (const run of await readdir(tempParent)) {
+        const files = await readdir(join(tempParent, run, "workspace")).catch((): string[] => []);
+        if (files.includes("started.txt")) {
+          started = true;
+          break;
+        }
+      }
+      if (!started) await delay(20, undefined, { signal: t.signal });
+    }
+    assert.equal(started, true, "the shell check never started");
+    controller.abort();
+
+    const record = await running;
+    assert.equal(record.status, "cancelled", record.error);
+    assert.equal(record.checks[0]?.status, "error");
+    assert.match(record.checks[0]?.reason ?? "", /run was cancelled while this check was running/);
+    assert.doesNotMatch(record.checks[0]?.reason ?? "", /deadline/);
+    assert.deepEqual(await readdir(tempParent), []);
   },
 );

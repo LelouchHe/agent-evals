@@ -418,6 +418,7 @@ async function runChecks(
         workspaceDir: workspaceRoot.path,
         runRootDir: root,
         signal: combined,
+        cancelled: signal,
       }),
       timeoutMs,
       signal: combined,
