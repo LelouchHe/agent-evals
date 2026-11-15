@@ -225,14 +225,14 @@ Example: [`deploy-runbook`](../examples/cases/deploy-runbook/case.yml), whose Pi
 
 ### File Checker (`$type: file`)
 
-| Parameter   | Contract                                                                                                                                                 |
-| ----------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `path`      | Required workspace-relative file path, not absolute and without `..` segments.                                                                           |
-| `exists`    | Optional boolean; `false` is supported. Only regular files count.                                                                                        |
-| `matches`   | Optional regex string or list, at most 100 patterns. Search semantics, not an implicit whole-file match. Empty/invalid regexes are configuration errors. |
-| `unchanged` | Optional literal `true`; compare bytes against the initial baseline. `false` is invalid.                                                                 |
+| Parameter   | Contract                                                                                                                                                        |
+| ----------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `path`      | Required workspace-relative file path, not absolute and without `..` segments.                                                                                  |
+| `exists`    | Optional boolean; `false` is supported. Only regular files count.                                                                                               |
+| `matches`   | Optional RE2 pattern or list, at most 100 patterns. Search semantics, not an implicit whole-file match; lookaround and backreferences are configuration errors. |
+| `unchanged` | Optional literal `true`; compare bytes against the initial baseline. `false` is invalid.                                                                        |
 
-At least one assertion is required; each produces its own result. Regex work runs in a terminable worker with the check deadline and an internal five-second ceiling. File reads are capped at 1 MiB. Missing required files fail checks; unsafe/replaced roots, escaping/broken symlinks, non-regular, oversized or unreadable evidence are errors rather than passes. No content normalization or `includes` alias is provided.
+At least one assertion is required; each produces its own result. Patterns run on the shared RE2 engine ([Mocks](mocks.md#regexes) owns the dialect), which is linear-time and needs no worker or timeout. File reads are capped at 1 MiB. Missing required files fail checks; unsafe/replaced roots, escaping/broken symlinks, non-regular, oversized or unreadable evidence are errors rather than passes. No content normalization or `includes` alias is provided.
 
 ### Judge Checker (`$type: judge`)
 
