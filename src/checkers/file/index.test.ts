@@ -303,3 +303,31 @@ test("non-regular evidence is an error for every assertion", async (t) => {
   assert.deepEqual(statuses(results), ["error", "error", "error", "error"]);
   assert.match(results[0]?.reason ?? "", /not a regular file/);
 });
+
+test("a ~/ path reads the run HOME and its case-placed HOME baseline", async (t) => {
+  const dirs = await setup(t);
+  for (const root of [dirs.home, dirs.homeBaseline]) {
+    await mkdir(join(root, "notes"), { recursive: true });
+    await writeFile(join(root, "notes/today.md"), "v1\n");
+  }
+  const contextValue = await context(dirs.root, dirs.workspace, dirs.baseline);
+
+  const results = await checkRaw(
+    { path: "~/notes/today.md", exists: true, changed: false, matches: "v1" },
+    contextValue,
+  );
+  assert.deepEqual(statuses(results), ["pass", "pass", "pass"]);
+
+  await writeFile(join(dirs.home, "notes/today.md"), "v2\n");
+  const changed = await checkRaw({ path: "~/notes/today.md", changed: true }, contextValue);
+  assert.deepEqual(statuses(changed), ["pass"]);
+});
+
+test("~/ alone names HOME, not a file a check can read", async () => {
+  await assert.rejects(() => parse({ path: "~/", exists: true }), /not HOME itself/);
+});
+
+test("a ~/ file check is rejected for a runner that gives the run no HOME", async () => {
+  const params = await parse({ path: "~/notes/today.md", exists: true });
+  assert.throws(() => fileChecker.create(params, implementationContext(process.cwd(), false)), /does not provide/);
+});

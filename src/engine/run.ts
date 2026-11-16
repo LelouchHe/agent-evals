@@ -35,9 +35,9 @@ import { createEnvSource, type EnvSource } from "./env-source.ts";
 import {
   authoringCopyFilter,
   copyPlacement,
-  homePlacements,
+  homeEntries,
   placeCaseFiles,
-  stagePlacement,
+  stageEntries,
   validateCheckFiles,
 } from "./files.ts";
 import { startMockHost, type MockHost } from "./mocks.ts";
@@ -231,10 +231,10 @@ export async function executeEvaluation(prepared: PreparedEvaluation): Promise<E
     };
     runner = registered.runner;
     const protectedPaths = (await runner.prepareHome?.(context)) ?? [];
-    const homeEntries = homePlacements(request.case.config.files);
+    const homePlacements = homeEntries(request.case.config.files);
     const homeStaging = join(engineDir, "files", "home");
-    if (Object.keys(homeEntries).length > 0) {
-      await stagePlacement(homeEntries, request.case.dir, homeStaging, "files", abort.signal);
+    if (homePlacements.length > 0) {
+      await stageEntries(homePlacements, request.case.dir, homeStaging, "files", abort.signal);
       try {
         await copyPlacement(homeStaging, homeDir, {
           label: "files",
@@ -440,7 +440,7 @@ async function prepareImplementations(
     throw new ConfigError(`runner "${runnerDefinition.type}" does not support mocks`);
   }
   const runnerSupportsHome = runnerDefinition.home === true;
-  if (!runnerSupportsHome && Object.keys(homePlacements(request.case.config.files)).length > 0) {
+  if (!runnerSupportsHome && homeEntries(request.case.config.files).length > 0) {
     throw new ConfigError(`runner "${runnerDefinition.type}" does not support case files under "~"`);
   }
   const context: ImplementationContext = {
@@ -456,6 +456,13 @@ async function prepareImplementations(
     `runner "${runnerDefinition.type}"`,
   );
   const runner = await runnerDefinition.create(runnerParams, context);
+  for (const entry of homeEntries(request.case.config.files)) {
+    for (const file of runner.homeFiles ?? []) {
+      if (entry.target === file || entry.target.startsWith(`${file}/`)) {
+        throw new ConfigError(`case files destination "${entry.destination}" would replace login state at ${file}`);
+      }
+    }
+  }
 
   const checks: { type: string; checker: Checker }[] = [];
   for (const [index, record] of request.case.config.checks.entries()) {

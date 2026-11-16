@@ -5,7 +5,7 @@ import { randomUUID } from "node:crypto";
 import { lstat, mkdir, open, realpath, rename, rm, symlink, stat, writeFile } from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
 import { ConfigError, errorMessage, expectPlacementDestination, expectRelativePath } from "../../engine/config.ts";
-import { copyPlacement, homePathOf, isHomeDestination, stagePlacement } from "../../engine/files.ts";
+import { copyPlacement, homePathOf, isHomeDestination, stageEntries } from "../../engine/files.ts";
 import type { MockWiring } from "../../engine/registry.ts";
 import { isMissing, isWithin, openRunRoot, resolveWorkspacePath, type RunRoot } from "../../engine/workspace.ts";
 import { assertSeatbeltAvailable, createSandboxPolicy, SYSTEM_PATH } from "../../platform/macos/policy.ts";
@@ -77,6 +77,14 @@ export async function resolveHarnessHome(agent: AgentConfig, declaringDir: strin
     if (isWithin(deps, directory) || isWithin(directory, deps)) {
       throw new ConfigError("deps and login.dir must be separate, non-overlapping directories");
     }
+    for (const [destination] of Object.entries(files)) {
+      const homePath = homePathOf(destination);
+      for (const file of agent.login.files) {
+        if (homePath === file || homePath.startsWith(`${file}/`)) {
+          throw new ConfigError(`agent files destination "${destination}" collides with login file ${file}`);
+        }
+      }
+    }
     login = {
       command: agent.login.command,
       dir: directory,
@@ -125,13 +133,15 @@ export async function prepareHarnessHome(
   // canonical path so the sandbox authorizes traversal through the link.
   await symlink(source.deps, join(dirs.runRootDir, "deps"), "dir");
 
-  const placements = Object.fromEntries(
-    Object.entries(source.files).map(([destination, file]) => [homePathOf(destination), file]),
-  );
-  if (Object.keys(placements).length > 0) {
+  const placements = Object.entries(source.files).map(([destination, file]) => ({
+    destination,
+    target: homePathOf(destination),
+    source: file,
+  }));
+  if (placements.length > 0) {
     const staging = join(dirs.engineDir, "files-agent");
     try {
-      await stagePlacement(placements, source.declaringDir, staging, "agent files", signal);
+      await stageEntries(placements, source.declaringDir, staging, "agent files", signal);
       await copyPlacement(staging, homeRoot.path, { label: "agent files", overwrite: false, signal });
     } finally {
       await rm(staging, { recursive: true, force: true });

@@ -23,29 +23,36 @@ export async function placeCaseFiles(
   stagingDir: string,
   workspaceDir: string,
 ): Promise<void> {
-  const files = workspacePlacements(loadedCase.config.files);
-  if (Object.keys(files).length === 0) {
+  const entries = workspaceEntries(loadedCase.config.files);
+  if (entries.length === 0) {
     return;
   }
-  await stagePlacement(files, loadedCase.dir, stagingDir, "files");
+  await stageEntries(entries, loadedCase.dir, stagingDir, "files");
   await copyPlacement(stagingDir, workspaceDir, { label: "files", overwrite: true });
   await rm(stagingDir, { recursive: true, force: true });
 }
 
-/** The case `files` entries that go to the workspace, keyed by workspace destination. */
-export function workspacePlacements(
-  files: Readonly<Record<string, string>> | undefined,
-): Readonly<Record<string, string>> {
-  return Object.fromEntries(Object.entries(files ?? {}).filter(([destination]) => !isHomeDestination(destination)));
+/** One placement: the declared destination, where it goes under its root, and its source. */
+export interface PlacementEntry {
+  /** The destination as the author declared it, for messages and reporting. */
+  readonly destination: string;
+  /** The root-relative path the source is placed at. */
+  readonly target: string;
+  readonly source: string;
 }
 
-/** The case `files` entries that go into HOME, keyed by their HOME-relative destination. */
-export function homePlacements(files: Readonly<Record<string, string>> | undefined): Readonly<Record<string, string>> {
-  return Object.fromEntries(
-    Object.entries(files ?? {})
-      .filter(([destination]) => isHomeDestination(destination))
-      .map(([destination, source]) => [homePathOf(destination), source]),
-  );
+/** The case `files` entries that go to the workspace, with normalized relative targets. */
+export function workspaceEntries(files: Readonly<Record<string, string>> | undefined): readonly PlacementEntry[] {
+  return Object.entries(files ?? {})
+    .filter(([destination]) => !isHomeDestination(destination))
+    .map(([destination, source]) => ({ destination, target: workspaceTargetPath(destination), source }));
+}
+
+/** The case `files` entries that go into HOME, with `~/` stripped from their targets. */
+export function homeEntries(files: Readonly<Record<string, string>> | undefined): readonly PlacementEntry[] {
+  return Object.entries(files ?? {})
+    .filter(([destination]) => isHomeDestination(destination))
+    .map(([destination, source]) => ({ destination, target: homePathOf(destination), source }));
 }
 
 /** A `~/` destination names HOME; anything else names the workspace. */
@@ -59,18 +66,32 @@ export function homePathOf(destination: string): string {
 }
 
 /**
- * Copy authoring `files` entries into an empty staging directory: the same traversal and ignore
- * rules as a workspace placement, with destinations taken as relative to the staging root.
+ * Copy placement entries into an empty staging directory: the same traversal and ignore rules
+ * as a workspace placement, with each target taken relative to the staging root. Two entries
+ * normalized to one path collide there, because staging never overwrites.
  */
-export async function stagePlacement(
-  files: Readonly<Record<string, string>>,
+export async function stageEntries(
+  entries: readonly PlacementEntry[],
   authoringDir: string,
   stagingDir: string,
   label: string,
   signal?: AbortSignal,
 ): Promise<void> {
   await mkdir(stagingDir, { recursive: true });
-  await stageFiles(files, authoringDir, stagingDir, label, signal);
+  const tree = new IgnoreTree();
+  for (const entry of entries) {
+    signal?.throwIfAborted();
+    const path = resolveAuthoringAsset(authoringDir, entry.source, `${label}["${entry.destination}"]`);
+    await copyInto(
+      path,
+      resolve(stagingDir, entry.target),
+      entry.destination,
+      `${label} entry "${entry.destination}"`,
+      false,
+      signal,
+      { tree, root: path, segments: [] },
+    );
+  }
 }
 
 /**

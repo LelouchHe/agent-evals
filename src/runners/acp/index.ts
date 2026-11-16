@@ -42,6 +42,7 @@ export const acpRunner: RunnerDefinition<AcpRunnerParams> = {
 class AcpRunner implements Runner {
   readonly #command: readonly [string, ...string[]];
   readonly #home: HarnessHome;
+  readonly homeFiles: readonly string[];
   readonly #config: SessionConfig;
   #process: SupervisedProcess | undefined;
   #copyBack: (() => Promise<void>) | undefined;
@@ -52,6 +53,7 @@ class AcpRunner implements Runner {
   constructor(command: readonly [string, ...string[]], home: HarnessHome, config: SessionConfig) {
     this.#command = command;
     this.#home = home;
+    this.homeFiles = home.login?.files ?? [];
     this.#config = config;
   }
 
