@@ -48,7 +48,7 @@ Mocks are prepared with the other run state and answered while the harness runs;
               `-- then the host closes and returns records and faults
                   `-- any fault marks the run "error"
 
- 5. assert    checks read workspace/, baseline/ and the run's call records
+ 5. assert    checks read workspace/, home/, their baselines and the call records
 
  6. teardown  the run root is removed
               `-- retained: result.json, plus trace.json when the runner
