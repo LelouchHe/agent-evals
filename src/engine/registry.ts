@@ -160,7 +160,8 @@ export interface CheckResult {
 
 /** A prepared checker instance; its factory already captured validated parameters. */
 export interface Checker {
-  readonly check: (context: CheckerContext) => Promise<readonly CheckResult[]>;
+  /** Results, or a promise for them: a checker that answers directly is awaited like any other. */
+  readonly check: (context: CheckerContext) => Promise<readonly CheckResult[]> | readonly CheckResult[];
 }
 
 export interface CheckerDefinition<P> {

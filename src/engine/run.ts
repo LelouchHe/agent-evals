@@ -413,23 +413,26 @@ async function runChecks(
       timedOutCheck = true;
       controller.abort();
     }, timeoutMs);
-    const promise = check.checker.check({
-      workspace: workspaceRoot,
-      baseline: baselineRoot,
-      runRootDir: root,
-      input: request.case.config.input,
-      ...(trace === undefined ? {} : { trace }),
-      ...(mockRecords === undefined ? {} : { mockRecords }),
-      checkSandbox: createCheckSandbox({
-        workspaceDir: workspaceRoot.path,
+    // Called inside an async function so that an implementation which returns its results
+    // directly, or throws before it can, becomes a rejection this loop already handles.
+    const promise = (async () =>
+      check.checker.check({
+        workspace: workspaceRoot,
+        baseline: baselineRoot,
         runRootDir: root,
-        authoringDir: request.case.dir,
+        input: request.case.config.input,
+        ...(trace === undefined ? {} : { trace }),
+        ...(mockRecords === undefined ? {} : { mockRecords }),
+        checkSandbox: createCheckSandbox({
+          workspaceDir: workspaceRoot.path,
+          runRootDir: root,
+          authoringDir: request.case.dir,
+          signal: combined,
+          cancelled: signal,
+        }),
+        timeoutMs,
         signal: combined,
-        cancelled: signal,
-      }),
-      timeoutMs,
-      signal: combined,
-    });
+      }))();
     promise.catch(() => {});
 
     try {

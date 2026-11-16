@@ -13,6 +13,7 @@ import { fileChecker } from "../src/checkers/file/index.ts";
 import { judgeChecker } from "../src/checkers/judge/index.ts";
 import { piRunner } from "../src/runners/pi/index.ts";
 import { createFakePi, makeTempDir } from "./helpers/fake-pi-control.ts";
+import { z } from "zod";
 
 interface ScenarioOptions {
   readonly runnerExecutable: string;
@@ -643,3 +644,65 @@ async function runCli(
   }
   return { code, stdout, stderr, timedOut, durationMs: performance.now() - started };
 }
+
+test("integration: a checker that returns results synchronously is judged, not dropped", async (t) => {
+  const runner = await createFakePi(t, "success");
+  const directory = await makeTempDir(t, "ae-sync-checker-");
+  const casePath = join(directory, "case.yml");
+  await writeFile(
+    casePath,
+    stringify({
+      input: 'Create hello.txt with exactly the content "Hello, world!".',
+      checks: [{ $type: "sync-pass" }, { $type: "sync-throw" }],
+      runner: { $type: "pi", model: "test/model", thinking: "low", executable: runner.executable },
+    }),
+  );
+
+  // The documented contract is `check(context) -> CheckResult[]`: a checker may answer without a
+  // promise, and a synchronous throw is still one check's error rather than the whole run's.
+  const registry = createRegistry();
+  addRunner(registry, piRunner, "built-in");
+  addChecker(
+    registry,
+    {
+      type: "sync-pass",
+      params: z.strictObject({}),
+      create: () => ({
+        check: () => [
+          { checker: "sync-pass", subject: "synchronous result", status: "pass" as const, reason: "returned directly" },
+        ],
+      }),
+    },
+    "test",
+  );
+  addChecker(
+    registry,
+    {
+      type: "sync-throw",
+      params: z.strictObject({}),
+      create: () => ({
+        check: () => {
+          throw new Error("synchronous failure");
+        },
+      }),
+    },
+    "test",
+  );
+
+  const record = await runEvaluation({
+    case: await loadCase(casePath),
+    registry,
+    resultsDir: await makeTempDir(t, "ae-results-"),
+    tempParent: await makeTempDir(t, "ae-runs-"),
+  });
+
+  assert.equal(record.status, "error");
+  assert.deepEqual(
+    record.checks.map((check) => [check.checker, check.status]),
+    [
+      ["sync-pass", "pass"],
+      ["sync-throw", "error"],
+    ],
+  );
+  assert.match(record.checks[1]?.reason ?? "", /synchronous failure/);
+});
