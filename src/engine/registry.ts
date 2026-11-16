@@ -213,52 +213,67 @@ export function requireChecker(registry: Registry, type: string): RegisteredChec
   return definition;
 }
 
-/** Load implementation modules from explicitly trusted directories. */
+const ENTRY_FILES = ["index.ts", "index.js", "index.mjs"] as const;
+
+/** Load one implementation per subdirectory of each explicitly trusted extension root. */
 export async function loadTrustedImplementations(
   registry: Registry,
-  options: { runnerDirs?: readonly string[]; checkerDirs?: readonly string[] },
+  options: { extensionDirs?: readonly string[] },
 ): Promise<void> {
-  for (const directory of options.runnerDirs ?? []) {
-    await loadDirectory(registry, directory, "runner");
-  }
-  for (const directory of options.checkerDirs ?? []) {
-    await loadDirectory(registry, directory, "checker");
+  for (const directory of options.extensionDirs ?? []) {
+    await loadDirectory(registry, directory);
   }
 }
 
-async function loadDirectory(registry: Registry, directory: string, kind: "runner" | "checker"): Promise<void> {
+async function loadDirectory(registry: Registry, directory: string): Promise<void> {
   const root = resolve(directory);
   let entries;
   try {
     entries = await readdir(root, { withFileTypes: true });
   } catch (error) {
-    throw new ConfigError(`trusted ${kind} directory ${root} is not readable: ${errorMessage(error)}`);
+    throw new ConfigError(`trusted extension directory ${root} is not readable: ${errorMessage(error)}`);
   }
 
   const names = entries
-    .filter((entry) => entry.isFile() && /\.(?:ts|js|mjs)$/.test(entry.name))
+    .filter((entry) => entry.isDirectory() && entry.name !== "node_modules")
     .map((entry) => entry.name)
     .sort();
 
   for (const name of names) {
-    const file = join(root, name);
+    const file = join(root, name, await entryFile(join(root, name)));
     let module: Record<string, unknown>;
     try {
       module = (await import(pathToFileURL(file).href)) as Record<string, unknown>;
     } catch (error) {
-      throw new ConfigError(`failed to load ${kind} implementation ${file}: ${errorMessage(error)}`);
+      throw new ConfigError(`failed to load extension ${file}: ${errorMessage(error)}`);
     }
-    const exported = module[kind];
-    if (exported === undefined) {
-      throw new ConfigError(`${file} must export a named "${kind}" implementation`);
+    const runner = module.runner;
+    const checker = module.checker;
+    if (runner === undefined && checker === undefined) {
+      throw new ConfigError(`${file} must export a named "runner" or "checker" implementation`);
     }
-    const definition = assertDefinition(exported, kind);
-    if (kind === "runner") {
-      registerRunner(registry, definition as unknown as RegisteredRunnerDefinition, file);
-    } else {
-      registerChecker(registry, definition as unknown as RegisteredCheckerDefinition, file);
+    if (runner !== undefined) {
+      registerRunner(registry, assertDefinition(runner, "runner") as unknown as RegisteredRunnerDefinition, file);
+    }
+    if (checker !== undefined) {
+      registerChecker(registry, assertDefinition(checker, "checker") as unknown as RegisteredCheckerDefinition, file);
     }
   }
+}
+
+async function entryFile(directory: string): Promise<string> {
+  let entries;
+  try {
+    entries = await readdir(directory, { withFileTypes: true });
+  } catch (error) {
+    throw new ConfigError(`extension ${directory} is not readable: ${errorMessage(error)}`);
+  }
+  const files = new Set(entries.filter((entry) => entry.isFile()).map((entry) => entry.name));
+  const name = ENTRY_FILES.find((entry) => files.has(entry));
+  if (name === undefined) {
+    throw new ConfigError(`extension ${directory} has no index.ts, index.js, or index.mjs entry point`);
+  }
+  return name;
 }
 
 function registerRunner(registry: Registry, definition: RegisteredRunnerDefinition, source: string): void {

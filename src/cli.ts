@@ -27,8 +27,7 @@ Commands:
 Options:
   --case <name>            Named case to select (required for files with cases)
   --results-dir <path>     Where run records are written (default: .agent-evals)
-  --runner-dir <path>      Trusted directory of runner modules (repeatable)
-  --checker-dir <path>     Trusted directory of checker modules (repeatable)
+  --extension-dir <path>   Trusted extension root, one implementation per subdirectory (repeatable)
   --help                   Show this help
 
 Configuration errors exit with code 2 before any run resource is created.
@@ -41,8 +40,7 @@ interface CliOptions {
   readonly configPath: string;
   readonly caseName?: string;
   readonly resultsDir?: string;
-  readonly runnerDirs: readonly string[];
-  readonly checkerDirs: readonly string[];
+  readonly extensionDirs: readonly string[];
 }
 
 async function main(argv: readonly string[]): Promise<number> {
@@ -123,10 +121,7 @@ async function runCommand(options: CliOptions): Promise<number> {
     const resolved = await loadCase(options.configPath, {
       ...(options.caseName === undefined ? {} : { caseName: options.caseName }),
     });
-    await loadTrustedImplementations(registry, {
-      runnerDirs: options.runnerDirs,
-      checkerDirs: options.checkerDirs,
-    });
+    await loadTrustedImplementations(registry, { extensionDirs: options.extensionDirs });
     const resultsDir = options.resultsDir ?? resolve(".agent-evals");
     const record = await runEvaluation({
       case: resolved,
@@ -152,8 +147,7 @@ function parseArguments(argv: readonly string[]): CliOptions {
       options: {
         case: { type: "string" },
         "results-dir": { type: "string" },
-        "runner-dir": { type: "string", multiple: true },
-        "checker-dir": { type: "string", multiple: true },
+        "extension-dir": { type: "string", multiple: true },
         help: { type: "boolean", short: "h" },
       },
     });
@@ -179,17 +173,13 @@ function parseArguments(argv: readonly string[]): CliOptions {
 
   if (
     (command === "config" || command === "login") &&
-    (values.case !== undefined ||
-      values["results-dir"] !== undefined ||
-      values["runner-dir"] !== undefined ||
-      values["checker-dir"] !== undefined)
+    (values.case !== undefined || values["results-dir"] !== undefined || values["extension-dir"] !== undefined)
   ) {
     throw new ConfigError(`${command} accepts only an agent configuration file, not case or run options`);
   }
-  const runnerDirs = (values["runner-dir"] ?? []).map((directory) => resolve(directory));
-  const checkerDirs = (values["checker-dir"] ?? []).map((directory) => resolve(directory));
-  if (command === "view" && (values["results-dir"] !== undefined || runnerDirs.length > 0 || checkerDirs.length > 0)) {
-    throw new ConfigError("view does not accept --results-dir, --runner-dir, or --checker-dir");
+  const extensionDirs = (values["extension-dir"] ?? []).map((directory) => resolve(directory));
+  if (command === "view" && (values["results-dir"] !== undefined || extensionDirs.length > 0)) {
+    throw new ConfigError("view does not accept --results-dir or --extension-dir");
   }
 
   return {
@@ -197,8 +187,7 @@ function parseArguments(argv: readonly string[]): CliOptions {
     configPath: resolve(rawConfigPath),
     ...(values.case === undefined ? {} : { caseName: values.case }),
     ...(values["results-dir"] === undefined ? {} : { resultsDir: resolve(values["results-dir"]) }),
-    runnerDirs,
-    checkerDirs,
+    extensionDirs,
   };
 }
 

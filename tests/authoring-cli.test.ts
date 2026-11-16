@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { access, chmod, readFile, readdir, writeFile } from "node:fs/promises";
+import { access, chmod, mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { test } from "node:test";
 import { parse, stringify } from "yaml";
@@ -336,7 +336,7 @@ test("CLI reports help and built-in argument errors with exit code 2", async (t)
     TMPDIR: cwd,
   });
   assert.equal(runOnly.code, 2);
-  assert.match(runOnly.stderr, /view does not accept --results-dir, --runner-dir, or --checker-dir/);
+  assert.match(runOnly.stderr, /view does not accept --results-dir or --extension-dir/);
 });
 
 test("CLI accepts equals values and a dash-prefixed config path after --", async (t) => {
@@ -360,24 +360,12 @@ test("CLI accepts equals values and a dash-prefixed config path after --", async
   assert.match(result.stdout, new RegExp(`^case: ${escapeRegExp(JSON.stringify(caseName))}$`, "m"));
 });
 
-test("CLI loads repeated extension directories and writes to the default results root", async (t) => {
+test("CLI loads repeated extension roots and writes to the default results root", async (t) => {
   const zodUrl = import.meta.resolve("zod");
-  const runnerDirA = await makeTempDir(t, "ae-cli-runner-a-");
-  const runnerDirB = await makeTempDir(t, "ae-cli-runner-b-");
-  const checkerDirA = await makeTempDir(t, "ae-cli-checker-a-");
-  const checkerDirB = await makeTempDir(t, "ae-cli-checker-b-");
-  const runnerModule = (type: string) => `import { z } from ${JSON.stringify(zodUrl)};
-export const runner = {
-  type: ${JSON.stringify(type)},
-  params: z.strictObject({}),
-  async create() {
-    return {
-      async run() { return { finalText: ${JSON.stringify(`runner:${type}`)}, diagnostics: [] }; },
-      async stop() {},
-    };
-  },
-};
-`;
+  const runnerRootA = await makeTempDir(t, "ae-cli-runner-a-");
+  const runnerRootB = await makeTempDir(t, "ae-cli-runner-b-");
+  const checkerRootA = await makeTempDir(t, "ae-cli-checker-a-");
+  const checkerRootB = await makeTempDir(t, "ae-cli-checker-b-");
   const checkerModule = (type: string) => `import { z } from ${JSON.stringify(zodUrl)};
 export const checker = {
   type: ${JSON.stringify(type)},
@@ -391,10 +379,41 @@ export const checker = {
   },
 };
 `;
-  await writeFile(join(runnerDirA, "unused.mjs"), runnerModule("unused-runner"));
-  await writeFile(join(runnerDirB, "used.mjs"), runnerModule("external-runner"));
-  await writeFile(join(checkerDirA, "used.mjs"), checkerModule("external-checker"));
-  await writeFile(join(checkerDirB, "unused.mjs"), checkerModule("unused-checker"));
+  await mkdir(join(runnerRootA, "unused"));
+  await writeFile(
+    join(runnerRootA, "unused", "index.mjs"),
+    `import { z } from ${JSON.stringify(zodUrl)};
+export const runner = { type: "unused-runner", params: z.strictObject({}), async create() { return { async run() { return { finalText: "unused", diagnostics: [] }; }, async stop() {} }; } };
+`,
+  );
+  // An implementation root may hold dependencies; node_modules is the only skipped subdirectory.
+  await mkdir(join(runnerRootA, "node_modules", "dependency"), { recursive: true });
+  await writeFile(join(runnerRootA, "node_modules", "dependency", "index.mjs"), "export const other = 1;\n");
+
+  // An implementation is a directory: index.ts plus a helper it imports.
+  await mkdir(join(runnerRootB, "used"));
+  await writeFile(join(runnerRootB, "used", "helper.ts"), 'export const label = "external-runner";\n');
+  await writeFile(
+    join(runnerRootB, "used", "index.ts"),
+    `import { z } from ${JSON.stringify(zodUrl)};
+import { label } from "./helper.ts";
+export const runner = {
+  type: label,
+  params: z.strictObject({}),
+  async create() {
+    return {
+      async run() { return { finalText: \`runner:\${label}\`, diagnostics: [] }; },
+      async stop() {},
+    };
+  },
+};
+`,
+  );
+
+  await mkdir(join(checkerRootA, "used"));
+  await writeFile(join(checkerRootA, "used", "index.mjs"), checkerModule("external-checker"));
+  await mkdir(join(checkerRootB, "unused"));
+  await writeFile(join(checkerRootB, "unused", "index.mjs"), checkerModule("unused-checker"));
 
   const directory = await makeTempDir(t, "ae-cli-default-");
   const configPath = join(directory, "case.yml");
@@ -414,14 +433,14 @@ export const checker = {
     [
       "run",
       configPath,
-      "--runner-dir",
-      runnerDirA,
-      "--runner-dir",
-      runnerDirB,
-      "--checker-dir",
-      checkerDirA,
-      "--checker-dir",
-      checkerDirB,
+      "--extension-dir",
+      runnerRootA,
+      "--extension-dir",
+      runnerRootB,
+      "--extension-dir",
+      checkerRootA,
+      "--extension-dir",
+      checkerRootB,
     ],
     { cwd, TMPDIR: tempParent },
   );

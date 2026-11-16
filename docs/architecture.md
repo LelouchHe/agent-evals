@@ -93,7 +93,7 @@ The check-time path from the same checkers box, after the harness stopped:
   $type: judge -> separate tool-free Pi invocation in its own sandbox
 ```
 
-- **CLI** parses commands and flags, registers built-ins, loads trusted extension directories and maps outcomes to exit codes. `view` stops at the resolver and prints the resolved declaration; it starts no runtime. `run` hands the resolved case to the engine. `config` and `login` take a standalone agent file and use the ACP preparation helpers instead.
+- **CLI** parses commands and flags, registers built-ins, loads each implementation beneath the trusted extension roots and maps outcomes to exit codes. `view` stops at the resolver and prints the resolved declaration; it starts no runtime. `run` hands the resolved case to the engine. `config` and `login` take a standalone agent file and use the ACP preparation helpers instead.
 - **Engine** validates parameters, prepares the run root, sequences the runner, checks and cleanup, and retains the result. It owns the mock host's lifecycle and the retained records.
 - **Runner** drives one harness and stops its owned processes. The native Pi route is an isolated JSONL RPC session under Seatbelt; the generic route speaks ACP with a caller-prepared harness home.
 - **Mock host** owns mock rules, actions and call records, plus authors' `run` programs. It lives outside the evaluated sandbox; [Mocks](mocks.md#how-a-run-uses-mocks) owns the mechanism.
@@ -124,7 +124,7 @@ CheckerContext:        workspace, baseline, trace?, mockRecords?,
 
 **The engine owns sourcing, declared-schema validation and lifecycle—not business meaning.** Schemas define parameter types, defaults and declared constraints. Implementations own their logic, operational requirements, authentication and outputs. The engine does not infer extra rules from names such as `apiKey`, proactively verify credentials, or automatically redact values.
 
-Built-ins and trusted extensions share this path. Dynamic modules cross a localized type-erasure boundary; module authors own schema/factory consistency. [Extensions](extensions.md) lists every contract field for implementers; the source interfaces live in [`registry.ts`](../src/engine/registry.ts).
+Built-ins and trusted extensions share this path and layout: one implementation is one directory whose `index.ts`, `index.js` or `index.mjs` exports `runner`, `checker`, or both. [Extensions](extensions.md#discovery) owns discovery. Dynamic modules cross a localized type-erasure boundary; module authors own schema/factory consistency. [Extensions](extensions.md) lists every contract field for implementers; the source interfaces live in [`registry.ts`](../src/engine/registry.ts).
 
 ## One Run, in Order
 

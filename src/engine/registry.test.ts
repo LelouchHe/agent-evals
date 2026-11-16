@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { writeFile } from "node:fs/promises";
+import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { test } from "node:test";
 import { z } from "zod";
@@ -61,10 +61,11 @@ test("registry rejects malformed implementation definitions", () => {
 
 const zodImport = `import { z } from ${JSON.stringify(import.meta.resolve("zod"))};\n`;
 
-test("trusted directories load runner and checker modules with sync and async schemas", async (t) => {
-  const checkers = await makeTempDir(t, "ae-trusted-checkers-");
+test("trusted extension directories load runner and checker implementations", async (t) => {
+  const extensions = await makeTempDir(t, "ae-trusted-extensions-");
+  await mkdir(join(extensions, "custom-checker"));
   await writeFile(
-    join(checkers, "custom-checker.ts"),
+    join(extensions, "custom-checker", "index.ts"),
     `${zodImport}export const checker = {
   type: "custom",
   params: z.strictObject({ raw: z.boolean() }).transform(async () => ({ token: "external-checker" })),
@@ -74,9 +75,9 @@ test("trusted directories load runner and checker modules with sync and async sc
 };
 `,
   );
-  const runners = await makeTempDir(t, "ae-trusted-runners-");
+  await mkdir(join(extensions, "custom-runner"));
   await writeFile(
-    join(runners, "custom-runner.ts"),
+    join(extensions, "custom-runner", "index.ts"),
     `${zodImport}export const runner = {
   type: "custom",
   params: z.strictObject({ raw: z.boolean() }).transform(() => ({ token: "external-runner" })),
@@ -88,42 +89,94 @@ test("trusted directories load runner and checker modules with sync and async sc
   );
 
   const registry = createRegistry();
-  await loadTrustedImplementations(registry, { runnerDirs: [runners], checkerDirs: [checkers] });
+  await loadTrustedImplementations(registry, { extensionDirs: [extensions] });
   assert.equal(requireChecker(registry, "custom").type, "custom");
   assert.equal(requireRunner(registry, "custom").type, "custom");
 });
 
-test("trusted discovery fails closed for malformed modules", async (t) => {
-  const directory = await makeTempDir(t, "ae-trusted-bad-");
-  await writeFile(join(directory, "missing-export.ts"), "export const other = 1;\n");
+test("an extension entry point may import helper files from its directory", async (t) => {
+  const extensions = await makeTempDir(t, "ae-trusted-helpers-");
+  const implementation = join(extensions, "with-helper");
+  await mkdir(implementation);
+  await writeFile(join(implementation, "helper.ts"), 'export const checkerType = "helper-heavy";\n');
+  await writeFile(
+    join(implementation, "index.ts"),
+    `${zodImport}import { checkerType } from "./helper.ts";
+export const checker = {
+  type: checkerType,
+  params: z.strictObject({}),
+  create() {
+    return { async check() { return []; } };
+  },
+};
+`,
+  );
+
   const registry = createRegistry();
+  await loadTrustedImplementations(registry, { extensionDirs: [extensions] });
+  assert.equal(requireChecker(registry, "helper-heavy").type, "helper-heavy");
+});
+
+test("trusted discovery fails closed for malformed extensions", async (t) => {
+  const missingExport = await makeTempDir(t, "ae-trusted-bad-");
+  await mkdir(join(missingExport, "missing-export"));
+  await writeFile(join(missingExport, "missing-export", "index.ts"), "export const other = 1;\n");
   await assert.rejects(
-    () => loadTrustedImplementations(registry, { checkerDirs: [directory] }),
-    /must export a named "checker" implementation/,
+    () => loadTrustedImplementations(createRegistry(), { extensionDirs: [missingExport] }),
+    /must export a named "runner" or "checker" implementation/,
   );
 
   const syntax = await makeTempDir(t, "ae-trusted-syntax-");
-  await writeFile(join(syntax, "broken.ts"), "export const checker = {;\n");
+  await mkdir(join(syntax, "broken"));
+  await writeFile(join(syntax, "broken", "index.ts"), "export const checker = {;\n");
   await assert.rejects(
-    () => loadTrustedImplementations(createRegistry(), { checkerDirs: [syntax] }),
-    /failed to load checker implementation/,
+    () => loadTrustedImplementations(createRegistry(), { extensionDirs: [syntax] }),
+    /failed to load extension/,
   );
 
   await assert.rejects(
-    () => loadTrustedImplementations(createRegistry(), { checkerDirs: [join(syntax, "missing")] }),
-    /trusted checker directory .* is not readable/,
+    () => loadTrustedImplementations(createRegistry(), { extensionDirs: [join(syntax, "missing")] }),
+    /trusted extension directory .* is not readable/,
   );
 });
 
-test("trusted directories reject duplicate implementation types", async (t) => {
-  const first = await makeTempDir(t, "ae-trusted-dup-a-");
-  const second = await makeTempDir(t, "ae-trusted-dup-b-");
-  const body = `${zodImport}export const checker = { type: "same", params: z.strictObject({}), create() { return { async check() { return []; } }; } };\n`;
-  await writeFile(join(first, "a.ts"), body);
-  await writeFile(join(second, "b.ts"), body);
+test("a subdirectory without an entry point is a configuration error", async (t) => {
+  const extensions = await makeTempDir(t, "ae-trusted-no-entry-");
+  await mkdir(join(extensions, "misspelled"));
+  await writeFile(join(extensions, "misspelled", "indx.ts"), "export const checker = {};\n");
 
   await assert.rejects(
-    () => loadTrustedImplementations(createRegistry(), { checkerDirs: [first, second] }),
+    () => loadTrustedImplementations(createRegistry(), { extensionDirs: [extensions] }),
+    /has no index\.ts, index\.js, or index\.mjs entry point/,
+  );
+});
+
+test("trusted discovery skips node_modules at the extension root", async (t) => {
+  const extensions = await makeTempDir(t, "ae-trusted-dependencies-");
+  await mkdir(join(extensions, "node_modules", "dependency"), { recursive: true });
+  await writeFile(join(extensions, "node_modules", "dependency", "index.ts"), "export const other = 1;\n");
+  await mkdir(join(extensions, "custom"));
+  await writeFile(
+    join(extensions, "custom", "index.ts"),
+    `${zodImport}export const checker = { type: "custom", params: z.strictObject({}), create() { return { async check() { return []; } }; } };\n`,
+  );
+
+  const registry = createRegistry();
+  await loadTrustedImplementations(registry, { extensionDirs: [extensions] });
+  assert.equal(requireChecker(registry, "custom").type, "custom");
+});
+
+test("trusted extension directories reject duplicate implementation types", async (t) => {
+  const first = await makeTempDir(t, "ae-trusted-dup-a-");
+  const second = await makeTempDir(t, "ae-trusted-dup-b-");
+  await mkdir(join(first, "a"));
+  await mkdir(join(second, "b"));
+  const body = `${zodImport}export const checker = { type: "same", params: z.strictObject({}), create() { return { async check() { return []; } }; } };\n`;
+  await writeFile(join(first, "a", "index.ts"), body);
+  await writeFile(join(second, "b", "index.ts"), body);
+
+  await assert.rejects(
+    () => loadTrustedImplementations(createRegistry(), { extensionDirs: [first, second] }),
     /duplicate checker implementation type "same"/,
   );
 });

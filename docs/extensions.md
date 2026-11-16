@@ -4,19 +4,28 @@ A runner drives the evaluated agent; a checker judges what the run left behind. 
 
 ## Discovery
 
-`run` loads extension modules from directories named on the command line:
+`run` loads extensions from the roots named on the command line:
 
 ```sh
-agent-evals run case.yml --checker-dir ./checkers --runner-dir ./runners
+agent-evals run case.yml --extension-dir ./extensions
 ```
 
-- Both options are repeatable. Every directory feeds one registry, next to the built-ins.
-- Only the directory's own `.ts`, `.js` and `.mjs` files are loaded, in name order; subdirectories are not searched.
-- A runner module exports one definition named `runner`; a checker module exports one named `checker`.
-- The `$type` a case uses is the definition's `type` field. The file name has no meaning.
-- An unreadable directory, a missing or malformed export, or a `type` that a built-in or another module already uses is a configuration error. Nothing is overridden or skipped.
+Each subdirectory of an extension root is one implementation. Its entry point is `index.ts`, `index.js` or `index.mjs`; helper modules, assets and the implementation's own dependencies live beside it. The built-ins use the same layout, for example [`checkers/file/index.ts`](../src/checkers/file/index.ts) and [`runners/pi/index.ts`](../src/runners/pi/index.ts).
 
-Extensions execute as trusted host code, outside every sandbox. Never name an agent-writable workspace or a results directory as an extension directory.
+```text
+extensions/
+  tool-count/
+    index.ts        the definition
+    helper.ts       imported by index.ts, never loaded on its own
+```
+
+- The entry point exports `runner`, `checker`, or both.
+- A subdirectory without an entry point is a configuration error. `node_modules` is the only skipped subdirectory, so an extension root may hold shared dependencies.
+- `--extension-dir` is repeatable. Every root feeds one registry, next to the built-ins.
+- The `$type` a case uses is the definition's `type` field. Directory and entry names have no meaning.
+- An unreadable root, a subdirectory without an entry point, a missing or malformed export, an entry point exporting neither `runner` nor `checker`, or a `type` that a built-in or another extension already uses is a configuration error. Nothing is overridden or skipped.
+
+Extensions execute as trusted host code, outside every sandbox. Never name an agent-writable workspace or a results directory as an extension root.
 
 ## Definition
 
@@ -108,7 +117,7 @@ A checker that throws or exceeds its budget is recorded as one `error` result. M
 
 ### A Minimal Checker
 
-`checkers/tool-count.ts`, used as `$type: tool-count`:
+`extensions/tool-count/index.ts`, selected with `--extension-dir ./extensions` and used as `$type: tool-count`:
 
 ```ts
 import { z } from "zod";
@@ -150,7 +159,7 @@ checks:
 - **The package entry exports types only.** `import type { CheckerDefinition, CheckResult } from "agent-evals"` gives an extension the contracts on this page ([`index.ts`](../src/index.ts)) wherever the package resolves. Type imports are erased before the module runs, so the example above needs none of them. The package is not published, and nothing resolves it for an extension directory by itself.
 - **Engine helpers are not available.** The identity-checked file reads the built-in `file` checker uses, pattern compilation and mock matching are internal. An extension reads `workspace.path` and `baseline.path` with its own code and owns the containment checks it needs.
 - **An extension resolves its own dependencies.** `params` only has to behave like a Zod schema (`safeParseAsync`), but `import { z } from "zod"` must resolve from the module's own location.
-- **`view` does not load extensions.** `--runner-dir` and `--checker-dir` apply to `run` only.
+- **`view` does not load extensions.** `--extension-dir` applies to `run` only.
 - **`shell` checks do not receive the trace.** `trace.json` is written with the result, after checks ran; trace assertions need a checker in TypeScript or JavaScript.
 
-Discovery unit, type naming and entry-point conventions are an [open question](roadmap.md#open-questions).
+Type naming and run-time package resolution remain [open questions](roadmap.md#open-questions).

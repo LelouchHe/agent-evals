@@ -9,12 +9,12 @@ agent-evals config agent.yml
 agent-evals login agent.yml
 agent-evals view case.yml [--case name]
 agent-evals run case.yml [--case name] [--results-dir path] \
-  [--runner-dir path] [--checker-dir path]
+  [--extension-dir path]
 ```
 
 The development form is `npm run eval -- <command>`; both entry points execute the same built CLI. Flags are parsed by Node's `util.parseArgs`: `--name=value`, separate option values, `--` before dash-prefixed positionals, and `--help`/`-h` are supported. Use `--case=-name` for a dash-prefixed case name.
 
-The trusted-directory options are repeatable and apply only to `run`; they load implementation modules, not working directories. All supplied directories feed the same registry, where duplicate `$type` names are errors rather than ordered overrides.
+The trusted-directory option is repeatable and applies only to `run`; it names extension roots holding implementations, not working directories. All supplied roots feed the same registry, where duplicate `$type` names are errors rather than ordered overrides.
 
 ## ACP Preparation Helpers
 
@@ -316,4 +316,4 @@ Overall statuses are `pass`, `fail`, `error`, `timeout`, and `cancelled`; indivi
 
 ## Trusted Extensions
 
-`run` registers the built-ins and loads runner and checker modules from the directories given with `--runner-dir` and `--checker-dir`. They execute as trusted host code; never name an agent-writable workspace or a results directory. [Extensions](extensions.md) holds the discovery rules, the runner and checker contracts and a minimal example.
+`run` registers the built-ins and loads each implementation directory beneath the roots given with `--extension-dir`. An implementation directory's `index.ts`, `index.js` or `index.mjs` exports `runner`, `checker`, or both, and the `$type` is that definition's own `type`. Extensions execute as trusted host code; never name an agent-writable workspace or a results directory. [Extensions](extensions.md) holds the discovery rules, the runner and checker contracts and a minimal example.
