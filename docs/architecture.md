@@ -124,7 +124,7 @@ CheckerContext:        workspace, baseline, trace?, mockRecords?,
 
 **The engine owns sourcing, declared-schema validation and lifecycle—not business meaning.** Schemas define parameter types, defaults and declared constraints. Implementations own their logic, operational requirements, authentication and outputs. The engine does not infer extra rules from names such as `apiKey`, proactively verify credentials, or automatically redact values.
 
-Built-ins and trusted extensions share this path. Dynamic modules cross a localized type-erasure boundary; module authors own schema/factory consistency. Source interfaces live in [`registry.ts`](../src/engine/registry.ts).
+Built-ins and trusted extensions share this path. Dynamic modules cross a localized type-erasure boundary; module authors own schema/factory consistency. [Extensions](extensions.md) lists every contract field for implementers; the source interfaces live in [`registry.ts`](../src/engine/registry.ts).
 
 ## One Run, in Order
 

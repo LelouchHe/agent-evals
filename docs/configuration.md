@@ -1,6 +1,6 @@
 # Configuration Reference
 
-The run/view commands resolve one YAML file into one executable case. ACP preparation helpers instead load a standalone agent configuration. Test-design guidance belongs in [Writing Cases](cases.md); module and extension contracts belong in [Architecture](architecture.md).
+The run/view commands resolve one YAML file into one executable case. ACP preparation helpers instead load a standalone agent configuration. Test-design guidance belongs in [Writing Cases](cases.md); module composition belongs in [Architecture](architecture.md) and the runner and checker contracts in [Extensions](extensions.md).
 
 ## Commands
 
@@ -316,8 +316,4 @@ Overall statuses are `pass`, `fail`, `error`, `timeout`, and `cancelled`; indivi
 
 ## Trusted Extensions
 
-`run` registers the built-ins and can load `.ts`, `.js` or `.mjs` modules from explicitly supplied trusted directories. A runner module exports `runner`; a checker module exports `checker`. Duplicate/unknown types or malformed exports are errors, never fallback reasons.
-
-Extensions use the same schema/factory/instance contracts as built-ins; see [Definitions, Factories, and Instances](architecture.md#definitions-factories-and-instances) and [`registry.ts`](../src/engine/registry.ts). They execute as trusted host code. Never use an agent-writable workspace or generated result directory as an extension discovery root.
-
-Checker extensions receive the engine's check-time capabilities instead of rebuilding them. `create(params, context)` gets an `ImplementationContext` with the case directory, placeholder values, declared mock targets and `validateFiles`, which validates and stages a check's `files` at load time. `check(context)` gets a `CheckerContext` with the workspace, baseline, trace, mock records, abort signal and `checkSandbox`; `checkSandbox.run(command, { files })` stages those files into the workspace inside the sandbox and runs the command under the fixed Seatbelt policy. An extension adds no policy, path validation or staging code.
+`run` registers the built-ins and loads runner and checker modules from the directories given with `--runner-dir` and `--checker-dir`. They execute as trusted host code; never name an agent-writable workspace or a results directory. [Extensions](extensions.md) holds the discovery rules, the runner and checker contracts and a minimal example.
