@@ -1,6 +1,6 @@
 # M6: One Run Layout
 
-Status: delivered. [M2](m2-plan.md) built the isolated `HOME`, generic ACP runner and the `config`/`login` helpers; this milestone splits that `HOME` into a home, software, temporary space and engine-private state, and gives a case a way to supply user data.
+Status: in progress — partly delivered. The run layout described here shipped; the rest of the roadmap's sandbox configuration item is [still to do](#remaining-in-m6), so this record stays outside the archive until M6 is complete. [M2](archive/m2-plan.md) built the isolated `HOME`, generic ACP runner and the `config`/`login` helpers; this milestone splits that `HOME` into a home, software, temporary space and engine-private state, and gives a case a way to supply user data.
 
 The design below is what shipped. The interface section is the syntax the user approved; the placement and `view` shapes are as approved; the premise evidence is kept from the design stage, including the probe that used the old example `deps` layout (`deps/.local/bin`) — the examples now use the default `deps/bin`.
 
@@ -105,7 +105,7 @@ login: # optional: the whole login concept in one place
 
 The three examples and their setup scripts use this syntax. Each script prepares software only, under `deps/{bin,share}`, and an empty `login/`; the settings file stays beside the agent file.
 
-**Migration is required.** A prepared directory from before this milestone keeps its software but is not a settings source any more; re-run the setup script and move the settings into the agent file's `files` as [Setup](../setup.md#migrating-from-the-prepared-home-layout) describes.
+**Migration is required.** A prepared directory from before this milestone keeps its software but is not a settings source any more; re-run the setup script and move the settings into the agent file's `files` as [Setup](setup.md#migrating-from-the-prepared-home-layout) describes.
 
 ## Collision Rules — approved
 
@@ -198,9 +198,9 @@ For all three examples, `deps` held only software (`/.local/…` then, `bin/` an
 
 ## Relation to the Roadmap
 
-**Decided framing.** The roadmap's [Sandbox configuration (M6)](../roadmap.md#open-questions) item is broader than this milestone: it asks for one declared configuration of roots, host services and network, per-agent versus per-case ownership, and a mapping to other platforms. This milestone delivers the part that declaration attaches to — the run layout, its ownership split and one builder — and leaves the declaration itself, the network restriction, per-harness services, unifying the judge/check sandboxes and other platforms open. The roadmap records the split.
+**Decided framing.** The roadmap's [Sandbox configuration (M6)](roadmap.md#open-questions) item is broader than this milestone: it asks for one declared configuration of roots, host services and network, per-agent versus per-case ownership, and a mapping to other platforms. This milestone delivers the part that declaration attaches to — the run layout, its ownership split and one builder — and leaves the declaration itself, the network restriction, per-harness services, unifying the judge/check sandboxes and other platforms open. The roadmap records the split.
 
-## Not Delivered
+## Remaining in M6
 
 - **Sandbox policy as a declaration.** Policy is still assembled by the ACP runner, the native Pi runner and the judge; the check sandbox keeps its fixed policy.
 - **Network restriction.** Unchanged: harness runs have network, checks do not.
