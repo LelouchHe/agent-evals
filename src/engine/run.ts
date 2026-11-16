@@ -54,11 +54,71 @@ export interface RunRequest {
   readonly envSource?: EnvSource;
 }
 
-/** Validate configuration, execute one runner, run all checks, and clean up. */
-export async function runEvaluation(request: RunRequest): Promise<EvaluationRecord> {
-  const timeoutMs = request.case.config.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+/** One validated case, bound to run directories that do not exist yet. */
+export interface PreparedEvaluation {
+  readonly request: RunRequest;
+  readonly runId: string;
+  readonly startedAt: string;
+  readonly root: string;
+  readonly workspaceDir: string;
+  readonly homeDir: string;
+  readonly configDir: string;
+  readonly scratchDir: string;
+  readonly baselineDir: string;
+  readonly registered: {
+    readonly runnerType: string;
+    readonly runner: Runner;
+    readonly checks: readonly { readonly type: string; readonly checker: Checker }[];
+  };
+}
+
+/**
+ * Validate a case and bind it to new run directories without creating them, so a caller can
+ * validate every selected case before the first one runs.
+ */
+export async function prepareEvaluation(request: RunRequest): Promise<PreparedEvaluation> {
   const runId = newRunId();
   const startedAt = new Date().toISOString();
+  // Placeholders need the run directories' paths; they are created only after validation.
+  const root = join(request.tempParent ?? tmpdir(), `run-${randomBytes(6).toString("hex")}`);
+  const workspaceDir = join(root, "workspace");
+  const homeDir = join(root, "home");
+  const configDir = join(root, "config");
+  const scratchDir = join(root, "scratch");
+  const baselineDir = join(root, "baseline");
+  const registered = await prepareImplementations(
+    request,
+    {
+      env: request.envSource ?? createEnvSource(process.cwd(), request.signal),
+      run: { HOME: homeDir, TMPDIR: scratchDir },
+    },
+    request.signal,
+  );
+  await validateAuthoringAssets(request.case);
+  return {
+    request,
+    runId,
+    startedAt,
+    root,
+    workspaceDir,
+    homeDir,
+    configDir,
+    scratchDir,
+    baselineDir,
+    registered,
+  };
+}
+
+/** Validate configuration, execute one runner, run all checks, and clean up. */
+export async function runEvaluation(request: RunRequest): Promise<EvaluationRecord> {
+  return executeEvaluation(await prepareEvaluation(request));
+}
+
+/** Execute one prepared case: prepare the run root, drive the runner, check, record and clean up. */
+export async function executeEvaluation(prepared: PreparedEvaluation): Promise<EvaluationRecord> {
+  const { request, runId, startedAt, root, workspaceDir, homeDir, configDir, scratchDir, baselineDir, registered } =
+    prepared;
+  const timeoutMs = request.case.config.timeoutMs ?? DEFAULT_TIMEOUT_MS;
 
   const abort = new AbortController();
   let cancelled = request.signal?.aborted ?? false;
@@ -71,25 +131,7 @@ export async function runEvaluation(request: RunRequest): Promise<EvaluationReco
   }
   request.signal?.addEventListener("abort", onAbort, { once: true });
 
-  // Placeholders need the run directories' paths; they are created only after validation.
-  const root = join(request.tempParent ?? tmpdir(), `run-${randomBytes(6).toString("hex")}`);
-  const workspaceDir = join(root, "workspace");
-  const homeDir = join(root, "home");
-  const configDir = join(root, "config");
-  const scratchDir = join(root, "scratch");
-  const baselineDir = join(root, "baseline");
-
-  let registered: Awaited<ReturnType<typeof prepareImplementations>>;
   try {
-    registered = await prepareImplementations(
-      request,
-      {
-        env: request.envSource ?? createEnvSource(process.cwd(), abort.signal),
-        run: { HOME: homeDir, TMPDIR: scratchDir },
-      },
-      abort.signal,
-    );
-    await validateAuthoringAssets(request.case);
     // Exclusive creation, like mkdtemp: an existing path is an error, not reused.
     await mkdir(root, { mode: 0o700 });
   } catch (error) {
@@ -320,7 +362,7 @@ export async function runEvaluation(request: RunRequest): Promise<EvaluationReco
 async function prepareImplementations(
   request: RunRequest,
   values: ValueSource,
-  signal: AbortSignal,
+  signal: AbortSignal | undefined,
 ): Promise<{
   runnerType: string;
   runner: Runner;

@@ -14,6 +14,8 @@ agent-evals run case.yml [--case name] [--results-dir path] \
 
 The development form is `npm run eval -- <command>`; both entry points execute the same built CLI. Flags are parsed by Node's `util.parseArgs`: `--name=value`, separate option values, `--` before dash-prefixed positionals, and `--help`/`-h` are supported. Use `--case=-name` for a dash-prefixed case name.
 
+`run` on a `cases` document without `--case` executes every entry serially, in declaration order ([selection and summary](#one-case-or-named-cases)). A document with one ordinary case is unchanged.
+
 The trusted-directory option is repeatable and applies only to `run`; it names extension roots holding implementations, not working directories. All supplied roots feed the same registry, where duplicate `$type` names are errors rather than ordered overrides.
 
 ## ACP Preparation Helpers
@@ -93,7 +95,16 @@ cases:
       skills: []
 ```
 
-Select a name explicitly, even with one entry. `cases` must be a non-empty mapping of non-empty string names to mappings. Missing/unknown selection is an error; an ordinary document rejects an unnecessary name. The common part is never executed as an extra unnamed case.
+Select a name explicitly, even with one entry. `view` requires it for any `cases` document. `run` instead executes every entry in declaration order when `--case` is omitted, and only the named one when it is given. `cases` must be a non-empty mapping of non-empty string names to mappings. Missing/unknown selection is an error; an ordinary document rejects a case name. The common part is never executed as an extra unnamed case.
+
+#### Running Every Case
+
+A multi-case document is one invocation, but every case is an ordinary run: it validates, prepares, executes and records exactly as it would alone, with its own run root and its own result directory. Nothing repeats and nothing is aggregated across cases; repetition and statistics are not built in.
+
+- **All selected cases are validated before any runs.** Every case's implementation parameters, factories and authoring assets are checked first, so a configuration error in the last case runs none. It exits 2 without a result record.
+- **An error or a failed check does not stop the following cases.** Cancellation does: the running case stops and the remaining cases are not started.
+- **Output is one line per executed case:** `<case name>: <status> <result.json path>`. `--case` keeps the single-run report instead.
+- **Exit status is 0 only when every case passed**, 1 when checks failed, and 2 when a case ended as `error`, `timeout` or `cancelled`. A cancelled sweep also prints how many cases did not run.
 
 **Composition is a disjoint top-level union.** A field repeated between common fields and the selected entry is an error, even with equal values or different nested fields. Common `runner` and case-local `runner` cannot coexist. Siblings are independent; put the complete varying field in each case. There is no recursive merge, override, array append or deletion operator. Names have no built-in skill/comparison behavior and are never result-directory paths.
 
