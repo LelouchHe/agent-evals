@@ -7,7 +7,7 @@ import { parseImplementationParams } from "../../engine/params.ts";
 import type { CheckerContext } from "../../engine/registry.ts";
 import { createFakePi, makeTempDir } from "../../../tests/helpers/fake-pi-control.ts";
 import { implementationContext, unusedCheckSandbox } from "../../../tests/helpers/implementation-context.ts";
-import { judgeChecker, JudgeError } from "./checker.ts";
+import { judgeChecker, JudgeError } from "./index.ts";
 import { openRunRoot } from "../../engine/workspace.ts";
 
 async function setup(t: Parameters<typeof makeTempDir>[0], fileContent: string | null = "Hello, world!\n") {

@@ -7,7 +7,7 @@ import { parseImplementationParams } from "../../engine/params.ts";
 import { ConfigError, type ImplementationParams } from "../../engine/config.ts";
 import { createFakePi, makeTempDir } from "../../../tests/helpers/fake-pi-control.ts";
 import { implementationContext } from "../../../tests/helpers/implementation-context.ts";
-import { piRunner } from "./runner.ts";
+import { piRunner } from "./index.ts";
 import { PiSessionError } from "./session.ts";
 
 async function setup(t: Parameters<typeof makeTempDir>[0]) {

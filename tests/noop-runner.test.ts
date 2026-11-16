@@ -3,14 +3,14 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { test, type TestContext } from "node:test";
 import { stringify } from "yaml";
-import { fileChecker } from "../src/checkers/file/checker.ts";
-import { judgeChecker } from "../src/checkers/judge/checker.ts";
-import { mockChecker } from "../src/checkers/mock/checker.ts";
-import { shellChecker } from "../src/checkers/shell/checker.ts";
+import { fileChecker } from "../src/checkers/file/index.ts";
+import { judgeChecker } from "../src/checkers/judge/index.ts";
+import { mockChecker } from "../src/checkers/mock/index.ts";
+import { shellChecker } from "../src/checkers/shell/index.ts";
 import { loadCase } from "../src/engine/authoring.ts";
 import { addChecker, addRunner, createRegistry } from "../src/engine/registry.ts";
 import { runEvaluation } from "../src/engine/run.ts";
-import { noopRunner } from "../src/runners/noop/runner.ts";
+import { noopRunner } from "../src/runners/noop/index.ts";
 import { createFakePi, makeTempDir } from "./helpers/fake-pi-control.ts";
 
 async function runNoop(t: TestContext, declaration: Record<string, unknown>, judgeExecutable?: string) {

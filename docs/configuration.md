@@ -1,6 +1,6 @@
 # Configuration Reference
 
-The run/view commands resolve one YAML file into one executable case. ACP preparation helpers instead load a standalone agent configuration. Test-design guidance belongs in [Writing Cases](cases.md); module and extension contracts belong in [Architecture](architecture.md).
+The run/view commands resolve one YAML file into one executable case. ACP preparation helpers instead load a standalone agent configuration. Test-design guidance belongs in [Writing Cases](cases.md); module composition belongs in [Architecture](architecture.md) and the runner and checker contracts in [Extensions](extensions.md).
 
 ## Commands
 
@@ -9,12 +9,12 @@ agent-evals config agent.yml
 agent-evals login agent.yml
 agent-evals view case.yml [--case name]
 agent-evals run case.yml [--case name] [--results-dir path] \
-  [--runner-dir path] [--checker-dir path]
+  [--extension-dir path]
 ```
 
 The development form is `npm run eval -- <command>`; both entry points execute the same built CLI. Flags are parsed by Node's `util.parseArgs`: `--name=value`, separate option values, `--` before dash-prefixed positionals, and `--help`/`-h` are supported. Use `--case=-name` for a dash-prefixed case name.
 
-The trusted-directory options are repeatable and apply only to `run`; they load implementation modules, not working directories. All supplied directories feed the same registry, where duplicate `$type` names are errors rather than ordered overrides.
+The trusted-directory option is repeatable and applies only to `run`; it names extension roots holding implementations, not working directories. All supplied roots feed the same registry, where duplicate `$type` names are errors rather than ordered overrides.
 
 ## ACP Preparation Helpers
 
@@ -316,8 +316,4 @@ Overall statuses are `pass`, `fail`, `error`, `timeout`, and `cancelled`; indivi
 
 ## Trusted Extensions
 
-`run` registers the built-ins and can load `.ts`, `.js` or `.mjs` modules from explicitly supplied trusted directories. A runner module exports `runner`; a checker module exports `checker`. Duplicate/unknown types or malformed exports are errors, never fallback reasons.
-
-Extensions use the same schema/factory/instance contracts as built-ins; see [Definitions, Factories, and Instances](architecture.md#definitions-factories-and-instances) and [`registry.ts`](../src/engine/registry.ts). They execute as trusted host code. Never use an agent-writable workspace or generated result directory as an extension discovery root.
-
-Checker extensions receive the engine's check-time capabilities instead of rebuilding them. `create(params, context)` gets an `ImplementationContext` with the case directory, placeholder values, declared mock targets and `validateFiles`, which validates and stages a check's `files` at load time. `check(context)` gets a `CheckerContext` with the workspace, baseline, trace, mock records, abort signal and `checkSandbox`; `checkSandbox.run(command, { files })` stages those files into the workspace inside the sandbox and runs the command under the fixed Seatbelt policy. An extension adds no policy, path validation or staging code.
+`run` registers the built-ins and loads each implementation directory beneath the roots given with `--extension-dir`. An implementation directory's `index.ts`, `index.js` or `index.mjs` exports `runner`, `checker`, or both, and the `$type` is that definition's own `type`. Extensions execute as trusted host code; never name an agent-writable workspace or a results directory. [Extensions](extensions.md) holds the discovery rules, the runner and checker contracts and a minimal example.

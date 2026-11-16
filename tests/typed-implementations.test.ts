@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { readFile, readdir, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { test } from "node:test";
 import { stringify } from "yaml";
@@ -18,7 +18,7 @@ import {
   type RunnerDefinition,
 } from "../src/engine/registry.ts";
 import { runEvaluation } from "../src/engine/run.ts";
-import { fileChecker } from "../src/checkers/file/checker.ts";
+import { fileChecker } from "../src/checkers/file/index.ts";
 import { makeTempDir } from "./helpers/fake-pi-control.ts";
 
 test("engine preparation passes each parsed implementation shape to its bound instance exactly once", async (t) => {
@@ -232,8 +232,10 @@ test("a discovered extension executes through shared factory preparation", async
   const zodUrl = import.meta.resolve("zod");
   const runnerDir = await makeTempDir(t, "ae-typed-external-runner-");
   const checkerDir = await makeTempDir(t, "ae-typed-external-checker-");
+  await mkdir(join(runnerDir, "receiver"));
+  await mkdir(join(checkerDir, "receiver"));
   await writeFile(
-    join(runnerDir, "runner.mjs"),
+    join(runnerDir, "receiver", "index.mjs"),
     `import { z } from ${JSON.stringify(zodUrl)};
 export const runner = {
   type: "receiver-runner",
@@ -251,7 +253,7 @@ export const runner = {
 `,
   );
   await writeFile(
-    join(checkerDir, "checker.mjs"),
+    join(checkerDir, "receiver", "index.mjs"),
     `import { z } from ${JSON.stringify(zodUrl)};
 export const checker = {
   type: "receiver-checker",
@@ -269,7 +271,7 @@ export const checker = {
   );
 
   const registry = createRegistry();
-  await loadTrustedImplementations(registry, { runnerDirs: [runnerDir], checkerDirs: [checkerDir] });
+  await loadTrustedImplementations(registry, { extensionDirs: [runnerDir, checkerDir] });
   const directory = await makeTempDir(t, "ae-typed-external-case-");
   const casePath = join(directory, "case.yml");
   await writeFile(join(directory, ".env"), "EXTERNAL_TEXT=expanded-value\n");

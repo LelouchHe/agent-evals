@@ -84,6 +84,7 @@ The pinned development toolchain's `minimatch@10.2.6` has [GHSA-g3hv-75wg-m249](
 | ------------------------------------------------ | ------------------------------------------------------------------------------------- |
 | [Architecture](docs/architecture.md)             | Which modules cooperate, through which interfaces, to execute a case?                 |
 | [Configuration Reference](docs/configuration.md) | How do YAML, selection, parameters, view and results work?                            |
+| [Extensions](docs/extensions.md)                 | How do I write and load my own runner or checker?                                     |
 | [Writing Cases](docs/cases.md)                   | How should tasks, fixtures and assertions be designed?                                |
 | [Mocks](docs/mocks.md)                           | How do I substitute a command, and what does `mocks.json` contain?                    |
 | [Roadmap](docs/roadmap.md)                       | What is the target shape, and which capabilities are planned rather than implemented? |
