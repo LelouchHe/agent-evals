@@ -6,7 +6,7 @@ import { fileChecker } from "../src/checkers/file/checker.ts";
 import { mockChecker } from "../src/checkers/mock/checker.ts";
 import { shellChecker } from "../src/checkers/shell/checker.ts";
 import { loadCase } from "../src/engine/authoring.ts";
-import type { MockRule, ResolvedCase } from "../src/engine/config.ts";
+import { parsePatternScalar, type MockRule, type PatternSyntax, type ResolvedCase } from "../src/engine/config.ts";
 import { parseImplementationParams } from "../src/engine/params.ts";
 import {
   addChecker,
@@ -30,8 +30,21 @@ function actions(loaded: ResolvedCase): Readonly<Record<string, readonly MockRul
   return loaded.config.mocks?.shell ?? {};
 }
 
-function patternsOf(loaded: ResolvedCase): readonly string[] {
-  return loaded.config.checks.flatMap((check) => patternStrings(check));
+function patternsOf(loaded: ResolvedCase): readonly PatternSyntax[] {
+  return loaded.config.checks.flatMap((check) => parsedPatterns(check));
+}
+
+/** The check's declared patterns under the checker's own literal-or-/…/ rule. */
+function parsedPatterns(check: Readonly<Record<string, unknown>>): readonly PatternSyntax[] {
+  return matchPatterns(check).map((value) => {
+    const parsed = parsePatternScalar(value);
+    assert.ok(parsed.kind === "pattern", `the example declares a valid pattern: ${String(value)}`);
+    return parsed.pattern;
+  });
+}
+
+function patternFound(pattern: PatternSyntax, text: string): boolean {
+  return pattern.regex ? searches(pattern.source, text) : text.includes(pattern.source);
 }
 
 // The worked example is documentation: nothing else loads it, so an action nobody exercises or
@@ -86,7 +99,7 @@ test("the worked example exercises every mock action and its checks assert the r
     ["Darwin", "the platform from the passed command"],
   ] as const) {
     assert.ok(
-      patterns.some((pattern) => searches(pattern, line)),
+      patterns.some((pattern) => patternFound(pattern, line)),
       `${label} is asserted by a check`,
     );
   }
@@ -144,10 +157,6 @@ function matchPatterns(check: Readonly<Record<string, unknown>>): readonly unkno
   return typeof check.matches === "string" ? [check.matches] : Array.isArray(check.matches) ? check.matches : [];
 }
 
-function patternStrings(check: Readonly<Record<string, unknown>>): readonly string[] {
-  return matchPatterns(check).filter((pattern): pattern is string => typeof pattern === "string");
-}
-
 // The deterministic half of the trace judge's restraint question: a fix command that does run
 // would be refused and recorded, so `times: 0` fails instead of only being judged.
 test("the worked example refuses make and asserts that no call reached it", async () => {
@@ -181,10 +190,8 @@ test("the worked example runs one fixture script and one check-time acceptance s
   assert.ok(
     loaded.config.checks
       .slice(0, loaded.config.checks.indexOf(internal))
-      .some(
-        (check) => check.$type === "file" && check.path === "checks/check-diagnosis.sh" && check.unchanged === true,
-      ),
-    "a file unchanged check on the fixture script precedes the shell check",
+      .some((check) => check.$type === "file" && check.path === "checks/check-diagnosis.sh" && check.changed === false),
+    "a file changed: false check on the fixture script precedes the shell check",
   );
 
   // The acceptance script is placed only at check time and is not in the fixture.
@@ -263,6 +270,7 @@ test(
         ["file", "fail"],
         ["file", "fail"],
         ["file", "fail"],
+        ["file", "fail"],
         ["file", "pass"],
         ["file", "pass"],
         ["shell", "fail"],
@@ -292,6 +300,7 @@ test(
     assert.deepEqual(
       record.checks.map((check) => [check.checker, check.status]),
       [
+        ["file", "pass"],
         ["file", "pass"],
         ["file", "pass"],
         ["file", "pass"],

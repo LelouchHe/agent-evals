@@ -10,7 +10,7 @@ checks:
     matches: "make rotate-signing-cert"
   - $type: file
     path: deploy.log
-    unchanged: true
+    changed: false
   - $type: judge
     # Independent Pi invocation; omitted thinking uses the checker default.
     model: opencode-go/deepseek-v4.1-flash

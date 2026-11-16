@@ -95,7 +95,7 @@ checks:
   - $type: file
     path: hello.txt
     exists: true
-    matches: '^Hello, world!\n?$'
+    matches: '/^Hello, world!\n?$/'
 ```
 
 For several cases, common top-level fields sit beside `cases`; each entry supplies the fields absent from the common part. For example, replace the `runner` above with:
@@ -146,7 +146,7 @@ Authoring resources are relative to the YAML file; checker targets are relative 
 - An entry may replace a file that came from `fixture`; that is the common "same base, one changed file" case.
 - Entries may not overwrite each other: two entries producing the same file path are an error. Directory entries merge.
 - A file arriving where a directory exists, or a directory where a file exists, is an error rather than a replacement, whether the existing path came from `fixture` or from another entry.
-- Placement happens after the fixture copy and before the baseline snapshot, so placed files are part of the baseline and `unchanged` covers them.
+- Placement happens after the fixture copy and before the baseline snapshot, so placed files are part of the baseline and `changed: false` covers them.
 
 The engine only copies; it assigns no meaning to a destination and knows no harness paths. A project-level skill is one use: place its directory where the harness discovers it, for example `.agents/skills/` for Pi and Copilot CLI or `.claude/skills/` for Claude Code.
 
@@ -227,18 +227,21 @@ Example: [`deploy-runbook`](../examples/cases/deploy-runbook/case.yml), whose Pi
 
 A parameterless baseline runner. It starts no harness and no sandbox and completes at once with `finalText: null`, no diagnostics, an empty trace (`trace.json` is `[]`), and no usage. It declares mock support, so a case with `mocks` loads; the forwarders are written and nothing calls them, so `mocks.json` is `[]`.
 
-Run a case under it to see which checks need the agent: `file` `matches`, a `mock` with its default count, or a `shell` command over a broken fixture fail, while restraint checks (`times: 0`, `unchanged`) pass by construction. Select it per named case; `run` has no baseline flag.
+Run a case under it to see which checks need the agent: `file` `matches` or `notMatches`, a `mock` with its default count, or a `shell` command over a broken fixture fail, while restraint checks (`times: 0`, `changed: false` on a file that already exists) pass by construction. Select it per named case; `run` has no baseline flag.
 
 ### File Checker (`$type: file`)
 
-| Parameter   | Contract                                                                                                                                                        |
-| ----------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `path`      | Required workspace-relative file path, not absolute and without `..` segments.                                                                                  |
-| `exists`    | Optional boolean; `false` is supported. Only regular files count.                                                                                               |
-| `matches`   | Optional RE2 pattern or list, at most 100 patterns. Search semantics, not an implicit whole-file match; lookaround and backreferences are configuration errors. |
-| `unchanged` | Optional literal `true`; compare bytes against the initial baseline. `false` is invalid.                                                                        |
+| Parameter    | Contract                                                                                                                                                                   |
+| ------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `path`       | Required workspace-relative file path, not absolute and without `..` segments.                                                                                             |
+| `exists`     | Optional boolean; `false` is supported. Only regular files count.                                                                                                          |
+| `changed`    | Optional boolean; compare bytes with the initial baseline. `false` passes for identical or both-absent files, `true` only for a file the run created, removed or modified. |
+| `matches`    | Optional literal or `/…/` RE2 pattern, or a non-empty list of up to 100. Search semantics, not an implicit whole-file match.                                               |
+| `notMatches` | Optional literal or `/…/` RE2 pattern, or a non-empty list of up to 100. Fails when a pattern is found.                                                                    |
 
-At least one assertion is required; each produces its own result. Patterns run on the shared RE2 engine ([Mocks](mocks.md#regexes) owns the dialect), which is linear-time and needs no worker or timeout. File reads are capped at 1 MiB. Missing required files fail checks; unsafe/replaced roots, escaping/broken symlinks, non-regular, oversized or unreadable evidence are errors rather than passes. No content normalization or `includes` alias is provided.
+At least one of `exists`, `changed`, `matches` or `notMatches` is required, and every declared pattern produces its own result. A pattern scalar is a non-empty string or a finite number compared as its text; unquoted booleans and mappings are configuration errors, since an unquoted `state: failed` in a list is a mapping rather than a string. A string is a literal substring unless it starts and ends with `/`, which makes it a RE2 pattern searched within the file: `^` and `$` bind to the file's start and end unless the pattern uses `(?m)`. A literal that itself starts and ends with `/` is written as a regex, such as `/\/bin\//`. Every `/…/` pattern compiles at load time on the shared RE2 engine ([Mocks](mocks.md#regexes) owns the dialect), which is linear-time and needs no worker or timeout.
+
+A missing file fails both `matches` and `notMatches`, so a restraint check never passes because the agent wrote nothing. File reads are capped at 1 MiB. Unsafe/replaced roots, escaping/broken symlinks, non-regular files, oversized files and unreadable evidence are errors rather than passes. No content normalization or `includes` alias is provided.
 
 ### Mock Checker (`$type: mock`)
 
@@ -277,7 +280,7 @@ The program starts in the workspace root in the engine's check sandbox: open rea
 
 The engine validates `files` when the case loads, and the check sandbox copies it into the live workspace just before the program starts, after the agent stopped, so the agent never saw those bytes during the run. Placed files stay for later checks and disappear with the run root; they are not part of the baseline. When the case loads, the engine checks that every source exists and that two entries do not produce the same file, so a missing source is a configuration error rather than a check result. Placement runs inside the check sandbox, so Seatbelt's write policy contains it even against a concurrent race. It also never follows a destination symlink: a symlinked ancestor is a check error, and anything at a file's destination is removed before the copy, so an agent-planted symlink or hard link cannot redirect the write outside the workspace. A directory where a file goes is a check error.
 
-A shell check runs in the live workspace, in declaration order, so a `file` check that must see the agent's result unchanged belongs before it. Mocks are closed when checks run: a mocked `PATH` command is not on the check's `PATH`, and a mocked workspace script reaches only a closed host. The sandbox policy is fixed and has no case syntax; `judge` keeps its own network-enabled sandbox instead.
+A shell check runs in the live workspace, in declaration order, so a `file` `changed: false` check that must see the agent's result unchanged belongs before it. Mocks are closed when checks run: a mocked `PATH` command is not on the check's `PATH`, and a mocked workspace script reaches only a closed host. The sandbox policy is fixed and has no case syntax; `judge` keeps its own network-enabled sandbox instead.
 
 Extensions get the same behavior through the engine interfaces: `ImplementationContext.validateFiles(files)` at load time and `CheckerContext.checkSandbox.run(run, { files })` at check time. An extension checker assembles no file-staging logic or sandbox policy of its own.
 

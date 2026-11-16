@@ -10,7 +10,7 @@ import { stringify } from "yaml";
 import { z } from "zod";
 import { fileChecker } from "../src/checkers/file/checker.ts";
 import { loadCase } from "../src/engine/authoring.ts";
-import { ConfigError, type ShellMock } from "../src/engine/config.ts";
+import { ConfigError, parsePatternScalar, type ShellMock } from "../src/engine/config.ts";
 import { startMockHost, type MockHostOptions } from "../src/engine/mocks.ts";
 import { addChecker, addRunner, createRegistry } from "../src/engine/registry.ts";
 import { runEvaluation } from "../src/engine/run.ts";
@@ -22,16 +22,16 @@ import { makeTempDir } from "./helpers/fake-pi-control.ts";
 const INPUT = "Check the tool declarations.";
 
 const PROBE_CHECKS = [
-  { path: "where-id", matches: "run-[0-9a-f]{12}/bin/id\\n?$" },
-  { path: "call-out", matches: "^answer\\n?$" },
-  { path: "call-err", matches: "^denied\\n?$" },
-  { path: "call-status", matches: "^7$" },
-  { path: "call-binary-hex", matches: "41 +00 +42 +c3 +bf" },
-  { path: "call-binary-status", matches: "^0$" },
-  { path: "call-binary-err", matches: "^$" },
-  { path: "probe-list", matches: "^[1-9][0-9]?$" },
-  { path: "probe-read", matches: "^0$" },
-  { path: "probe-write", matches: "^[1-9][0-9]?$" },
+  { path: "where-id", matches: "/run-[0-9a-f]{12}/bin/id\\n?$/" },
+  { path: "call-out", matches: "/^answer\\n?$/" },
+  { path: "call-err", matches: "/^denied\\n?$/" },
+  { path: "call-status", matches: "/^7$/" },
+  { path: "call-binary-hex", matches: "/41 +00 +42 +c3 +bf/" },
+  { path: "call-binary-status", matches: "/^0$/" },
+  { path: "call-binary-err", matches: "/^$/" },
+  { path: "probe-list", matches: "/^[1-9][0-9]?$/" },
+  { path: "probe-read", matches: "/^0$/" },
+  { path: "probe-write", matches: "/^[1-9][0-9]?$/" },
 ];
 
 const MOCKS = {
@@ -72,7 +72,12 @@ test(
 
     assert.deepEqual(
       record.checks.map((check) => [check.subject, check.status]),
-      PROBE_CHECKS.map((check) => [`${check.path} matches /${check.matches}/`, "pass"]),
+      PROBE_CHECKS.map((check) => {
+        const parsed = parsePatternScalar(check.matches);
+        assert.ok(parsed.kind === "pattern");
+        const shown = parsed.pattern.regex ? `/${parsed.pattern.source}/` : `"${parsed.pattern.source}"`;
+        return [`${check.path} matches ${shown}`, "pass"];
+      }),
       record.error,
     );
     assert.equal(record.status, "pass", record.error);
@@ -498,20 +503,20 @@ test(
         },
         runner: { $type: "acp", agent: "agent.yml" },
         checks: [
-          { $type: "file", path: "pass-out", matches: "^Darwin\\n?$" },
-          { $type: "file", path: "pass-status", matches: "^0$" },
+          { $type: "file", path: "pass-out", matches: "/^Darwin\\n?$/" },
+          { $type: "file", path: "pass-status", matches: "/^0$/" },
           // pass keeps the real binary executable, so an absolute path still runs it.
-          { $type: "file", path: "abs-pass-out", matches: "^Darwin\\n?$" },
-          { $type: "file", path: "who-out", matches: "^mocked-user\\n?$" },
-          { $type: "file", path: "abs-status", matches: "^126$" },
+          { $type: "file", path: "abs-pass-out", matches: "/^Darwin\\n?$/" },
+          { $type: "file", path: "who-out", matches: "/^mocked-user\\n?$/" },
+          { $type: "file", path: "abs-status", matches: "/^126$/" },
           { $type: "file", path: "abs-err", matches: "Operation not permitted" },
-          { $type: "file", path: "script-pass-out", matches: "^real inspect alpha\\n?$" },
-          { $type: "file", path: "script-return-out", matches: "^mocked publish\\n?$" },
-          { $type: "file", path: "script-return-status", matches: "^0$" },
-          // The forwarders are placed before the baseline, so unchanged compares them with
+          { $type: "file", path: "script-pass-out", matches: "/^real inspect alpha\\n?$/" },
+          { $type: "file", path: "script-return-out", matches: "/^mocked publish\\n?$/" },
+          { $type: "file", path: "script-return-status", matches: "/^0$/" },
+          // The forwarders are placed before the baseline, so changed: false compares them with
           // themselves even though the real scripts moved.
-          { $type: "file", path: "scripts/inspect.sh", unchanged: true },
-          { $type: "file", path: "scripts/publish.sh", unchanged: true },
+          { $type: "file", path: "scripts/inspect.sh", changed: false },
+          { $type: "file", path: "scripts/publish.sh", changed: false },
         ],
       }),
     );
@@ -564,14 +569,14 @@ test(
         },
         runner: { $type: "acp", agent: "agent.yml" },
         checks: [
-          { $type: "file", path: "false-status", matches: "^126$" },
-          { $type: "file", path: "false-err", matches: "^hostname: Operation not permitted\\n?$" },
-          { $type: "file", path: "false-out", matches: "^$" },
+          { $type: "file", path: "false-status", matches: "/^126$/" },
+          { $type: "file", path: "false-err", matches: "/^hostname: Operation not permitted\\n?$/" },
+          { $type: "file", path: "false-out", matches: "/^$/" },
           // The target cannot pass, so its real binary stays denied by absolute path.
-          { $type: "file", path: "abs-status", matches: "^126$" },
+          { $type: "file", path: "abs-status", matches: "/^126$/" },
           { $type: "file", path: "abs-err", matches: "Operation not permitted" },
-          { $type: "file", path: "script-status", matches: "^126$" },
-          { $type: "file", path: "script-out", matches: "^scripts/only.sh: Operation not permitted\\n?$" },
+          { $type: "file", path: "script-status", matches: "/^126$/" },
+          { $type: "file", path: "script-out", matches: "/^scripts/only.sh: Operation not permitted\\n?$/" },
         ],
       }),
     );

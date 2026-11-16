@@ -66,7 +66,7 @@ For outcomes only execution can show: the project's tests pass, a generated scri
 checks:
   - $type: file
     path: tests/cart.test.js
-    unchanged: true
+    changed: false
   - $type: shell
     files:
       tests/acceptance.test.js: checks/acceptance.test.js
@@ -78,7 +78,7 @@ checks:
 - **It never runs on the host.** The workspace holds whatever the agent wrote, so the command is untrusted code. The checker starts it only through the engine's [check sandbox](#the-check-sandbox) and assembles no policy of its own.
 - **It does not share the evaluated agent's environment.** Like the judge, it never reuses the runner's HOME or session, so it works the same for every runner.
 - **`files` supplies tests the agent never saw.** An optional map of workspace-relative destination to authoring-relative source. The engine validates every source when the case loads through `ImplementationContext.validateFiles`, and stages the map through `CheckerContext.checkSandbox.run(run, { files })` right before this check's program starts; the files stay for later checks and disappear with the run root. Missing or inaccessible sources, invalid spellings and two entries producing one file are configuration errors.
-- **Placement runs inside the check sandbox.** Every destination walk, unlink and copy executes under Seatbelt's write policy, so even a concurrent workspace process cannot make it reach outside the workspace. It also refuses a symlinked ancestor, and unlinks whatever is at a file's destination before copying, so the agent cannot redirect the write or keep a fake at the path. A directory where a file goes is an error. The agent can still edit tests that are already in the workspace; use `files` for what it should never see, and `file` `unchanged` for anything it must not edit.
+- **Placement runs inside the check sandbox.** Every destination walk, unlink and copy executes under Seatbelt's write policy, so even a concurrent workspace process cannot make it reach outside the workspace. It also refuses a symlinked ancestor, and unlinks whatever is at a file's destination before copying, so the agent cannot redirect the write or keep a fake at the path. A directory where a file goes is an error. The agent can still edit tests that are already in the workspace; use `files` for what it should never see, and `file` `changed: false` for anything it must not edit.
 - **Mocks are gone at check time.** The mock host is closed, so a command that reaches a mocked workspace script fails at its forwarder. Mocked `PATH` commands are not on the check's `PATH` at all.
 - **It runs in the live workspace.** Checks run in declaration order and a command may write caches or reports, so a `file` check that must see the agent's result unchanged is declared before it. A copy would cost a copy and break absolute paths written during the run.
 
@@ -121,7 +121,7 @@ runner:
 It starts no harness and no sandbox and completes at once with no final text and an empty trace. Run against a case, it gives the baseline: a check that passes here does not depend on the agent.
 
 - **A sound case fails under `noop`.** Checks that require the agent to have done something (`file` `matches`, `mock` with its default count, `shell` over a broken fixture) must fail. One that passes is vacuous for that purpose.
-- **Restraint checks pass by construction.** `times: 0` and `unchanged` hold when nothing ran; the baseline says nothing about them.
+- **Restraint checks pass by construction.** `times: 0` and `changed: false` hold when nothing ran; the baseline says nothing about them.
 - **It accepts `mocks`.** It declares mock support so a case with `mocks` loads; the forwarders are written and nothing calls them, so the records are empty.
 - **It records an empty trace**, so a `judge` asking for the trace is evaluated instead of ending as an error.
 - **A case selects it like any runner.** `run` gains no override: a file that wants a baseline declares `runner` per named case and adds one with `$type: noop`, as `deploy-runbook` already does for its harnesses.
@@ -132,7 +132,7 @@ It starts no harness and no sandbox and completes at once with no final text and
 
 It also exercises both kinds of `shell` check:
 
-- **A fixture script.** `file` `unchanged` on `fixture/checks/check-diagnosis.sh` runs before the `shell` check that executes it, so the agent cannot edit its way to a pass. The script asserts only public facts — `diagnosis.md` is non-empty and repeats the `E4127` code `deploy.log` already shows — because the fixture is shared with `deploy-runbook-native` and must not leak the skill's private cause or fix.
+- **A fixture script.** `file` `changed: false` on `fixture/checks/check-diagnosis.sh` runs before the `shell` check that executes it, so the agent cannot edit its way to a pass. The script asserts only public facts — `diagnosis.md` is non-empty and repeats the `E4127` code `deploy.log` already shows — because the fixture is shared with `deploy-runbook-native` and must not leak the skill's private cause or fix.
 - **A check-time acceptance script.** `checks/acceptance.sh` sits outside `fixture/` and is placed into the workspace through `shell.files` only when the check runs, so the agent never sees the private fix commands and combined facts it asserts.
 
 ## Verified
