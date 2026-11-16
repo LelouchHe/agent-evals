@@ -59,13 +59,13 @@ test(
   { skip: process.platform !== "darwin" },
   async (t) => {
     const fixture = await makeAcpAgent(t);
-    for (const [home, field] of [
-      [{ ...fixture.config.home, deps: join(fixture.root, "missing-deps") }, "home.deps"],
-      [{ ...fixture.config.home, deps: fixture.path }, "home.deps"],
-      [{ ...fixture.config.home, login: fixture.path }, "home.login"],
-      [{ ...fixture.config.home, login: join(fixture.path, "child") }, "home.login"],
+    for (const [change, field] of [
+      [{ deps: join(fixture.root, "missing-deps") }, "deps"],
+      [{ deps: fixture.path }, "deps"],
+      [{ login: { ...fixture.config.login, dir: fixture.path } }, "login.dir"],
+      [{ login: { ...fixture.config.login, dir: join(fixture.path, "child") } }, "login.dir"],
     ] as const) {
-      await writeFile(fixture.path, stringify({ ...fixture.config, home }));
+      await writeFile(fixture.path, stringify({ ...fixture.config, ...change }));
       const result = await runCliProcess(t, cli, ["config", fixture.path], {
         cwd: fixture.root,
         env: { ...process.env, TMPDIR: fixture.runtime },
@@ -120,7 +120,13 @@ for (const scenario of ["failure", "forgery", "symlink", "fifo"]) {
     const fixture = await makeAcpAgent(t, scenario);
     const outside = join(fixture.root, "outside-token");
     await writeFile(outside, "outside-secret");
-    await writeFile(fixture.path, stringify({ ...fixture.config, command: [...fixture.config.command, outside] }));
+    await writeFile(
+      fixture.path,
+      stringify({
+        ...fixture.config,
+        login: { ...fixture.config.login, command: [...fixture.config.login.command, outside] },
+      }),
+    );
     const result = await runCliProcess(t, cli, ["login", fixture.path], {
       cwd: fixture.root,
       env: { ...process.env, TMPDIR: fixture.runtime },
@@ -185,13 +191,15 @@ test(
     const fixture = await makeAcpAgent(t);
     const definitions = join(fixture.root, "definitions");
     await mkdir(definitions);
+    await writeFile(join(definitions, "agent-settings.json"), '{"model":"synthetic"}\n');
     const path = join(definitions, "agent.yml");
     await writeFile(join(fixture.root, ".env"), 'SELECT="!printf x >> count; printf success"\n');
     await writeFile(
       path,
       stringify({
         ...fixture.config,
-        home: { ...fixture.config.home, deps: "../deps", login: "../login" },
+        deps: "../deps",
+        login: { ...fixture.config.login, dir: "../login" },
         acpCommand: undefined,
       }) + "acpCommand:\n  - agent\n  - acp\n  - ${env:SELECT}\n  - ${env:SELECT}\n  - $${env:MISSING}\n",
     );
@@ -248,12 +256,12 @@ test(
   { skip: process.platform !== "darwin" },
   async (t) => {
     const fixture = await makeAcpAgent(t);
-    for (const [home, message] of [
-      [{ ...fixture.config.home, login: fixture.deps }, /non-overlapping/],
-      [{ ...fixture.config.home, deps: fixture.root, login: undefined }, /must not contain the temporary/],
-      [{ ...fixture.config.home, deps: "/", login: undefined }, /must not contain the temporary/],
+    for (const [change, message] of [
+      [{ login: { ...fixture.config.login, dir: fixture.deps } }, /non-overlapping/],
+      [{ deps: fixture.root }, /non-overlapping/],
+      [{ deps: fixture.runtime }, /must not contain the temporary/],
     ] as const) {
-      await writeFile(fixture.path, stringify({ ...fixture.config, home }));
+      await writeFile(fixture.path, stringify({ ...fixture.config, ...change }));
       const result = await runCliProcess(t, cli, ["config", fixture.path], {
         cwd: fixture.root,
         env: { ...process.env, TMPDIR: fixture.runtime },
@@ -330,15 +338,17 @@ test(
   { skip: process.platform !== "darwin", timeout: 15000 },
   async (t) => {
     const fixture = await makeAcpAgent(t);
-    await copyFile(process.execPath, join(fixture.deps, ".local/bin/node"), constants.COPYFILE_FICLONE);
+    await copyFile(process.execPath, join(fixture.deps, "bin/node"), constants.COPYFILE_FICLONE);
     await writeFile(
       fixture.path,
       stringify({
         ...fixture.config,
-        command: [
-          "node",
-          "-e",
-          `
+        login: {
+          ...fixture.config.login,
+          command: [
+            "node",
+            "-e",
+            `
 const fs = require("node:fs");
 process.stdin.setRawMode(true);
 // Darwin sys/ttycom.h: TIOCSWINSZ = _IOW('t', 103, struct winsize),
@@ -363,7 +373,8 @@ process.stdin.on("data", chunk => {
   process.exit(0);
 });
 `,
-        ],
+          ],
+        },
       }),
     );
     const driver = join(fixture.root, "login.exp");

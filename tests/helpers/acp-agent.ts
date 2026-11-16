@@ -11,15 +11,16 @@ export async function makeAcpAgent(t: TestContext, scenario = "success") {
   const login = join(root, "login");
   const runtime = join(root, "runtime");
   await Promise.all([
-    mkdir(join(deps, ".local/bin"), { recursive: true }),
-    mkdir(join(deps, ".local/share"), { recursive: true }),
+    mkdir(join(deps, "bin"), { recursive: true }),
+    mkdir(join(deps, "share"), { recursive: true }),
     mkdir(runtime),
   ]);
-  const executable = join(deps, ".local/bin/agent");
-  await writeFile(executable, '#!/bin/sh\nexec /usr/bin/perl "$HOME/.local/share/agent.pl" "$@"\n');
+  const executable = join(deps, "bin/agent");
+  await writeFile(executable, '#!/bin/sh\nexec /usr/bin/perl "$(dirname "$0")/../share/agent.pl" "$@"\n');
   await chmod(executable, 0o755);
+  await writeFile(join(root, "agent-settings.json"), '{"model":"synthetic"}\n');
   await writeFile(
-    join(deps, ".local/share/agent.pl"),
+    join(deps, "share/agent.pl"),
     `use strict;
 use warnings;
 use JSON::PP;
@@ -29,9 +30,15 @@ $| = 1;
 my ($mode, $scenario, @data) = @ARGV;
 my $home = $ENV{HOME};
 make_path("$home/.auth");
+
 sub save {
   my ($path, $value) = @_;
   open(my $f, ">", "$home/$path") or die $!;
+  print $f $value; close($f);
+}
+sub save_log {
+  my ($name, $value) = @_;
+  open(my $f, ">", "$home/.auth/$name") or die $!;
   print $f $value; close($f);
 }
 if ($mode eq "login") {
@@ -68,12 +75,21 @@ my $model = "model-a";
 while (my $line = <STDIN>) {
   my $request = decode_json($line);
   push @methods, $request->{method};
-  save(".auth/requests", encode_json(\\@methods));
+  save_log("requests", encode_json(\\@methods));
   my $result;
   if ($request->{method} eq "initialize") {
-    save(".auth/environment", ($ENV{AGENT_EVALS_TEST} // "") . "|$ENV{TMPDIR}");
+    save_log("environment", ($ENV{AGENT_EVALS_TEST} // "") . "|$ENV{TMPDIR}");
+    my $settings = "";
+    if (-e "$home/settings.json") {
+      open(my $f, "<", "$home/settings.json") or die $!;
+      local $/; $settings = <$f>; close($f);
+    }
+    opendir(my $home_dir, $home) or die $!;
+    my @home_entries = sort grep { $_ ne "." && $_ ne ".." } readdir($home_dir);
+    closedir($home_dir);
+    save_log("home", encode_json({settings => $settings, entries => [@home_entries]}));
     if ($scenario eq "security") {
-      my $deps_write = open(my $d, ">>", "$home/.local/share/agent.pl") ? 1 : 0;
+      my $deps_write = open(my $d, ">>", "$home/../deps/share/agent.pl") ? 1 : 0;
       my $outside_read = open(my $o, "<", $data[0]) ? 1 : 0;
       save(".auth/security", encode_json({deps_write => $deps_write, outside_read => $outside_read}));
     }
@@ -118,6 +134,26 @@ printf '%s' $? >abs-status
 printf '%s' $? >script-return-status
 };
       system("/bin/sh", "-c", $probe);
+    }
+    if ($scenario eq "sandbox") {
+      my $deps_dir = "$home/../deps";
+      my $engine_dir = "$home/../engine";
+      my $canary = open(my $c, ">", "$deps_dir/CANARY") ? 1 : 0;
+      close($c) if $canary;
+      my $engine_read = open(my $e, "<", "$engine_dir/sandbox.sb") ? 1 : 0;
+      close($e) if $engine_read;
+      my $home_write = open(my $h, ">", "$home/probe-home.txt") ? 1 : 0;
+      close($h) if $home_write;
+      my $workspace_write = open(my $w, ">", "probe-workspace.txt") ? 1 : 0;
+      close($w) if $workspace_write;
+      my $tmp_write = open(my $t, ">", "$ENV{TMPDIR}/probe-tmp.txt") ? 1 : 0;
+      close($t) if $tmp_write;
+      my ($agent_bin) = grep { -x "$_/agent" } split(/:/, $ENV{PATH});
+      save_log("sandbox", encode_json({
+        path => $ENV{PATH}, home => $home, deps => $deps_dir, engine => $engine_dir,
+        canary => $canary, engine_read => $engine_read, home_write => $home_write,
+        workspace_write => $workspace_write, tmp_write => $tmp_write,
+        agent_bin => ($agent_bin // "") . "/agent"}));
     }
     if ($scenario eq "mocks") {
       my $probe = q{
@@ -173,11 +209,15 @@ printf x >"$(dirname "$fwd")/added" 2>/dev/null; printf '%s' $? >probe-write
 `,
   );
   const config = {
-    command: ["agent", "login", scenario],
     acpCommand: ["agent", "acp", scenario],
+    deps,
+    files: { "~/settings.json": "agent-settings.json" },
+    login: {
+      command: ["agent", "login", scenario],
+      dir: login,
+      files: [".auth/token", ".auth/requests", ".auth/environment", ".auth/home", ".auth/security", ".auth/sandbox"],
+    },
     environment: { AGENT_EVALS_TEST: "${TMPDIR}/declared" },
-    home: { deps, login, path: [".local/bin"] },
-    login: [".auth/token"],
   };
   const path = join(root, "agent.yml");
   await writeFile(path, stringify(config));

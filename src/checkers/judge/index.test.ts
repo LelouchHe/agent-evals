@@ -14,18 +14,24 @@ async function setup(t: Parameters<typeof makeTempDir>[0], fileContent: string |
   const root = await makeTempDir(t, "ae-judge-");
   const workspace = join(root, "workspace");
   const baseline = join(root, "baseline");
+  const home = join(root, "home");
+  const homeBaseline = join(root, "home-baseline");
   await mkdir(workspace);
   await mkdir(baseline);
+  await mkdir(home);
+  await mkdir(homeBaseline);
   if (fileContent !== null) {
     await writeFile(join(workspace, "hello.txt"), fileContent);
   }
-  return { root, workspace, baseline };
+  return { root, workspace, baseline, home, homeBaseline };
 }
 
 async function context(root: string, workspace: string, baseline: string): Promise<CheckerContext> {
   return {
     workspace: await openRunRoot(workspace),
     baseline: await openRunRoot(baseline),
+    home: await openRunRoot(join(root, "home")),
+    homeBaseline: await openRunRoot(join(root, "home-baseline")),
     runRootDir: root,
     input: "Create hello.txt with exactly the content Hello, world!",
     timeoutMs: 5_000,

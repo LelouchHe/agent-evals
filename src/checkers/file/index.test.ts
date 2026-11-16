@@ -14,15 +14,21 @@ async function setup(t: Parameters<typeof makeTempDir>[0]) {
   const root = await makeTempDir(t, "ae-file-");
   const workspace = join(root, "workspace");
   const baseline = join(root, "baseline");
+  const home = join(root, "home");
+  const homeBaseline = join(root, "home-baseline");
   await mkdir(workspace);
   await mkdir(baseline);
-  return { root, workspace, baseline };
+  await mkdir(home);
+  await mkdir(homeBaseline);
+  return { root, workspace, baseline, home, homeBaseline };
 }
 
 async function context(root: string, workspace: string, baseline: string): Promise<CheckerContext> {
   return {
     workspace: await openRunRoot(workspace),
     baseline: await openRunRoot(baseline),
+    home: await openRunRoot(join(root, "home")),
+    homeBaseline: await openRunRoot(join(root, "home-baseline")),
     runRootDir: root,
     input: "task",
     timeoutMs: 5_000,

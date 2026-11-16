@@ -14,21 +14,24 @@ async function setup(t: TestContext) {
   const workspace = join(root, "workspace");
   const outside = join(root, "outside");
   const authoring = join(root, "authoring");
+  const engineDir = join(root, "engine");
   await mkdir(workspace);
   await mkdir(outside);
   await mkdir(authoring);
+  await mkdir(engineDir);
   return {
     root,
     workspace,
     outside,
     authoring,
+    engineDir,
     run: (
       command: readonly string[],
       options: { readonly files?: Readonly<Record<string, string>>; readonly signal?: AbortSignal } = {},
     ): Promise<CheckSandboxOutcome> =>
       createCheckSandbox({
         workspaceDir: workspace,
-        runRootDir: root,
+        engineDir,
         authoringDir: authoring,
         signal: options.signal ?? AbortSignal.timeout(15_000),
       }).run(command, options.files === undefined ? undefined : { files: options.files }),
@@ -98,7 +101,10 @@ test(
     assert.equal(environment.PATH, process.env.PATH);
     for (const key of ["HOME", "TMPDIR"] as const) {
       assert.notEqual(environment[key], process.env[key]);
-      assert.match(environment[key] ?? "", new RegExp(`^${dirs.root}/check-[^/]+/${key === "HOME" ? "home" : "tmp"}$`));
+      assert.match(
+        environment[key] ?? "",
+        new RegExp(`^${dirs.root}/engine/check-[^/]+/${key === "HOME" ? "home" : "tmp"}$`),
+      );
     }
   },
 );
@@ -463,7 +469,7 @@ test(
       [
         "/bin/sh",
         "-c",
-        'for f in "$1"/check-*/staged/acceptance.txt; do [ -f "$f" ] || continue; printf changed > "$f"; exit $?; done; exit 4',
+        'for f in "$1"/engine/check-*/staged/acceptance.txt; do [ -f "$f" ] || continue; printf changed > "$f"; exit $?; done; exit 4',
         "sh",
         dirs.root,
       ],

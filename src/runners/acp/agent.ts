@@ -8,10 +8,16 @@ const command = z.tuple([argument]).rest(argument);
 /** Set by ACP setup for every agent process; a declaration cannot replace them. */
 export const RESERVED_VARIABLES: ReadonlySet<string> = new Set(["HOME", "TMPDIR", "PATH", "TERM"]);
 
+/** Persistent login state: one native command, one directory, the files that compose it. */
+const loginSchema = z.strictObject({
+  command,
+  dir: argument,
+  files: z.array(runRelativePathSchema).min(1, "must list at least one login file"),
+});
+
 /** Shared by standalone helper input and the ACP runner's inline agent object. */
 export const agentSchema = z.strictObject({
   acpCommand: command,
-  command: command.optional(),
   /** Extra variables for both commands, after placeholder substitution. */
   environment: z
     .record(z.string(), z.string())
@@ -25,12 +31,13 @@ export const agentSchema = z.strictObject({
       }
     })
     .default({}),
-  home: z.strictObject({
-    deps: argument,
-    login: argument.optional(),
-    path: z.array(runRelativePathSchema),
-  }),
-  login: z.array(runRelativePathSchema).optional(),
+  /** Caller-prepared software, linked into the run as `deps`. */
+  deps: argument,
+  /** `deps`-relative command directories; the caller owns the software layout. */
+  path: z.array(runRelativePathSchema).default(["bin"]),
+  /** What the agent file places in HOME: `~/` destination to authoring source. */
+  files: z.record(z.string(), z.string()).optional(),
+  login: loginSchema.optional(),
 });
 
 export type AgentConfig = z.output<typeof agentSchema>;

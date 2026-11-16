@@ -192,11 +192,15 @@ test(
     const runRoot = join(packDir, "run");
     await mkdir(runRoot);
     await mkdir(join(runRoot, "workspace"));
-    await mkdir(join(runRoot, "scratch"));
+    await mkdir(join(runRoot, "tmp"));
+    await mkdir(join(runRoot, "engine"));
+    await mkdir(join(runRoot, "mocks"));
     const host = await startMockHost({
       runRootDir: runRoot,
+      engineDir: join(runRoot, "engine"),
+      mocksDir: join(runRoot, "mocks"),
       workspaceDir: join(runRoot, "workspace"),
-      scratchDir: join(runRoot, "scratch"),
+      tmpDir: join(runRoot, "tmp"),
       authoringDir: packDir,
       timeoutMs: 5_000,
       signal: new AbortController().signal,

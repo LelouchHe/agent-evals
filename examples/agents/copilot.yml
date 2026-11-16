@@ -1,17 +1,19 @@
-# Prepare deps and login with ./examples/agents/copilot-setup.sh <dir> (see docs/setup.md).
+# Prepare deps with ./examples/agents/copilot-setup.sh <dir> (see docs/setup.md).
+# deps holds the standalone native binary only; the settings file sits beside
+# this file and is copied into the run HOME.
 # COPILOT_ALLOW_ALL: "true" trusts the evaluated workspace so project skills load;
 # COPILOT_DISABLE_LOGIN_SHELL_ENV keeps the operator's login shell out of tool runs.
-command: [copilot, login]
 acpCommand: [copilot, --acp, --context, long_context]
+deps: ${env:COPILOT_DEPS}
 environment:
   COPILOT_ALLOW_ALL: "true"
   COPILOT_AUTO_UPDATE: "false"
   COPILOT_DISABLE_LOGIN_SHELL_ENV: "1"
   COPILOT_SYSTEM_PROXY: "0"
   COPILOT_TELEMETRY_DISABLED: "true"
-home:
-  deps: ${env:COPILOT_DEPS}
-  login: ${env:COPILOT_LOGIN}
-  path: [.local/bin]
+files:
+  ~/.copilot/settings.json: copilot-settings.json
 login:
-  - .copilot/config.json
+  command: [copilot, login]
+  dir: ${env:COPILOT_LOGIN}
+  files: [.copilot/config.json]

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { test, type TestContext } from "node:test";
 import { setTimeout as delay } from "node:timers/promises";
 import { stringify } from "yaml";
@@ -23,8 +23,9 @@ async function runCase(
 ) {
   const fixture = await makeAcpAgent(t, scenario);
   await mkdir(join(fixture.login, ".auth"), { recursive: true });
-  await writeFile(join(fixture.login, ".auth/requests"), "[]");
-  await writeFile(join(fixture.login, ".auth/environment"), "");
+  for (const observation of ["requests", "environment", "home", "sandbox"]) {
+    await writeFile(join(fixture.login, `.auth/${observation}`), "");
+  }
   const casePath = join(fixture.root, "case.yml");
   await writeFile(
     casePath,
@@ -78,8 +79,52 @@ test(
     // The agent file's environment reaches the process; ${TMPDIR} is the process's TMPDIR.
     const [declared, tmpdir] = (await readFile(join(fixture.login, ".auth/environment"), "utf8")).split("|");
     assert.equal(declared, `${tmpdir}/declared`);
-    assert.match(tmpdir ?? "", /\/run-[0-9a-f]{12}\/scratch$/);
+    assert.match(tmpdir ?? "", /\/run-[0-9a-f]{12}\/tmp$/);
     assert.deepEqual(await readdir(fixture.runtime), []);
+  },
+);
+
+test(
+  "the run sandbox puts deps on PATH and keeps engine, deps and HOME apart",
+  { skip: process.platform !== "darwin" },
+  async (t) => {
+    const { fixture, record } = await runCase(t, "sandbox", () => ({
+      agent: "agent.yml",
+      config: { model: "model-b" },
+    }));
+    assert.equal(record.status, "pass", record.error);
+    const probe = JSON.parse(await readFile(join(fixture.login, ".auth/sandbox"), "utf8")) as {
+      path: string;
+      home: string;
+      deps: string;
+      engine: string;
+      canary: number;
+      engine_read: number;
+      home_write: number;
+      workspace_write: number;
+      tmp_write: number;
+      agent_bin: string;
+    };
+    const runRoot = dirname(probe.home);
+    // PATH goes through the run-root link, so the agent sees a run-root path and no HOME bin.
+    assert.ok(probe.path.startsWith(`${runRoot}/deps/bin:/usr/bin:/bin:`), probe.path);
+    assert.equal(probe.agent_bin, `${runRoot}/deps/bin/agent`);
+    // Writes reach the three agent-writable directories only.
+    assert.equal(probe.home_write, 1);
+    assert.equal(probe.workspace_write, 1);
+    assert.equal(probe.tmp_write, 1);
+    assert.equal(probe.canary, 0);
+    assert.equal(probe.engine_read, 0);
+    // HOME holds the agent file's placement and the harness's own state, not the software.
+    const home = JSON.parse(await readFile(join(fixture.login, ".auth/home"), "utf8")) as {
+      settings: string;
+      entries: string[];
+    };
+    assert.equal(home.settings, '{"model":"synthetic"}\n');
+    assert.ok(home.entries.includes("settings.json"), home.entries.join(","));
+    for (const software of [".local", "share", "bin", ".pi", ".claude", ".copilot"]) {
+      assert.ok(!home.entries.includes(software), `${software} must not be in HOME: ${home.entries.join(",")}`);
+    }
   },
 );
 

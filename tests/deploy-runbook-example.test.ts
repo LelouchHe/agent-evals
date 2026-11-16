@@ -125,11 +125,17 @@ test("the worked example's mocked answer is what its check asserts", async (t) =
   const root = await makeTempDir(t, "ae-example-diagnosis-");
   const workspace = join(root, "workspace");
   const baseline = join(root, "baseline");
+  const home = join(root, "home");
+  const homeBaseline = join(root, "home-baseline");
   await mkdir(workspace);
   await mkdir(baseline);
+  await mkdir(home);
+  await mkdir(homeBaseline);
   const context: CheckerContext = {
     workspace: await openRunRoot(workspace),
     baseline: await openRunRoot(baseline),
+    home: await openRunRoot(home),
+    homeBaseline: await openRunRoot(homeBaseline),
     runRootDir: root,
     input: "task",
     timeoutMs: 5_000,

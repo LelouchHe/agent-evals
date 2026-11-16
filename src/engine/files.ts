@@ -14,7 +14,7 @@ import { IgnoreTree, isIgnored } from "./ignore.ts";
 import { isMissing } from "./workspace.ts";
 
 /**
- * Place the case's `files` entries into the prepared workspace. Entries are
+ * Place the case's workspace `files` entries into the prepared workspace. Entries are
  * combined in an otherwise empty staging directory first, so an entry can
  * replace what the fixture provided but never another entry.
  */
@@ -23,18 +23,99 @@ export async function placeCaseFiles(
   stagingDir: string,
   workspaceDir: string,
 ): Promise<void> {
-  const files = loadedCase.config.files;
-  if (files === undefined) {
+  const files = workspacePlacements(loadedCase.config.files);
+  if (Object.keys(files).length === 0) {
     return;
   }
-  await mkdir(stagingDir);
-  await stageFiles(files, loadedCase.dir, stagingDir, "files");
-  await copyInto(stagingDir, workspaceDir, ".", "files", true, undefined, {
-    tree: new IgnoreTree(),
-    root: stagingDir,
-    segments: [],
-  });
+  await stagePlacement(files, loadedCase.dir, stagingDir, "files");
+  await copyPlacement(stagingDir, workspaceDir, { label: "files", overwrite: true });
   await rm(stagingDir, { recursive: true, force: true });
+}
+
+/** The case `files` entries that go to the workspace, keyed by workspace destination. */
+export function workspacePlacements(
+  files: Readonly<Record<string, string>> | undefined,
+): Readonly<Record<string, string>> {
+  return Object.fromEntries(Object.entries(files ?? {}).filter(([destination]) => !isHomeDestination(destination)));
+}
+
+/** The case `files` entries that go into HOME, keyed by their HOME-relative destination. */
+export function homePlacements(files: Readonly<Record<string, string>> | undefined): Readonly<Record<string, string>> {
+  return Object.fromEntries(
+    Object.entries(files ?? {})
+      .filter(([destination]) => isHomeDestination(destination))
+      .map(([destination, source]) => [homePathOf(destination), source]),
+  );
+}
+
+/** A `~/` destination names HOME; anything else names the workspace. */
+export function isHomeDestination(destination: string): boolean {
+  return destination.startsWith("~/");
+}
+
+/** The HOME-relative path a `~/` destination names; the HOME root itself is the empty path. */
+export function homePathOf(destination: string): string {
+  return workspaceTargetPath(destination.slice(2));
+}
+
+/**
+ * Copy authoring `files` entries into an empty staging directory: the same traversal and ignore
+ * rules as a workspace placement, with destinations taken as relative to the staging root.
+ */
+export async function stagePlacement(
+  files: Readonly<Record<string, string>>,
+  authoringDir: string,
+  stagingDir: string,
+  label: string,
+  signal?: AbortSignal,
+): Promise<void> {
+  await mkdir(stagingDir, { recursive: true });
+  await stageFiles(files, authoringDir, stagingDir, label, signal);
+}
+
+/**
+ * Copy a staged placement tree onto its target. `overwrite` decides file-on-file replacement;
+ * `protect` names target-relative files (login state) that no copy may place over.
+ */
+export async function copyPlacement(
+  stagingDir: string,
+  targetDir: string,
+  options: {
+    readonly label: string;
+    readonly overwrite: boolean;
+    readonly protect?: readonly string[];
+    readonly signal?: AbortSignal;
+  },
+): Promise<void> {
+  await copyInto(
+    stagingDir,
+    targetDir,
+    ".",
+    options.label,
+    options.overwrite,
+    options.signal,
+    { tree: new IgnoreTree(), root: stagingDir, segments: [] },
+    options.protect === undefined ? undefined : new ProtectedPaths(options.protect),
+  );
+}
+
+/** Target-relative files a placement may never create or replace. */
+class ProtectedPaths {
+  readonly #paths: readonly string[];
+
+  constructor(paths: readonly string[]) {
+    this.#paths = paths.map((path) => normalizeRelative(path));
+  }
+
+  /** A protected file at `destination`, or a path beneath one, which cannot be written. */
+  blocks(destination: string): boolean {
+    const normalized = normalizeRelative(destination);
+    return this.#paths.some((path) => path === normalized || normalized.startsWith(`${path}/`));
+  }
+}
+
+function normalizeRelative(path: string): string {
+  return workspaceTargetPath(path);
 }
 
 /**
@@ -166,6 +247,7 @@ async function copyInto(
   overwrite: boolean,
   signal: AbortSignal | undefined,
   traversal: Traversal,
+  protect?: ProtectedPaths,
 ): Promise<void> {
   signal?.throwIfAborted();
   let info;
@@ -201,6 +283,9 @@ async function copyInto(
   if (kind === "other") {
     throw new Error(`${label} source for ${destination} must be a regular file or directory`);
   }
+  if (protect?.blocks(destination) === true) {
+    throw new Error(`${label} may not replace ${destination}, which is login state`);
+  }
   await expectTarget(target, destination, label, kind, overwrite);
   signal?.throwIfAborted();
   if (kind === "file") {
@@ -215,10 +300,16 @@ async function copyInto(
   const entries = await readdir(source);
   signal?.throwIfAborted();
   for (const name of entries) {
-    await copyInto(join(source, name), join(target, name), join(destination, name), label, overwrite, signal, {
-      ...traversal,
-      segments: [...traversal.segments, name],
-    });
+    await copyInto(
+      join(source, name),
+      join(target, name),
+      join(destination, name),
+      label,
+      overwrite,
+      signal,
+      { ...traversal, segments: [...traversal.segments, name] },
+      protect,
+    );
   }
 }
 

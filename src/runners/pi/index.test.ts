@@ -28,8 +28,9 @@ function context(
   return {
     workspaceDir: dirs.workspaceDir,
     homeDir: dirs.homeDir,
+    tmpDir: dirs.scratchDir,
+    engineDir: join(dirs.root, "engine"),
     configDir: dirs.configDir,
-    scratchDir: dirs.scratchDir,
     runRootDir: dirs.root,
     input: "Create hello.txt with the content Hello, world!",
     timeoutMs,

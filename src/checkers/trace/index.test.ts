@@ -33,8 +33,12 @@ async function context(
   const root = await makeTempDir(t, "ae-trace-check-");
   const workspace = join(root, "workspace");
   const baseline = join(root, "baseline");
+  const home = join(root, "home");
+  const homeBaseline = join(root, "home-baseline");
   await mkdir(workspace);
   await mkdir(baseline);
+  await mkdir(home);
+  await mkdir(homeBaseline);
   for (const [relative, content] of Object.entries(skills)) {
     for (const directory of [workspace, baseline]) {
       await mkdir(dirname(join(directory, relative)), { recursive: true });
@@ -44,6 +48,8 @@ async function context(
   return {
     workspace: await openRunRoot(workspace),
     baseline: await openRunRoot(baseline),
+    home: await openRunRoot(home),
+    homeBaseline: await openRunRoot(homeBaseline),
     runRootDir: root,
     input: "task",
     ...(trace === undefined ? {} : { trace }),

@@ -22,8 +22,9 @@ type ExampleParams = z.output<typeof exampleParamsSchema>;
 const runnerContext: RunnerContext = {
   workspaceDir: "/run/workspace",
   homeDir: "/run/home",
+  tmpDir: "/run/tmp",
+  engineDir: "/run/engine",
   configDir: "/run/config",
-  scratchDir: "/run/scratch",
   runRootDir: "/run",
   input: "task",
   timeoutMs: 1_000,
@@ -33,6 +34,8 @@ const runnerContext: RunnerContext = {
 const checkerContext: CheckerContext = {
   workspace: {} as CheckerContext["workspace"],
   baseline: {} as CheckerContext["baseline"],
+  home: {} as CheckerContext["home"],
+  homeBaseline: {} as CheckerContext["homeBaseline"],
   runRootDir: "/run",
   input: "task",
   timeoutMs: 1_000,
@@ -42,6 +45,7 @@ const checkerContext: CheckerContext = {
 
 const implementationContext: ImplementationContext = {
   authoringDir: "/authoring",
+  runnerSupportsHome: true,
   validateFiles: async () => {},
   values: { env: { require: async (name) => name }, run: { HOME: "/run/home", TMPDIR: "/run/tmp" } },
 };

@@ -5,7 +5,7 @@ import { resolveAuthoringAsset } from "../../engine/config.ts";
 import type { Runner, RunnerContext, RunnerDefinition, RunnerOutcome } from "../../engine/registry.ts";
 import { spawnSupervised, type SupervisedProcess } from "../../platform/macos/supervise.ts";
 import { agentSchema } from "./agent.ts";
-import { assembleEnvironment, resolveHome, type HarnessHome } from "./environment.ts";
+import { harnessEnvironment, prepareHarnessHome, resolveHarnessHome, type HarnessHome } from "./environment.ts";
 import { withSession } from "./session.ts";
 import { AcpTrace } from "./trace.ts";
 import { AcpUsage } from "./usage.ts";
@@ -25,6 +25,7 @@ export const acpRunner: RunnerDefinition<AcpRunnerParams> = {
   type: "acp",
   params: acpRunnerParamsSchema,
   mocks: true,
+  home: true,
   async create(params, context) {
     const { params: agent, dir } =
       typeof params.agent === "string"
@@ -34,7 +35,7 @@ export const acpRunner: RunnerDefinition<AcpRunnerParams> = {
             context.values,
           )
         : { params: params.agent, dir: context.authoringDir };
-    return new AcpRunner(agent.acpCommand, await resolveHome(agent, dir), params.config);
+    return new AcpRunner(agent.acpCommand, await resolveHarnessHome(agent, dir), params.config);
   },
 };
 
@@ -54,21 +55,36 @@ class AcpRunner implements Runner {
     this.#config = config;
   }
 
-  readonly run = async (context: RunnerContext): Promise<RunnerOutcome> => {
-    const environment = await assembleEnvironment(
+  /** Place the agent file's HOME content and login state before the case's own `~/` entries. */
+  readonly prepareHome = async (context: RunnerContext): Promise<readonly string[]> => {
+    const prepared = await prepareHarnessHome(
       this.#home,
-      { home: context.homeDir, workspace: context.workspaceDir, scratch: context.scratchDir },
+      { home: context.homeDir, runRootDir: context.runRootDir, engineDir: context.engineDir },
+      context.signal,
+    );
+    this.#copyBack = prepared.copyBack;
+    return prepared.protectedPaths;
+  };
+
+  readonly run = async (context: RunnerContext): Promise<RunnerOutcome> => {
+    const environment = await harnessEnvironment(
+      this.#home,
+      {
+        home: context.homeDir,
+        workspace: context.workspaceDir,
+        tmp: context.tmpDir,
+        runRootDir: context.runRootDir,
+      },
       {
         interactive: false,
         ...(context.mocks === undefined ? {} : { mocks: context.mocks }),
       },
     );
-    this.#copyBack = environment.copyBack;
     this.#process = await spawnSupervised({
       command: this.#command,
       policy: environment.policy,
       // Outside everything the sandbox can read.
-      policyDirectory: context.configDir,
+      policyDirectory: context.engineDir,
       cwd: context.workspaceDir,
       env: environment.env,
       interactive: false,
@@ -120,7 +136,7 @@ class AcpRunner implements Runner {
     if (process === undefined) return;
     await (this.#stopped ??= (async () => {
       await process.stop();
-      await this.#copyBack!();
+      await this.#copyBack?.();
     })());
   };
 }

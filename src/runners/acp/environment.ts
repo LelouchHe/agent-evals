@@ -2,93 +2,204 @@ import { constants } from "node:fs";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { randomUUID } from "node:crypto";
-import { lstat, mkdir, open, readdir, realpath, rename, rm, stat, symlink, writeFile } from "node:fs/promises";
+import { lstat, mkdir, open, realpath, rename, rm, symlink, stat, writeFile } from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
-import { ConfigError, errorMessage } from "../../engine/config.ts";
+import { ConfigError, errorMessage, expectPlacementDestination, expectRelativePath } from "../../engine/config.ts";
+import { copyPlacement, homePathOf, isHomeDestination, stagePlacement } from "../../engine/files.ts";
 import type { MockWiring } from "../../engine/registry.ts";
 import { isMissing, isWithin, openRunRoot, resolveWorkspacePath, type RunRoot } from "../../engine/workspace.ts";
 import { assertSeatbeltAvailable, createSandboxPolicy, SYSTEM_PATH } from "../../platform/macos/policy.ts";
 import type { AgentConfig } from "./agent.ts";
 
-export interface HarnessHome {
-  readonly environment: Readonly<Record<string, string>>;
-  readonly path: readonly string[];
-  readonly deps: string;
-  /** Canonical persistent login directory; it may not exist before the first login. */
-  readonly login?: string;
-  readonly loginRoot?: RunRoot;
+/** Persistent login state: where it lives, which files compose it, and how to obtain it. */
+export interface HarnessLogin {
+  /** Native program the login helper runs in the terminal. */
+  readonly command: readonly [string, ...string[]];
+  /** Canonical persistent directory; it may not exist before the first login. */
+  readonly dir: string;
+  /** HOME-relative files copied into the run and saved back after the sandbox stops. */
+  readonly files: readonly string[];
+  /** The directory as an opened run root, present only when it exists. */
+  readonly root?: RunRoot;
 }
 
-/** Validate the caller-owned software and login directories without creating run state. */
-export async function resolveHome(agent: AgentConfig, declaringDir: string): Promise<HarnessHome> {
+/** One resolved agent file: the caller-owned parts of a harness home. */
+export interface HarnessHome {
+  readonly declaringDir: string;
+  readonly environment: Readonly<Record<string, string>>;
+  /** `deps`-relative command directories to put on `PATH`. */
+  readonly path: readonly string[];
+  /** Canonical caller-owned software directory, linked into the run as `deps`. */
+  readonly deps: string;
+  /** `~/` destinations and their authoring sources, validated but not placed. */
+  readonly files: Readonly<Record<string, string>>;
+  readonly login?: HarnessLogin;
+}
+
+/** Validate the caller-owned software, HOME content and login state without creating run state. */
+export async function resolveHarnessHome(agent: AgentConfig, declaringDir: string): Promise<HarnessHome> {
   assertSeatbeltAvailable();
   let deps: string;
   try {
-    deps = (await openRunRoot(resolve(declaringDir, agent.home.deps))).path;
+    deps = (await openRunRoot(resolve(declaringDir, agent.deps))).path;
   } catch (error) {
-    throw new ConfigError(`home.deps must be an accessible directory: ${errorMessage(error)}`);
+    throw new ConfigError(`deps must be an accessible directory: ${errorMessage(error)}`);
   }
-  let login: string | undefined;
-  let loginRoot: RunRoot | undefined;
-  if (agent.home.login !== undefined) {
+  const files = agent.files ?? {};
+  for (const [destination, source] of Object.entries(files)) {
+    expectPlacementDestination(destination, `agent files destination "${destination}"`);
+    if (!isHomeDestination(destination)) {
+      throw new ConfigError(`agent files destination "${destination}" must start with "~/"`);
+    }
+    expectRelativePath(source, `agent files["${destination}"]`);
+    if (homePathOf(destination) === "") {
+      throw new ConfigError(`agent files destination "${destination}" must name a path inside HOME, not HOME itself`);
+    }
+  }
+
+  let login: HarnessLogin | undefined;
+  if (agent.login !== undefined) {
+    let directory: string;
     try {
-      login = await canonicalPath(resolve(declaringDir, agent.home.login));
-      loginRoot = await openRunRoot(login);
+      directory = await canonicalPath(resolve(declaringDir, agent.login.dir));
+    } catch (error) {
+      throw new ConfigError(`login.dir must be a directory: ${errorMessage(error)}`);
+    }
+    let loginRoot: RunRoot | undefined;
+    try {
+      loginRoot = await openRunRoot(directory);
     } catch (error) {
       // Only a missing directory is valid for first login, not ENOTDIR.
       if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) {
-        throw new ConfigError(`home.login must be a directory: ${errorMessage(error)}`);
+        throw new ConfigError(`login.dir must be a directory: ${errorMessage(error)}`);
       }
     }
+    if (isWithin(deps, directory) || isWithin(directory, deps)) {
+      throw new ConfigError("deps and login.dir must be separate, non-overlapping directories");
+    }
+    login = {
+      command: agent.login.command,
+      dir: directory,
+      files: agent.login.files,
+      ...(loginRoot === undefined ? {} : { root: loginRoot }),
+    };
   }
-  if (login !== undefined && (isWithin(deps, login) || isWithin(login, deps))) {
-    throw new ConfigError("deps and login must be separate, non-overlapping directories");
-  }
+
   return {
+    declaringDir,
     environment: agent.environment,
-    path: agent.home.path,
+    path: agent.path,
     deps,
+    files,
     ...(login === undefined ? {} : { login }),
-    ...(loginRoot === undefined ? {} : { loginRoot }),
   };
 }
 
+export interface HarnessHomeDirs {
+  /** The run HOME, already created by the engine. */
+  readonly home: string;
+  readonly runRootDir: string;
+  /** Engine-private directory for placement staging; unreadable to the agent. */
+  readonly engineDir: string;
+}
+
 /**
- * Assemble caller-owned software and copied login state into empty run
- * directories, without ambient installations. The caller owns and removes them.
+ * Assemble the caller-owned HOME content in the run directory: link `deps` at the run root,
+ * copy the agent file's `files`, then copy the declared login state. The returned paths are
+ * login files the case may not touch.
  */
-export async function assembleEnvironment(
+export async function prepareHarnessHome(
   source: HarnessHome,
-  dirs: { readonly home: string; readonly workspace: string; readonly scratch: string },
-  options: { readonly interactive: boolean; readonly mocks?: MockWiring },
-) {
-  const { deps, login, loginRoot } = source;
-  const { home } = dirs;
-  const mocks = options.mocks;
-  if (isWithin(deps, await realpath(home))) throw new ConfigError("deps must not contain the temporary run directory");
-  await mirror(deps, home);
-  const homeRoot = await openRunRoot(home);
+  dirs: HarnessHomeDirs,
+  signal?: AbortSignal,
+): Promise<{
+  readonly homeRoot: RunRoot;
+  readonly protectedPaths: readonly string[];
+  readonly copyBack: () => Promise<void>;
+}> {
+  const homeRoot = await openRunRoot(dirs.home);
+  if (isWithin(source.deps, homeRoot.path)) {
+    throw new ConfigError("deps must not contain the temporary run directory");
+  }
+  // One directory symlink: the caller's software, referenced in place. The target must be the
+  // canonical path so the sandbox authorizes traversal through the link.
+  await symlink(source.deps, join(dirs.runRootDir, "deps"), "dir");
+
+  const placements = Object.fromEntries(
+    Object.entries(source.files).map(([destination, file]) => [homePathOf(destination), file]),
+  );
+  if (Object.keys(placements).length > 0) {
+    const staging = join(dirs.engineDir, "files-agent");
+    try {
+      await stagePlacement(placements, source.declaringDir, staging, "agent files", signal);
+      await copyPlacement(staging, homeRoot.path, { label: "agent files", overwrite: false, signal });
+    } finally {
+      await rm(staging, { recursive: true, force: true });
+    }
+  }
+
   const originals = new Map<string, Buffer>();
-  if (loginRoot !== undefined) {
-    for (const file of await files(loginRoot.path)) {
-      const destination = join(home, file);
+  const login = source.login;
+  if (login?.root !== undefined) {
+    for (const file of login.files) {
+      const destination = await resolveWorkspacePath(homeRoot, file);
+      let data: Buffer;
+      try {
+        data = await readRegular(login.root, file);
+      } catch (error) {
+        if (isMissing(error)) continue;
+        throw error;
+      }
       try {
         await lstat(destination);
-        throw new ConfigError(`deps and login contain the same file: ${file}`);
+        throw new ConfigError(`agent files and login contain the same file: ${file}`);
       } catch (error) {
         if (!isMissing(error)) throw error;
       }
-      const data = await readRegular(loginRoot, file);
       await mkdir(dirname(destination), { recursive: true, mode: 0o700 });
       await writeFile(destination, data, { mode: 0o600, flag: "wx" });
       originals.set(file, data);
     }
   }
-  const pathEntries = [...source.path.map((path) => join(home, path)), ...SYSTEM_PATH];
+
+  const copyBack = async (): Promise<void> => {
+    const changed = new Map<string, Buffer>();
+    for (const [file, before] of originals) {
+      try {
+        const after = await readRegular(homeRoot, file);
+        if (!before.equals(after)) changed.set(file, after);
+      } catch (error) {
+        if (!isMissing(error)) throw error;
+      }
+    }
+    if (changed.size > 0) await persistLogin(login, changed);
+  };
+
+  return { homeRoot, protectedPaths: login?.files ?? [], copyBack };
+}
+
+/**
+ * The process environment and sandbox policy for one harness run: `PATH` goes through the
+ * run-root `deps` link, writes stay in the run's writable directories, and `engine/` is absent
+ * from every readable root.
+ */
+export async function harnessEnvironment(
+  source: HarnessHome,
+  dirs: {
+    readonly home: string;
+    readonly workspace: string;
+    readonly tmp: string;
+    readonly runRootDir: string;
+  },
+  options: { readonly interactive: boolean; readonly mocks?: MockWiring },
+): Promise<{ readonly env: NodeJS.ProcessEnv; readonly policy: ReturnType<typeof createSandboxPolicy> }> {
+  const mocks = options.mocks;
+  const depsLink = join(dirs.runRootDir, "deps");
+  const pathEntries = [...source.path.map((path) => join(depsLink, path)), ...SYSTEM_PATH];
   const policy = createSandboxPolicy({
-    writableRoots: [home, dirs.workspace, dirs.scratch],
+    writableRoots: [dirs.home, dirs.workspace, dirs.tmp],
     // A mocked command's forwarder is readable and executable, never writable.
-    readableRoots: mocks === undefined ? [deps] : [deps, mocks.forwarderDir],
+    readableRoots: mocks === undefined ? [depsLink] : [depsLink, mocks.forwarderDir],
     denyExecutables:
       mocks === undefined ? [] : await deniedBinaries(mocks.denyTargets, pathEntries, await activeDeveloperDir()),
     allowNetwork: true,
@@ -97,49 +208,42 @@ export async function assembleEnvironment(
   const env: NodeJS.ProcessEnv = {
     ...source.environment,
     ...(process.env.TERM === undefined ? {} : { TERM: process.env.TERM }),
-    HOME: home,
-    TMPDIR: dirs.scratch,
+    HOME: dirs.home,
+    TMPDIR: dirs.tmp,
     PATH: [...(mocks === undefined ? [] : [mocks.forwarderDir]), ...pathEntries].join(":"),
   };
-  const persist = async (selected: ReadonlyMap<string, Buffer>): Promise<void> => {
-    if (login === undefined) throw new ConfigError("login requires home.login");
-    await mkdir(login, { recursive: true, mode: 0o700 });
-    const targetRoot = await openRunRoot(login);
-    for (const [file, data] of selected) {
-      const target = await resolveWorkspacePath(targetRoot, file);
-      await mkdir(dirname(target), { recursive: true, mode: 0o700 });
-      const temporary = join(dirname(target), `.agent-evals-${randomUUID()}`);
-      try {
-        await writeFile(temporary, data, { flag: "wx", mode: 0o600 });
-        await rename(temporary, target);
-      } finally {
-        await rm(temporary, { force: true });
-      }
+  return { env, policy };
+}
+
+/** Save declared login files after a successful native login. */
+export async function saveLogin(source: HarnessHome, homeRoot: RunRoot, selected: readonly string[]): Promise<void> {
+  const contents = new Map<string, Buffer>();
+  for (const file of selected) {
+    try {
+      contents.set(file, await readRegular(homeRoot, file));
+    } catch (error) {
+      // A declared file the harness did not create on this first login is simply absent.
+      if (!isMissing(error)) throw error;
     }
-  };
-  return {
-    env,
-    policy,
-    async saveLogin(selected: readonly string[]): Promise<void> {
-      // Validate every source before modifying the persistent login directory.
-      const contents = new Map<string, Buffer>();
-      for (const file of selected) contents.set(file, await readRegular(homeRoot, file));
-      await persist(contents);
-    },
-    /** Call only after the sandbox has stopped. */
-    async copyBack(): Promise<void> {
-      const changed = new Map<string, Buffer>();
-      for (const [file, before] of originals) {
-        try {
-          const after = await readRegular(homeRoot, file);
-          if (!before.equals(after)) changed.set(file, after);
-        } catch (error) {
-          if (!isMissing(error)) throw error;
-        }
-      }
-      if (changed.size > 0) await persist(changed);
-    },
-  };
+  }
+  await persistLogin(source.login, contents);
+}
+
+async function persistLogin(login: HarnessLogin | undefined, selected: ReadonlyMap<string, Buffer>): Promise<void> {
+  if (login === undefined) throw new ConfigError("login requires a login declaration");
+  await mkdir(login.dir, { recursive: true, mode: 0o700 });
+  const targetRoot = await openRunRoot(login.dir);
+  for (const [file, data] of selected) {
+    const target = await resolveWorkspacePath(targetRoot, file);
+    await mkdir(dirname(target), { recursive: true, mode: 0o700 });
+    const temporary = join(dirname(target), `.agent-evals-${randomUUID()}`);
+    try {
+      await writeFile(temporary, data, { flag: "wx", mode: 0o600 });
+      await rename(temporary, target);
+    } finally {
+      await rm(temporary, { force: true });
+    }
+  }
 }
 
 /**
@@ -188,32 +292,6 @@ async function canonicalPath(path: string): Promise<string> {
     if (!isMissing(error)) throw error;
     return join(await canonicalPath(dirname(path)), basename(path));
   }
-}
-
-async function mirror(source: string, target: string): Promise<void> {
-  for (const entry of await readdir(source, { withFileTypes: true })) {
-    const from = join(source, entry.name);
-    const to = join(target, entry.name);
-    if (entry.isDirectory()) {
-      await mkdir(to, { mode: 0o700 });
-      await mirror(from, to);
-    } else if (entry.isFile() || (entry.isSymbolicLink() && (await stat(from)).isFile())) {
-      await symlink(from, to);
-    } else {
-      throw new ConfigError(`deps contains a non-file entry: ${from}`);
-    }
-  }
-}
-
-async function files(directory: string, prefix = ""): Promise<string[]> {
-  const result: string[] = [];
-  for (const entry of await readdir(directory, { withFileTypes: true })) {
-    const relative = join(prefix, entry.name);
-    if (entry.isDirectory()) result.push(...(await files(join(directory, entry.name), relative)));
-    else if (entry.isFile()) result.push(relative);
-    else throw new ConfigError(`login contains a non-regular file: ${relative}`);
-  }
-  return result;
 }
 
 async function readRegular(root: RunRoot, file: string): Promise<Buffer> {
