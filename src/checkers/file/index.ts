@@ -1,44 +1,12 @@
 import { z } from "zod";
-import { errorMessage, parsePatternScalar, type PatternScalarResult, type PatternSyntax } from "../../engine/config.ts";
 import type { CheckResult, Checker, CheckerContext, CheckerDefinition } from "../../engine/registry.ts";
-import { runRelativePathSchema } from "../../engine/params.ts";
+import { patternSyntaxSchema, runRelativePathSchema } from "../../engine/params.ts";
 import { truncate } from "../../engine/truncate.ts";
 import { searches } from "../../engine/regex.ts";
 import { isMissing, readRunFile, runFileExists, type RunRoot } from "../../engine/workspace.ts";
+import { errorMessage, type PatternSyntax } from "../../engine/config.ts";
 
 const MAX_PATTERNS = 100;
-
-/**
- * One literal or /…/ pattern. A YAML number is compared as its text; a boolean or a mapping is
- * rejected, because an unquoted `state: failed` in a list is a mapping rather than the string
- * the author meant.
- */
-const patternSchema = z.unknown().transform((value, context): PatternSyntax => {
-  const parsed = parsePatternScalar(value);
-  if (parsed.kind === "pattern") {
-    if (parsed.pattern.regex && parsed.pattern.source.length === 0) {
-      context.addIssue({ code: "custom", message: "must name a pattern inside /…/" });
-      return z.NEVER;
-    }
-    return parsed.pattern;
-  }
-  context.addIssue({ code: "custom", message: patternIssue(value, parsed) });
-  return z.NEVER;
-});
-
-/** The field-level message for a scalar that is not a pattern; each case names its own mistake. */
-function patternIssue(value: unknown, parsed: Extract<PatternScalarResult, { kind: "invalid" }>): string {
-  if (parsed.reason === "regex") {
-    return `is not a valid RE2 pattern: ${parsed.message}`;
-  }
-  if (typeof value === "object" && value !== null) {
-    return 'must be a string, number or /…/ RE2 pattern; quote a string containing ": ", as in "state: failed"';
-  }
-  if (typeof value === "boolean") {
-    return "must be a string, number or /…/ RE2 pattern; quote a boolean literal";
-  }
-  return "must be a non-empty string, number or /…/ RE2 pattern";
-}
 
 /** One pattern or a non-empty list of them, normalized to a list in declaration order. */
 const patternListSchema = z.unknown().transform((value, context): readonly PatternSyntax[] => {
@@ -53,7 +21,7 @@ const patternListSchema = z.unknown().transform((value, context): readonly Patte
   }
   const listed = Array.isArray(value);
   return entries.flatMap((entry, index) => {
-    const parsed = patternSchema.safeParse(entry);
+    const parsed = patternSyntaxSchema.safeParse(entry);
     if (parsed.success) {
       return [parsed.data];
     }

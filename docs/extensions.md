@@ -1,6 +1,6 @@
 # Extensions
 
-A runner drives the evaluated agent; a checker judges what the run left behind. The built-ins (`pi`, `acp`, `noop`; `file`, `judge`, `mock`, `shell`) and extensions implement the same two contracts and are selected the same way, by `$type` in the case. This page is the contract for someone writing one. The source of truth is [`registry.ts`](../src/engine/registry.ts); how the engine uses the contracts is in [Architecture](architecture.md#definitions-factories-and-instances).
+A runner drives the evaluated agent; a checker judges what the run left behind. The built-ins (`pi`, `acp`, `noop`; `file`, `judge`, `mock`, `shell`, `trace`) and extensions implement the same two contracts and are selected the same way, by `$type` in the case. This page is the contract for someone writing one. The source of truth is [`registry.ts`](../src/engine/registry.ts); how the engine uses the contracts is in [Architecture](architecture.md#definitions-factories-and-instances).
 
 ## Discovery
 
@@ -156,8 +156,8 @@ checks:
 
 ## Current Limits
 
-- **The package entry exports types only.** `import type { CheckerDefinition, CheckResult } from "agent-evals"` gives an extension the contracts on this page ([`index.ts`](../src/index.ts)) wherever the package resolves. Type imports are erased before the module runs, so the example above needs none of them. The package is not published, and nothing resolves it for an extension directory by itself.
-- **Engine helpers are not available.** The identity-checked file reads the built-in `file` checker uses, pattern compilation and mock matching are internal. An extension reads `workspace.path` and `baseline.path` with its own code and owns the containment checks it needs.
+- **The package entry exports the contracts and one trace derivation.** `import type { CheckerDefinition, CheckResult } from "agent-evals"` gives the contracts on this page, and `await skillConsultations(trace, { workspace, baseline })` returns the skills a run consulted, as the built-in [`trace` checker](configuration.md#trace-checker-type-trace) derives them ([`index.ts`](../src/index.ts)). Type imports are erased before the module runs. The package is not published, and nothing resolves it for an extension directory by itself, so the function is not yet importable at run time from an arbitrary extension.
+- **Engine helpers are not available.** The identity-checked file reads the built-in `file` checker uses, pattern compilation and mock matching are internal. The exported skill derivation encapsulates its own baseline reads; an extension reading other files uses `workspace.path` and `baseline.path` with its own code and owns the containment checks it needs.
 - **An extension resolves its own dependencies.** `params` only has to behave like a Zod schema (`safeParseAsync`), but `import { z } from "zod"` must resolve from the module's own location.
 - **`view` does not load extensions.** `--extension-dir` applies to `run` only.
 - **`shell` checks do not receive the trace.** `trace.json` is written with the result, after checks ran; trace assertions need a checker in TypeScript or JavaScript.

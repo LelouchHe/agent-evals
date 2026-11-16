@@ -5,6 +5,7 @@ import { test } from "node:test";
 import { fileChecker } from "../src/checkers/file/index.ts";
 import { mockChecker } from "../src/checkers/mock/index.ts";
 import { shellChecker } from "../src/checkers/shell/index.ts";
+import { traceChecker } from "../src/checkers/trace/index.ts";
 import { loadCase } from "../src/engine/authoring.ts";
 import { parsePatternScalar, type MockRule, type PatternSyntax, type ResolvedCase } from "../src/engine/config.ts";
 import { parseImplementationParams } from "../src/engine/params.ts";
@@ -178,6 +179,23 @@ test("the worked example refuses make and asserts that no call reached it", asyn
   );
 });
 
+// The consultation is asserted deterministically, so the judge no longer carries it.
+test("the worked example asserts the skill consultation with a trace check", async () => {
+  const loaded = await loadCase(CASE, { caseName: "pi-with-skill" });
+  assert.deepEqual(
+    loaded.config.checks.filter((check) => check.$type === "trace"),
+    [{ $type: "trace", event: "skill", name: "deploy-runbook" }],
+  );
+  const traceJudges = loaded.config.checks.filter((check) => check.$type === "judge" && check.trace === true);
+  assert.equal(traceJudges.length, 1, "the restraint judge keeps its trace evidence");
+  const rubric = (traceJudges[0] as { readonly rubric?: readonly string[] } | undefined)?.rubric ?? [];
+  assert.deepEqual(
+    rubric.filter((statement) => /consult/i.test(statement)),
+    [],
+    "no judge statement asks whether the skill was consulted",
+  );
+});
+
 test("the worked example runs one fixture script and one check-time acceptance script", async () => {
   const loaded = await loadCase(CASE, { caseName: "pi-with-skill" });
   const shells = loaded.config.checks.filter((check) => check.$type === "shell");
@@ -224,6 +242,17 @@ const diagnosisRunner: RunnerDefinition<{ readonly content: string }> = {
       return { finalText: params.content, diagnostics: [] };
     },
     stop: async () => {},
+    // A completed skill tool call, the form Claude Code and Copilot CLI report.
+    trace: () => [
+      {
+        type: "tool",
+        toolCallId: "call-skill",
+        title: "Load skill: deploy-runbook",
+        kind: "other",
+        status: "completed",
+        rawInput: { skill: "deploy-runbook" },
+      },
+    ],
   }),
 };
 
@@ -244,6 +273,7 @@ function deterministicRegistry() {
   addChecker(registry, fileChecker, "built-in");
   addChecker(registry, mockChecker, "built-in");
   addChecker(registry, shellChecker, "built-in");
+  addChecker(registry, traceChecker, "built-in");
   return registry;
 }
 
@@ -275,6 +305,7 @@ test(
         ["file", "pass"],
         ["shell", "fail"],
         ["shell", "fail"],
+        ["trace", "fail"],
         ["mock", "pass"],
       ],
     );
@@ -309,6 +340,7 @@ test(
         ["file", "pass"],
         ["shell", "pass"],
         ["shell", "pass"],
+        ["trace", "pass"],
         ["mock", "pass"],
       ],
     );
