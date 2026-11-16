@@ -2,6 +2,7 @@ import { cp, copyFile, mkdir, stat } from "node:fs/promises";
 import { basename, join } from "node:path";
 import { z } from "zod";
 import { ConfigError, errorMessage, resolveAuthoringAsset } from "../../engine/config.ts";
+import { authoringCopyFilter } from "../../engine/files.ts";
 import { assertSeatbeltAvailable } from "../../platform/macos/policy.ts";
 import type { Runner, RunnerContext, RunnerDefinition, RunnerOutcome } from "../../engine/registry.ts";
 import { nonEmptyTrimmedString, thinkingSchema } from "./params.ts";
@@ -122,7 +123,7 @@ async function stageSkills(skills: readonly string[], authoringDir: string, dest
     names.add(name);
     const target = join(destination, name);
     if (info.isDirectory()) {
-      await cp(source, target, { recursive: true });
+      await cp(source, target, { recursive: true, filter: authoringCopyFilter(source) });
     } else {
       await copyFile(source, target);
     }

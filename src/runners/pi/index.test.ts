@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdir, readFile, realpath, writeFile } from "node:fs/promises";
+import { access, mkdir, readFile, realpath, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { test } from "node:test";
 import type { RunnerContext, RunnerOutcome } from "../../engine/registry.ts";
@@ -154,10 +154,16 @@ test("pi runner stages declared skills inside isolated config", async (t) => {
     join(dirs.root, "skill", "SKILL.md"),
     "---\nname: tiny\ndescription: Tiny test skill.\n---\n\nWrite the file.\n",
   );
+  await mkdir(join(dirs.root, "skill", "evals"));
+  await writeFile(join(dirs.root, "skill", ".agentevalsignore"), "evals\n");
+  await writeFile(join(dirs.root, "skill", "evals", "routing.json"), "[]\n");
 
   await runPrepared({ model: "test/model", executable: fake.executable, skills: ["skill"] }, dirs, 10_000);
   const staged = await readFile(join(dirs.configDir, "skills", "skill", "SKILL.md"), "utf8");
   assert.match(staged, /name: tiny/);
+  // The staged package is what the harness hands the agent, so it is runtime content only.
+  await assert.rejects(access(join(dirs.configDir, "skills", "skill", "evals", "routing.json")));
+  await assert.rejects(access(join(dirs.configDir, "skills", "skill", ".agentevalsignore")));
 });
 
 test("pi runner rejects invalid parameters and missing prerequisites before launch", async (t) => {

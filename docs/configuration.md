@@ -125,7 +125,7 @@ Authoring resources are relative to the YAML file; checker targets are relative 
 - A file arriving where a directory exists, or a directory where a file exists, is an error rather than a replacement, whether the existing path came from `fixture` or from another entry.
 - Placement happens after the fixture copy and before the baseline snapshot, so placed files are part of the baseline and `changed: false` covers them.
 
-A source directory declares what is not placed in a `.agentevalsignore` file at its own root: `evals` for a skill whose expectation assets sit beside its body. The same file is honoured by the fixture copy, a case's `files` and a checker's `files`, and each directory is read as the copy reaches it, so one file in a skill directory works whether an entry names that skill or a tree of skills above it. Patterns are relative paths, one per line, where a segment is literal or `*` for exactly one segment; blank lines and lines starting with `#` are ignored and a trailing `/` names the directory. Nothing else is a glob: `**`, a `*` inside a segment, an absolute path, `.`/`..` or an empty segment is a configuration error that names the file and line. The ignore file itself is never placed. It applies to traversal only: a file or directory an entry names directly is placed even when an ignore file in its parent excludes it, and ignore files above the named source are not read.
+A source directory declares what is not placed in a `.agentevalsignore` file at its own root: `evals` for a skill whose expectation assets sit beside its body. The same file is honoured wherever the engine copies an authoring tree into a run — the fixture, a case's `files`, a checker's `files` and the Pi runner's `skills` directories — and each directory is read as the copy reaches it, so one file in a skill directory works whether an entry names that skill or a tree of skills above it. Patterns are relative paths, one per line, where a segment is literal or `*` for exactly one segment; blank lines and lines starting with `#` are ignored and a trailing `/` names the directory. Nothing else is a glob: `**`, a `*` inside a segment, an absolute path, `.`/`..` or an empty segment is a configuration error that names the file and line. The ignore file itself is never placed. It applies to traversal only: a file or directory an entry names directly is placed even when an ignore file in its parent excludes it, and ignore files above the named source are not read.
 
 The engine only copies; it assigns no meaning to a destination and knows no harness paths. A project-level skill is one use: place its directory where the harness discovers it, for example `.agents/skills/` for Pi and Copilot CLI or `.claude/skills/` for Claude Code.
 
@@ -168,13 +168,13 @@ On `run`, the engine validates each record once, reports schema errors with fiel
 
 ### Pi Runner (`$type: pi`)
 
-| Parameter    | Contract                                                                                                                     |
-| ------------ | ---------------------------------------------------------------------------------------------------------------------------- |
-| `model`      | Required non-empty Pi model selector.                                                                                        |
-| `thinking`   | `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, or `max`; default `medium`.                                              |
-| `skills`     | Explicit config-relative skill files/directories; default empty. Automatic discovery is disabled.                            |
-| `apiKey`     | Optional non-empty string; use `${env:NAME}` for private storage. Current transport requires `provider/model` when supplied. |
-| `executable` | Pi executable name/path; default `pi`.                                                                                       |
+| Parameter    | Contract                                                                                                                           |
+| ------------ | ---------------------------------------------------------------------------------------------------------------------------------- |
+| `model`      | Required non-empty Pi model selector.                                                                                              |
+| `thinking`   | `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, or `max`; default `medium`.                                                    |
+| `skills`     | Explicit config-relative skill files/directories; a directory's `.agentevalsignore` applies. Default empty. Discovery is disabled. |
+| `apiKey`     | Optional non-empty string; use `${env:NAME}` for private storage. Current transport requires `provider/model` when supplied.       |
+| `executable` | Pi executable name/path; default `pi`.                                                                                             |
 
 The adapter, not the engine, handles Pi authentication and model requirements. The key is passed in the isolated process environment through a non-secret Pi config reference, not argv or a plaintext key file. This requires a compatible Pi build with `models.json` API-key environment interpolation (verified with Pi 1.5.1); custom providers need Pi configuration beyond this adapter.
 
