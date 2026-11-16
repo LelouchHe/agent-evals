@@ -5,7 +5,7 @@ import { randomUUID } from "node:crypto";
 import { lstat, mkdir, open, realpath, rename, rm, symlink, stat, writeFile } from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
 import { ConfigError, errorMessage, expectPlacementDestination, expectRelativePath } from "../../engine/config.ts";
-import { copyPlacement, homePathOf, isHomeDestination, stageEntries } from "../../engine/files.ts";
+import { copyPlacement, homePathOf, isHomeDestination, placedPaths, stageEntries } from "../../engine/files.ts";
 import type { MockWiring } from "../../engine/registry.ts";
 import { isMissing, isWithin, openRunRoot, resolveWorkspacePath, type RunRoot } from "../../engine/workspace.ts";
 import { assertSeatbeltAvailable, createSandboxPolicy, SYSTEM_PATH } from "../../platform/macos/policy.ts";
@@ -77,20 +77,32 @@ export async function resolveHarnessHome(agent: AgentConfig, declaringDir: strin
     if (isWithin(deps, directory) || isWithin(directory, deps)) {
       throw new ConfigError("deps and login.dir must be separate, non-overlapping directories");
     }
-    for (const [destination] of Object.entries(files)) {
-      const homePath = homePathOf(destination);
-      for (const file of agent.login.files) {
-        if (homePath === file || homePath.startsWith(`${file}/`)) {
-          throw new ConfigError(`agent files destination "${destination}" collides with login file ${file}`);
-        }
-      }
-    }
     login = {
       command: agent.login.command,
       dir: directory,
       files: agent.login.files,
       ...(loginRoot === undefined ? {} : { root: loginRoot }),
     };
+  }
+
+  // Every agent placement is read now, so a missing source or a directory whose contents name a
+  // login file is a configuration error before any run resource exists, not a failed run.
+  const entries = Object.entries(files).map(([destination, source]) => ({
+    destination,
+    target: homePathOf(destination),
+    source,
+  }));
+  let placed: readonly string[];
+  try {
+    placed = await placedPaths(entries, declaringDir, "agent files");
+  } catch (error) {
+    throw new ConfigError(`agent files: ${errorMessage(error)}`, { cause: error });
+  }
+  for (const file of login?.files ?? []) {
+    const collision = placed.find((target) => target === file || target.startsWith(`${file}/`));
+    if (collision !== undefined) {
+      throw new ConfigError(`agent files place ${collision}, which collides with login file ${file}`);
+    }
   }
 
   return {

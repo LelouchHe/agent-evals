@@ -38,6 +38,7 @@ import {
   fileIdentity,
   homeEntries,
   placeCaseFiles,
+  placedPaths,
   stageEntries,
   validateCheckFiles,
 } from "./files.ts";
@@ -468,13 +469,7 @@ async function prepareImplementations(
     `runner "${runnerDefinition.type}"`,
   );
   const runner = await runnerDefinition.create(runnerParams, context);
-  for (const entry of homeEntries(request.case.config.files)) {
-    for (const file of runner.homeFiles ?? []) {
-      if (entry.target === file || entry.target.startsWith(`${file}/`)) {
-        throw new ConfigError(`case files place ${entry.target}, which collides with login state at ${file}`);
-      }
-    }
-  }
+  await validateCaseHomePlacement(request.case, runner.homeFiles ?? [], signal);
 
   const checks: { type: string; checker: Checker }[] = [];
   for (const [index, record] of request.case.config.checks.entries()) {
@@ -488,6 +483,35 @@ async function prepareImplementations(
   }
 
   return { runnerType: runnerDefinition.type, runner, checks };
+}
+
+/**
+ * Reject a case's `~/` placement that would land on login state, including a directory source
+ * whose contents name a login file. Runs while every selected case is prepared, before any
+ * case executes; the filesystem-level alias guard still applies at placement time.
+ */
+async function validateCaseHomePlacement(
+  loadedCase: ResolvedCase,
+  loginFiles: readonly string[],
+  signal: AbortSignal | undefined,
+): Promise<void> {
+  const entries = homeEntries(loadedCase.config.files);
+  if (entries.length === 0 || loginFiles.length === 0) {
+    return;
+  }
+  let placed: readonly string[];
+  try {
+    placed = await placedPaths(entries, loadedCase.dir, "files", signal);
+  } catch (error) {
+    if (signal?.aborted) throw error;
+    throw new ConfigError(`case files: ${errorMessage(error)}`, { cause: error });
+  }
+  for (const target of placed) {
+    const file = loginFiles.find((login) => target === login || target.startsWith(`${login}/`));
+    if (file !== undefined) {
+      throw new ConfigError(`case files place ${target}, which collides with login state at ${file}`);
+    }
+  }
 }
 
 async function validateAuthoringAssets(loadedCase: ResolvedCase): Promise<void> {

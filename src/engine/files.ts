@@ -103,6 +103,50 @@ export interface PlacementProtection {
 }
 
 /**
+ * The target-relative paths a placement would write, without copying anything. Used at load
+ * time to reject a placement that would land on login state before any run resource exists.
+ * The traversal and ignore answers are the staging copy's, so the answer matches what would be
+ * placed; a source that cannot be placed is the same error as it would be there.
+ */
+export async function placedPaths(
+  entries: readonly PlacementEntry[],
+  authoringDir: string,
+  label: string,
+  signal?: AbortSignal,
+): Promise<readonly string[]> {
+  const targets: string[] = [];
+  const tree = new IgnoreTree();
+  const walk = async (
+    source: string,
+    target: string,
+    destination: string,
+    segments: readonly string[],
+    root: string,
+  ): Promise<void> => {
+    const classified = await classify(source, destination, label, signal, { tree, root, segments });
+    if (classified.kind === "ignored") {
+      return;
+    }
+    if (classified.kind === "other") {
+      throw new Error(`${label} source for ${destination} must be a regular file or directory`);
+    }
+    targets.push(target);
+    if (classified.kind === "file") {
+      return;
+    }
+    for (const name of await readdir(source)) {
+      await walk(join(source, name), join(target, name), join(destination, name), [...segments, name], root);
+    }
+  };
+  for (const entry of entries) {
+    signal?.throwIfAborted();
+    const source = resolveAuthoringAsset(authoringDir, entry.source, `${label}["${entry.destination}"]`);
+    await walk(source, entry.target, entry.destination, [], source);
+  }
+  return targets;
+}
+
+/**
  * Copy a staged placement tree onto its target. `overwrite` decides file-on-file replacement;
  * `protect` names the login state no copy may place over.
  */
