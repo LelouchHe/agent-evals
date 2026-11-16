@@ -235,9 +235,9 @@ test("a read outside the workspace is named from its text, then from its parent 
 
   const consultations = await skillConsultations(
     [
-      // Chunked reads of one external skill: chunks without frontmatter must not add a second
-      // directory-fallback consultation alongside the frontmatter name.
-      piRead(join(home, "named-dir/SKILL.md"), "# Later chunk first\n"),
+      // Chunked reads of one external skill across relative and absolute spellings: chunks without
+      // frontmatter must not add a second directory-fallback consultation alongside the frontmatter name.
+      piRead(join("..", "home", "skills", "named-dir", "SKILL.md"), "# Later chunk first\n"),
       {
         ...piRead(join(home, "named-dir/SKILL.md"), `---\nname: harness-skill\n---\n${SKILL_BODY}`),
         // The returned text may also arrive only as a string.
@@ -253,6 +253,21 @@ test("a read outside the workspace is named from its text, then from its parent 
   assert.deepEqual(consultations, [
     { name: "harness-skill", fromDirectory: false },
     { name: "legacy-skill", fromDirectory: true },
+  ]);
+
+  // Post-read symlink replacement in an external directory cannot erase an already-returned frontmatter name.
+  await mkdir(join(home, "allowed"), { recursive: true });
+  await symlink(join(home, "allowed"), join(home, "forbidden"));
+  const afterSwap = await skillConsultations(
+    [
+      piRead(join(home, "allowed/SKILL.md"), `---\nname: allowed-skill\n---\n${SKILL_BODY}`),
+      piRead(join(home, "forbidden/SKILL.md"), `---\nname: forbidden-skill\n---\n${SKILL_BODY}`),
+    ],
+    roots,
+  );
+  assert.deepEqual(afterSwap, [
+    { name: "allowed-skill", fromDirectory: false },
+    { name: "forbidden-skill", fromDirectory: false },
   ]);
 });
 

@@ -43,32 +43,26 @@ export async function skillConsultations(
   trace: readonly TraceEntry[],
   sources: SkillSources,
 ): Promise<readonly SkillConsultation[]> {
-  const events: ({ readonly kind: "tool"; readonly name: string } | { readonly kind: "read"; readonly key: string })[] =
-    [];
-  const readsByTarget = new Map<string, SkillConsultation>();
+  const recognized: ({ readonly key?: string } & SkillConsultation)[] = [];
+  const frontmatterTargets = new Set<string>();
   for (const entry of trace) {
     if (entry.type !== "tool" || entry.status !== "completed") continue;
     if (entry.kind !== "read") {
       const name = trimmedField(entry.rawInput, "skill");
-      if (name !== undefined) events.push({ kind: "tool", name });
+      if (name !== undefined) recognized.push({ name, fromDirectory: false });
       continue;
     }
     const read = await recognizeRead(entry, sources);
     if (read === undefined) continue;
-    const existing = readsByTarget.get(read.key);
-    if (existing === undefined) {
-      readsByTarget.set(read.key, read.consultation);
-      events.push({ kind: "read", key: read.key });
-    } else if (existing.fromDirectory && !read.consultation.fromDirectory) {
-      // A chunk carrying frontmatter upgrades an earlier chunk's directory fallback on the same file.
-      readsByTarget.set(read.key, read.consultation);
-    }
+    if (!read.consultation.fromDirectory) frontmatterTargets.add(read.key);
+    recognized.push({ key: read.key, ...read.consultation });
   }
 
   const consultations = new Map<string, SkillConsultation>();
-  for (const event of events) {
-    const consultation: SkillConsultation =
-      event.kind === "tool" ? { name: event.name, fromDirectory: false } : readsByTarget.get(event.key)!;
+  for (const item of recognized) {
+    // A chunk without frontmatter on a file another chunk already named from frontmatter adds nothing.
+    if (item.fromDirectory && item.key !== undefined && frontmatterTargets.has(item.key)) continue;
+    const consultation: SkillConsultation = { name: item.name, fromDirectory: item.fromDirectory };
     const existing = consultations.get(consultation.name);
     if (existing === undefined || (existing.fromDirectory && !consultation.fromDirectory)) {
       consultations.set(consultation.name, consultation);
@@ -130,18 +124,12 @@ async function resolveReadTarget(
   workspacePath: string,
   target: string,
 ): Promise<{ readonly key: string; readonly relativePath?: string }> {
-  if (!isAbsolute(target)) {
-    const normalized = resolve(workspacePath, target);
-    const relativePath = await relativeWithinWorkspace(workspacePath, normalized);
-    return relativePath === undefined
-      ? { key: `outside:${normalized}` }
-      : { key: `workspace:${relativePath}`, relativePath };
-  }
-  const relativePath = await relativeWithinWorkspace(workspacePath, target);
+  const fullPath = isAbsolute(target) ? target : resolve(workspacePath, target);
+  const relativePath = await relativeWithinWorkspace(workspacePath, fullPath);
   if (relativePath !== undefined) {
     return { key: `workspace:${relativePath}`, relativePath };
   }
-  return { key: `outside:${await canonicalExternalPath(target)}` };
+  return { key: `outside:${await canonicalExternalPath(fullPath)}` };
 }
 
 /** Canonicalize existing ancestors of an external path so `/var/…` and `/private/var/…` match. */
