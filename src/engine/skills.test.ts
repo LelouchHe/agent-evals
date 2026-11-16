@@ -1,0 +1,189 @@
+import assert from "node:assert/strict";
+import { mkdir, symlink, writeFile } from "node:fs/promises";
+import { dirname, join } from "node:path";
+import { test, type TestContext } from "node:test";
+import { makeTempDir } from "../../tests/helpers/fake-pi-control.ts";
+import type { TraceEntry } from "./registry.ts";
+import { skillConsultations } from "./skills.ts";
+import { openRunRoot } from "./workspace.ts";
+
+type ToolEntry = Extract<TraceEntry, { type: "tool" }>;
+
+const SKILL_BODY = "# Runbook\n\nFind the error code and apply the matching fix.\n";
+
+async function runRoots(t: TestContext) {
+  const root = await makeTempDir(t, "ae-skills-");
+  const workspace = join(root, "workspace");
+  const baseline = join(root, "baseline");
+  await mkdir(workspace);
+  await mkdir(baseline);
+  return { root, workspace, baseline };
+}
+
+/** A `SKILL.md` as the fixture places it: identical in the workspace and the baseline. */
+async function placeSkill(workspace: string, baseline: string, path: string, frontmatter: string): Promise<void> {
+  const text = `---\n${frontmatter}---\n${SKILL_BODY}`;
+  for (const root of [workspace, baseline]) {
+    const file = join(root, path);
+    await mkdir(dirname(file), { recursive: true });
+    await writeFile(file, text);
+  }
+}
+
+/** A completed Pi read of `path`, with the returned text in the shapes Pi reports. */
+function piRead(path: string, returned: string, extra: Record<string, unknown> = {}): ToolEntry {
+  return {
+    type: "tool",
+    toolCallId: `call-${path}`,
+    title: "read",
+    kind: "read",
+    status: "completed",
+    locations: [{ path }],
+    rawInput: { path, offset: null, limit: null },
+    content: [{ type: "content", content: { type: "text", text: returned } }],
+    rawOutput: { content: [{ type: "text", text: returned }] },
+    ...extra,
+  };
+}
+
+/** A completed Claude Code or Copilot CLI skill tool call. */
+function skillTool(name: string, title = `Load skill: ${name}`): ToolEntry {
+  return {
+    type: "tool",
+    toolCallId: `call-${name}`,
+    title,
+    name: "Skill",
+    kind: "other",
+    status: "completed",
+    content: [],
+    rawInput: { skill: name },
+    rawOutput: `Launching skill: ${name}`,
+  };
+}
+
+test("both harness forms are recognized and a skill is one consultation however often it is read", async (t) => {
+  const dirs = await runRoots(t);
+  await placeSkill(dirs.workspace, dirs.baseline, ".agents/skills/deploy-runbook/SKILL.md", "name: deploy-runbook\n");
+  const skillFile = join(dirs.workspace, ".agents/skills/deploy-runbook/SKILL.md");
+  const baseline = await openRunRoot(dirs.baseline);
+
+  const consultations = await skillConsultations(
+    [
+      skillTool("deploy-runbook"),
+      piRead(skillFile, `---\nname: deploy-runbook\n---\n${SKILL_BODY}`, { rawInput: { path: skillFile, offset: 1 } }),
+      skillTool("release-notes", "Using skill: release-notes"),
+    ],
+    baseline,
+  );
+
+  assert.deepEqual(consultations, [
+    { name: "deploy-runbook", fromDirectory: false },
+    { name: "release-notes", fromDirectory: false },
+  ]);
+});
+
+test("only completed calls count, and a read must name SKILL.md", async (t) => {
+  const dirs = await runRoots(t);
+  const skillFile = join(dirs.workspace, ".agents/skills/unused/SKILL.md");
+  const baseline = await openRunRoot(dirs.baseline);
+
+  const consultations = await skillConsultations(
+    [
+      { ...skillTool("pending-skill"), status: "pending" },
+      { ...skillTool("failed-skill"), status: "failed" },
+      { ...piRead(skillFile, SKILL_BODY), status: "failed" },
+      piRead(join(dirs.workspace, "deploy.log"), "failed\n"),
+      skillTool("used-skill"),
+    ],
+    baseline,
+  );
+
+  assert.deepEqual(consultations, [{ name: "used-skill", fromDirectory: false }]);
+});
+
+test("a read target comes from locations, rawInput.path or rawInput.file_path", async (t) => {
+  const dirs = await runRoots(t);
+  const relative = ".agents/skills/deploy-runbook/SKILL.md";
+  await placeSkill(dirs.workspace, dirs.baseline, relative, "name: deploy-runbook\n");
+  const returned = `---\nname: deploy-runbook\n---\n${SKILL_BODY}`;
+  const baseline = await openRunRoot(dirs.baseline);
+
+  const consultations = await skillConsultations(
+    [
+      piRead(relative, returned, { locations: [{ path: relative }], rawInput: { offset: 1 } }),
+      piRead(relative, returned, { locations: [], rawInput: { path: relative } }),
+      piRead(relative, returned, { locations: [], rawInput: { file_path: relative } }),
+    ],
+    baseline,
+  );
+
+  assert.deepEqual(consultations, [{ name: "deploy-runbook", fromDirectory: false }]);
+});
+
+test("a workspace read is named from the baseline in every path spelling, not from its output", async (t) => {
+  const dirs = await runRoots(t);
+  // The directory name differs from the skill's name, so the baseline frontmatter is the only
+  // source that can produce `deploy-runbook` here.
+  const relative = ".agents/skills/aw-deploy/SKILL.md";
+  await placeSkill(dirs.workspace, dirs.baseline, relative, "name: deploy-runbook\n");
+  const workspace = await openRunRoot(dirs.workspace);
+  const baseline = await openRunRoot(dirs.baseline);
+  // An agent that edits the body during the run must not change the name.
+  const edited = `---\nname: edited-during-run\n---\n${SKILL_BODY}`;
+
+  const spellings = [relative, join(workspace.path, relative)];
+  // `/var/…` and `/private/var/…` are the same directory under two spellings.
+  if (workspace.path.startsWith("/private/")) {
+    spellings.push(join(workspace.path.slice("/private".length), relative));
+  }
+  // Any other canonicalising spelling, such as an operator's symlinked temporary root.
+  const alias = join(await makeTempDir(t, "ae-skills-alias-"), "run");
+  await symlink(dirname(workspace.path), alias);
+  spellings.push(join(alias, "workspace", relative));
+
+  const consultations = await skillConsultations(
+    spellings.map((path) => piRead(path, edited)),
+    baseline,
+  );
+
+  assert.deepEqual(consultations, [{ name: "deploy-runbook", fromDirectory: false }]);
+});
+
+test("a read outside the workspace is named from its text, then from its parent directory", async (t) => {
+  const dirs = await runRoots(t);
+  const home = join(dirs.root, "home", "skills");
+  await mkdir(join(home, "legacy-skill"), { recursive: true });
+  const baseline = await openRunRoot(dirs.baseline);
+
+  const consultations = await skillConsultations(
+    [
+      {
+        ...piRead(join(home, "legacy-skill/SKILL.md"), `---\nname: harness-skill\n---\n${SKILL_BODY}`),
+        // The returned text may also arrive only as a string.
+        content: [],
+        rawOutput: `---\nname: harness-skill\n---\n${SKILL_BODY}`,
+      },
+      piRead(join(home, "legacy-skill/SKILL.md"), "# No frontmatter here\n"),
+    ],
+    baseline,
+  );
+
+  assert.deepEqual(consultations, [
+    { name: "harness-skill", fromDirectory: false },
+    { name: "legacy-skill", fromDirectory: true },
+  ]);
+});
+
+test("a workspace read falls back to the returned text when the baseline gives no name", async (t) => {
+  const dirs = await runRoots(t);
+  const relative = ".agents/skills/plain/SKILL.md";
+  await placeSkill(dirs.workspace, dirs.baseline, relative, "description: no name\n");
+  const baseline = await openRunRoot(dirs.baseline);
+
+  const consultations = await skillConsultations(
+    [piRead(relative, `---\nname: text-name\n---\n${SKILL_BODY}`)],
+    baseline,
+  );
+
+  assert.deepEqual(consultations, [{ name: "text-name", fromDirectory: false }]);
+});

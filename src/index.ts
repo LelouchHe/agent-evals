@@ -1,6 +1,7 @@
 /**
- * The package's public surface: the contracts a runner or checker implements and the evidence
- * types they exchange with the engine. Everything not exported here is internal.
+ * The package's public surface: the contracts a runner or checker implements, the evidence
+ * types they exchange with the engine, and the trace derivations a checker can reuse.
+ * Everything not exported here is internal.
  */
 export type {
   Checker,
@@ -23,3 +24,4 @@ export type {
 } from "./engine/registry.ts";
 export type { ValueSource } from "./engine/values.ts";
 export type { RunRoot } from "./engine/workspace.ts";
+export { skillConsultations, type SkillConsultation } from "./engine/skills.ts";
