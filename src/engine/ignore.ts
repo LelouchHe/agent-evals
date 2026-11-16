@@ -44,8 +44,16 @@ async function readRules(dir: string): Promise<Ignore> {
  * path excluded by the rules of `root` or of any directory between it and the path. Each
  * directory's patterns are matched from that directory, and the answers are combined, so a
  * deeper file cannot re-include what a higher one excluded.
+ *
+ * `directory` supplies the one thing a bare path cannot: a trailing `/` marks the entry as a
+ * directory, which is how gitignore spells a directory-only pattern such as `evals/`.
  */
-export async function isIgnored(tree: IgnoreTree, root: string, segments: readonly string[]): Promise<boolean> {
+export async function isIgnored(
+  tree: IgnoreTree,
+  root: string,
+  segments: readonly string[],
+  directory: boolean,
+): Promise<boolean> {
   if (segments.length === 0) {
     return false;
   }
@@ -54,7 +62,8 @@ export async function isIgnored(tree: IgnoreTree, root: string, segments: readon
   }
   for (let depth = 0; depth < segments.length; depth += 1) {
     const rules = await tree.read(join(root, ...segments.slice(0, depth)));
-    if (rules.ignores(segments.slice(depth).join("/"))) {
+    const relative = segments.slice(depth).join("/") + (directory ? "/" : "");
+    if (rules.ignores(relative)) {
       return true;
     }
   }

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { test, type TestContext } from "node:test";
 import { stringify } from "yaml";
 import { fileChecker } from "../src/checkers/file/index.ts";
@@ -13,11 +13,20 @@ import { runEvaluation } from "../src/engine/run.ts";
 import { noopRunner } from "../src/runners/noop/index.ts";
 import { createFakePi, makeTempDir } from "./helpers/fake-pi-control.ts";
 
-async function runNoop(t: TestContext, declaration: Record<string, unknown>, judgeExecutable?: string) {
+async function runNoop(
+  t: TestContext,
+  declaration: Record<string, unknown>,
+  judgeExecutable?: string,
+  fixtureFiles: Readonly<Record<string, string>> = {},
+) {
   const directory = await makeTempDir(t, "ae-noop-case-");
   const fixture = join(directory, "fixture");
   await mkdir(fixture);
   await writeFile(join(fixture, "deploy.log"), "failed\n");
+  for (const [name, content] of Object.entries(fixtureFiles)) {
+    await mkdir(dirname(join(fixture, name)), { recursive: true });
+    await writeFile(join(fixture, name), content);
+  }
   const casePath = join(directory, "case.yml");
   await writeFile(
     casePath,
@@ -110,6 +119,33 @@ test(
     assert.deepEqual(
       record.checks.map((check) => check.status),
       ["fail", "fail", "pass", "fail", "pass", "fail"],
+    );
+  },
+);
+
+test(
+  "the fixture copy excludes a directory named by a directory-only pattern",
+  {
+    skip: process.platform !== "darwin",
+  },
+  async (t) => {
+    const { record } = await runNoop(
+      t,
+      {
+        checks: [
+          { $type: "file", path: "kept.txt", exists: true },
+          { $type: "shell", run: ["/bin/sh", "-c", "test ! -e cases"] },
+        ],
+      },
+      undefined,
+      { ".agentevalsignore": "/cases/\n", "cases/leaked.txt": "leaked\n", "kept.txt": "kept\n" },
+    );
+
+    // The shell check fails when `cases` exists at all, which is how an empty excluded directory shows.
+    assert.deepEqual(
+      record.checks.map((check) => check.status),
+      ["pass", "pass"],
+      record.checks.map((check) => check.reason).join("; "),
     );
   },
 );

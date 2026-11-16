@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdir, readdir, writeFile } from "node:fs/promises";
+import { access, mkdir, readdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { test } from "node:test";
 import { makeTempDir } from "../../tests/helpers/fake-pi-control.ts";
@@ -31,6 +31,7 @@ async function stage(t: Parameters<typeof makeTempDir>[0]) {
   await mkdir(staging);
   return {
     authoring,
+    staging,
     stage: (files: Readonly<Record<string, string>>) => stageFiles(files, authoring, staging, "files"),
     files: () => filesIn(staging),
   };
@@ -106,4 +107,24 @@ test("a deeper ignore file cannot re-include what a higher one excluded", async 
     "skills/markdown-writing/SKILL.md",
     "skills/markdown-writing/evals/behavior.json",
   ]);
+});
+
+test("a directory-only pattern excludes the directory, and leaves a file of that name", async (t) => {
+  const dirs = await stage(t);
+  await write(dirs.authoring, {
+    "skill/.agentevalsignore": "/evals/\n",
+    "skill/SKILL.md": "body\n",
+    "skill/evals/leaked.txt": "leaked\n",
+    "plain/.agentevalsignore": "evals/\n",
+    "plain/evals": "a regular file called evals\n",
+    "plain/nested/evals/leaked.txt": "leaked\n",
+  });
+
+  await dirs.stage({ "skills/x": "skill", "skills/y": "plain" });
+
+  assert.deepEqual(await dirs.files(), ["skills/x/SKILL.md", "skills/y/evals"]);
+  // Excluding the contents is not enough: the directory itself must not reach the workspace.
+  for (const absent of ["skills/x/evals", "skills/y/nested/evals"]) {
+    await assert.rejects(access(join(dirs.staging, absent)), absent);
+  }
 });

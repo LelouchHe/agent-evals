@@ -9,5 +9,5 @@ test("an ignore file that is not a regular file is a configuration error, not no
   const dir = await makeTempDir(t, "ae-ignore-");
   await mkdir(join(dir, ".agentevalsignore"));
 
-  await assert.rejects(isIgnored(new IgnoreTree(), dir, ["anything"]), /could not read .*\.agentevalsignore/);
+  await assert.rejects(isIgnored(new IgnoreTree(), dir, ["anything"], false), /could not read .*\.agentevalsignore/);
 });

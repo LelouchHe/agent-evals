@@ -134,7 +134,13 @@ export function authoringCopyFilter(source: string): (path: string) => Promise<b
     const segments = relative(source, path)
       .split(sep)
       .filter((segment) => segment.length > 0);
-    return !(await isIgnored(tree, source, segments));
+    if (segments.length === 0) {
+      return true;
+    }
+    // `cp` filters receive only a path, so the entry type has to be stat'ed. A symlink is a file
+    // here, matching how the directory copier treats one.
+    const info = await lstat(path);
+    return !(await isIgnored(tree, source, segments, info.isDirectory()));
   };
 }
 
@@ -168,7 +174,7 @@ async function copyInto(
   } catch (error) {
     throw new Error(`${label} source for ${destination} is not accessible: ${errorMessage(error)}`, { cause: error });
   }
-  let kind: "file" | "directory";
+  let kind: "file" | "directory" | "other";
   if (info.isSymbolicLink()) {
     // A link is copied as its target's content, and only when that target is a regular file.
     let resolved;
@@ -179,19 +185,22 @@ async function copyInto(
         cause: error,
       });
     }
-    if (!resolved.isFile()) {
-      throw new Error(`${label} source for ${destination} must be a regular file or directory`);
-    }
-    kind = "file";
+    kind = resolved.isFile() ? "file" : "other";
   } else if (info.isDirectory()) {
     kind = "directory";
-  } else if (info.isFile()) {
-    kind = "file";
   } else {
-    throw new Error(`${label} source for ${destination} must be a regular file or directory`);
+    kind = info.isFile() ? "file" : "other";
   }
 
   signal?.throwIfAborted();
+  // Classifying first is what lets a directory-only pattern match a directory entry, and what
+  // keeps an excluded special file silently skipped rather than an error.
+  if (await isIgnored(traversal.tree, traversal.root, traversal.segments, kind === "directory")) {
+    return;
+  }
+  if (kind === "other") {
+    throw new Error(`${label} source for ${destination} must be a regular file or directory`);
+  }
   await expectTarget(target, destination, label, kind, overwrite);
   signal?.throwIfAborted();
   if (kind === "file") {
@@ -206,13 +215,9 @@ async function copyInto(
   const entries = await readdir(source);
   signal?.throwIfAborted();
   for (const name of entries) {
-    const child = [...traversal.segments, name];
-    if (await isIgnored(traversal.tree, traversal.root, child)) {
-      continue;
-    }
     await copyInto(join(source, name), join(target, name), join(destination, name), label, overwrite, signal, {
       ...traversal,
-      segments: child,
+      segments: [...traversal.segments, name],
     });
   }
 }
