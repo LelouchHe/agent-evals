@@ -235,7 +235,7 @@ async function loadDirectory(registry: Registry, directory: string): Promise<voi
   }
 
   const names = entries
-    .filter((entry) => entry.isDirectory() && entry.name !== "node_modules")
+    .filter((entry) => entry.isDirectory() && entry.name !== "node_modules" && !entry.name.startsWith("."))
     .map((entry) => entry.name)
     .sort();
 

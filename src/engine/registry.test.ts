@@ -151,10 +151,12 @@ test("a subdirectory without an entry point is a configuration error", async (t)
   );
 });
 
-test("trusted discovery skips node_modules at the extension root", async (t) => {
+test("trusted discovery skips node_modules and dot-directories at the extension root", async (t) => {
   const extensions = await makeTempDir(t, "ae-trusted-dependencies-");
   await mkdir(join(extensions, "node_modules", "dependency"), { recursive: true });
   await writeFile(join(extensions, "node_modules", "dependency", "index.ts"), "export const other = 1;\n");
+  // An extension root that is itself a repository holds `.git`, which is not an implementation.
+  await mkdir(join(extensions, ".git"));
   await mkdir(join(extensions, "custom"));
   await writeFile(
     join(extensions, "custom", "index.ts"),

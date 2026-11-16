@@ -20,7 +20,7 @@ extensions/
 ```
 
 - The entry point exports `runner`, `checker`, or both.
-- A subdirectory without an entry point is a configuration error. `node_modules` is the only skipped subdirectory, so an extension root may hold shared dependencies.
+- A subdirectory without an entry point is a configuration error. Only `node_modules` and directories whose name starts with a dot are skipped, so an extension root may hold shared dependencies and be a repository.
 - `--extension-dir` is repeatable. Every root feeds one registry, next to the built-ins.
 - The `$type` a case uses is the definition's `type` field. Directory and entry names have no meaning.
 - An unreadable root, a subdirectory without an entry point, a missing or malformed export, an entry point exporting neither `runner` nor `checker`, or a `type` that a built-in or another extension already uses is a configuration error. Nothing is overridden or skipped.

@@ -386,7 +386,7 @@ export const checker = {
 export const runner = { type: "unused-runner", params: z.strictObject({}), async create() { return { async run() { return { finalText: "unused", diagnostics: [] }; }, async stop() {} }; } };
 `,
   );
-  // An implementation root may hold dependencies; node_modules is the only skipped subdirectory.
+  // An implementation root may hold dependencies; node_modules is skipped.
   await mkdir(join(runnerRootA, "node_modules", "dependency"), { recursive: true });
   await writeFile(join(runnerRootA, "node_modules", "dependency", "index.mjs"), "export const other = 1;\n");
 
