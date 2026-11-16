@@ -18,46 +18,52 @@ The development form is `npm run eval -- <command>`; both entry points execute t
 
 The trusted-directory option is repeatable and applies only to `run`; it names extension roots holding implementations, not working directories. All supplied roots feed the same registry, where duplicate `$type` names are errors rather than ordered overrides.
 
-## ACP Preparation Helpers
+## Agent Files
 
-These commands do not take a case. `config` uses `acpCommand`, performs ACP initialization and creates a session, then prints YAML containing `authMethods` and `configOptions` (current values, available values, labels and descriptions as offered by the agent). It sends no prompt. Authentication may be required first. Queries have a 30-second protocol budget; errors and cancellation still tear down the sandbox.
-
-`login` runs `command` with the current terminal's input/output. The sandbox permits termios mode changes (`TIOCSETA`, `TIOCSETAW`, `TIOCSETAF`) only on that terminal and its `/dev/tty` alias, not arbitrary ioctl operations or other devices. Log in using that program's native interface, then exit successfully to save the listed files. It does not derive a login command from the adapter name or use case settings. The helpers reject case/run options such as `--case`.
+An agent file describes one caller-prepared harness. `config` and `login` load it standalone; the [ACP runner](#acp-runner-type-acp) takes the same object inline or by path, so the same file configures queries and runs.
 
 ```yaml
-command: [pi]
 acpCommand: [pi-acp]
-home:
-  deps: ${env:PI_DEPS}
-  login: ${env:PI_LOGIN}
-  path: [.local/bin]
+deps: ${env:PI_DEPS}
+path: [bin]
+files:
+  ~/.pi/agent/settings.json: pi-settings.json
 login:
-  - .pi/agent/auth.json
+  command: [pi]
+  dir: ${env:PI_LOGIN}
+  files: [.pi/agent/auth.json]
 ```
 
-| Field         | Rule                                                                                                                 |
-| ------------- | -------------------------------------------------------------------------------------------------------------------- |
-| `acpCommand`  | Required non-empty argv for the ACP entry point.                                                                     |
-| `command`     | Optional native argv; required by the login helper.                                                                  |
-| `environment` | Optional mapping of extra variables for both commands. Names other than `HOME`, `TMPDIR`, `PATH` and `TERM`.         |
-| `home.deps`   | Required caller-prepared software/settings directory, laid out like HOME.                                            |
-| `home.login`  | Optional persistent login directory; required by the login helper. A first login may start with a missing directory. |
-| `home.path`   | Required list of HOME-relative command directories, followed by system directories on PATH.                          |
-| `login`       | HOME-relative paths describing the login directory's file composition. The login helper requires a non-empty list.   |
+| Field         | Rule                                                                                                                                                                   |
+| ------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `acpCommand`  | Required non-empty argv for the ACP entry point.                                                                                                                       |
+| `environment` | Optional mapping of extra variables for both commands. Names other than `HOME`, `TMPDIR`, `PATH` and `TERM`.                                                           |
+| `deps`        | Required caller-prepared software directory. It is linked into the run as `deps`; the engine never copies or mirrors it.                                               |
+| `path`        | Optional `deps`-relative command directories; default `[bin]`. `PATH` is each entry under `run-xxxx/deps/`, then `/usr/bin:/bin:/usr/sbin:/sbin`.                      |
+| `files`       | Optional mapping from a `~/` destination to an authoring source relative to the agent file. Copied into the run HOME before login state and the case's `~/` entries.   |
+| `login`       | Optional. `command` is the native argv the login helper runs, `dir` the persistent login directory (it may not exist before the first login), `files` its composition. |
 
-The ACP implementation declares one strict Zod schema; unknown fields, invalid argv and unsafe HOME-relative paths are errors. Standalone files use the same YAML restrictions and [placeholders](#placeholders) as case parameters, with `${HOME}` and `${TMPDIR}` naming the command's own directories. Directory paths resolve from the agent file; `.env` remains rooted at the invocation directory. The [ACP runner](#acp-runner-type-acp) takes the same object inline or by path.
+The ACP implementation declares one strict Zod schema; unknown fields, invalid argv, a `files` destination that does not start with `~/`, and unsafe relative paths are errors. Standalone files use the same YAML restrictions and [placeholders](#placeholders) as case parameters, with `${HOME}` and `${TMPDIR}` naming the command's own directories. Directory paths resolve from the agent file; `.env` remains rooted at the invocation directory.
 
-The process sees only `HOME` (the assembled HOME), `TMPDIR` (the command's temporary directory), `PATH` (`home.path` entries, then `/usr/bin:/bin:/usr/sbin:/sbin`), `TERM` when the invoking terminal sets it, and the declared `environment`. Nothing else is inherited from the operator. A harness that needs a secret or its own temporary-directory variable declares it in `environment`; see [Setup](setup.md#prepare-acp-harnesses) for step-by-step Pi, Claude Code and Copilot CLI preparation.
+`config` performs ACP initialization and creates a session, then prints YAML containing `authMethods` and `configOptions` (current values, available values, labels and descriptions as offered by the agent). It sends no prompt. Authentication may be required first. Queries have a 30-second protocol budget; errors and cancellation still tear down the sandbox. `login` runs `login.command` with the current terminal's input/output, and the sandbox permits termios mode changes (`TIOCSETA`, `TIOCSETAW`, `TIOCSETAF`) only on that terminal and its `/dev/tty` alias, not arbitrary ioctl operations or other devices. Log in using that program's native interface, then exit successfully to save the declared files. Neither helper derives a command from the adapter name. Both reject case/run options such as `--case`.
 
-Each command builds a fresh HOME: directories from `deps` are real and their files are read-only links; login files are copied, not linked. Dependencies must be self-contained (directory symlinks and special files are unsupported); only declared software and system directories are readable. The operator's ambient PATH, HOME and credentials are not inherited. Keep login directories evaluation-owned, separate from everyday credentials.
+The process sees only `HOME` (the run HOME), `TMPDIR` (the run's temporary directory), `PATH` (the `path` entries under the run's `deps`, then the system directories), `TERM` when the invoking terminal sets it, and the declared `environment`. Nothing else is inherited from the operator. A harness that needs a secret or its own temporary-directory variable declares it in `environment`; see [Setup](setup.md#prepare-acp-harnesses) for step-by-step Pi, Claude Code and Copilot CLI preparation.
 
-The login helper saves only the declared files after successful native exit, not caches or arbitrary new HOME contents. Existing login files may be refreshed during either command, even before a later failure or cancellation; changed originals are copied back after stopping the sandbox so a refreshed credential is not discarded. New login-file export still requires native success. A command failure or cancellation remains visible if copy-back also fails; secondary cleanup errors are reported alongside it. Copies are regular files with private permissions; unsafe paths, escaping symlinks and special files are rejected. Missing or non-directory deps and non-directory existing login roots are configuration errors checked before runtime allocation. Login/deps file collisions and overlapping roots are errors; deps must not contain the temporary command directory. Other runtime state is removed.
+### What One Run Assembles
 
-Sandbox cleanup covers ordinary, orphaned and new-session descendants. A private supervisor channel carries the workload exit result; its intentional cleanup SIGKILL is not a successful login result. Forced supervisor death is not a recoverable cleanup guarantee. These helpers do not impose a hard resource/cost isolation boundary.
+- **`deps`** is one directory symlink at the run root. The software is referenced in place and executes from its real location; only `deps` and the system directories are readable, and neither is writable. Resolving the link reveals the host path.
+- **HOME** starts from the agent file's `files`, then the declared login files are copied in, then the case's `~/` entries ([placement](#fixture-and-files)). The case may replace an agent-placed file and merges into directories; nothing may place over a login file.
+- **Login files** are only the declared `login.files`. A declared file that does not exist on a first login is simply absent; `login` saves the ones the harness created. Existing login files may be refreshed during either command or a run, even before a later failure or cancellation; changed originals are copied back after the sandbox stops so a refreshed credential is not discarded.
+- **Login state is copied, not linked**, because harnesses lock, rewrite or rotate refresh tokens in place. Copies are regular files with private permissions; unsafe paths, escaping symlinks and special files are rejected.
+- **`HOME` never holds the software.** A harness's caches, sessions, model stores and other state land in the writable `home/` and disappear with the run. The harness settings live beside the agent file, not in a prepared copy, so there is no intermediate tree to drift.
 
-Pi may download `fd` and `rg` during interactive startup if they are missing. Prepare those tools in `deps` for normal use; an offline UI check can instead use `command: [/usr/bin/env, PI_OFFLINE=1, pi]` to skip automatic downloads. This is explicit harness configuration, not engine-specific behavior.
+Missing or non-directory `deps` and non-directory existing login directories are configuration errors checked before runtime allocation. `deps` and `login.dir` must not overlap, `deps` must not contain the run directory, an agent `files` destination must not collide with a declared login file, and a case `~/` entry must not either. Other runtime state is removed.
 
-Examples: [Pi](../examples/agents/pi.yml), [Claude](../examples/agents/claude.yml), [Copilot](../examples/agents/copilot.yml). All three run unchanged through the same implementation, which contains no harness-specific exceptions; their comments say what each `deps` holds.
+Sandbox cleanup covers ordinary, orphaned and new-session descendants. A private supervisor channel carries the workload exit result; its intentional cleanup SIGKILL is not a successful login result. Forced supervisor death is not a recoverable cleanup guarantee. These commands do not impose a hard resource/cost isolation boundary.
+
+Pi may download `fd` and `rg` during interactive startup if they are missing. A prepared copy belongs in `deps` (for example `deps/bin/fd`); Pi's own downloads land under `HOME` and disappear with the run. An offline UI check can instead use `acpCommand: [/usr/bin/env, PI_OFFLINE=1, pi]` to skip automatic downloads. This is explicit harness configuration, not engine-specific behavior.
+
+Examples: [Pi](../examples/agents/pi.yml), [Claude](../examples/agents/claude.yml), [Copilot](../examples/agents/copilot.yml). All three run unchanged through the same implementation, which contains no harness-specific exceptions; their comments say what each `deps` holds and which settings file they place in HOME.
 
 ## One Case or Named Cases
 
@@ -116,7 +122,7 @@ A multi-case document is one invocation, but every case is an ordinary run: it v
 | `runner`    | Required implementation record.                                                                                                                     |
 | `checks`    | Required non-empty list of implementation records.                                                                                                  |
 | `fixture`   | Optional directory relative to this YAML, copied into the workspace root. Omission starts an empty workspace.                                       |
-| `files`     | Optional mapping from a workspace-relative destination (`.` is the root) to an authoring file or directory, placed after the fixture.               |
+| `files`     | Optional mapping from a destination to an authoring file or directory, placed after the fixture; a `~/` destination places into the run HOME.       |
 | `timeoutMs` | Optional positive integer milliseconds; defaults to 300000. Bounds runner execution and is also each check's budget, not the whole run's wall time. |
 | `mocks`     | Optional declared collaborator substitutes; see [Mocks](#mocks).                                                                                    |
 | `cases`     | Optional document-level selection control; not passed to execution.                                                                                 |
@@ -129,16 +135,21 @@ Authoring resources are relative to the YAML file; checker targets are relative 
 
 ### Fixture and Files
 
-`fixture` is the base environment. `files` is the per-case variation layered on top: each key is a destination relative to the prepared workspace root (`.` is the root, never absolute and never containing `..`), and each value is an authoring file or directory read from the case YAML's directory — the same base as `fixture`, not the fixture directory and not the invocation directory. The fixture populates the workspace first and the entries overlay it.
+`fixture` is the base environment: a workspace directory. `files` is the per-case variation layered on top. Each key is a destination and each value an authoring file or directory read from the case YAML's directory — the same base as `fixture`, not the fixture directory and not the invocation directory.
 
-- An entry may replace a file that came from `fixture`; that is the common "same base, one changed file" case.
-- Entries may not overwrite each other: two entries producing the same file path are an error. Directory entries merge.
-- A file arriving where a directory exists, or a directory where a file exists, is an error rather than a replacement, whether the existing path came from `fixture` or from another entry.
-- Placement happens after the fixture copy and before the baseline snapshot, so placed files are part of the baseline and `changed: false` covers them.
+A destination without `~/` is relative to the prepared workspace root: `.` is the root, never absolute and never containing `..`. A destination starting with `~/` places into the run HOME instead: `~/notes/today.md` is a file, `~/notes` a directory, and `~/` the HOME root itself. The fixture populates the workspace first; workspace entries overlay it, HOME entries overlay the agent file's `files` and login state, and the case's `~/` entries come last. A runner without a HOME — `noop` and the native `pi` runner — rejects a case that places or checks anything under `~/` before any run resource exists.
+
+- An entry may replace a file that came from `fixture`, from the agent file, or from the fixture's HOME equivalent.
+- Entries may not overwrite each other: two entries producing the same file path are an error, including a `~/` root that the HOME baseline then records. Directory entries merge.
+- A file arriving where a directory exists, or a directory where a file exists, is an error rather than a replacement, whether the existing path came from `fixture`, the agent file or another entry.
+- A case may never place over a login file; a `~/.auth/token` entry is a configuration error when `login.files` declares it.
+- Placement happens before the baseline snapshot, so placed files are part of the baseline and `changed: false` covers them. The HOME baseline holds only what the case placed, not the agent file's or login's content, so `changed` under `~/` compares against the case's own placement.
 
 A source directory declares what is not placed in a `.agentevalsignore` file at its own root, written in gitignore syntax: `/evals` for the expectation assets beside a skill body, `__pycache__` for bytecode. The same file is honoured wherever the engine copies an authoring tree into a run — the fixture, a case's `files`, a checker's `files` and the Pi runner's `skills` directories — and each directory is read as the copy reaches it, so one file in a skill directory works whether an entry names that skill or a tree of skills above it. Patterns are relative to the directory holding the file, the ignore file itself is never placed, and the rules apply to traversal only: a file or directory an entry names directly is placed even when an ignore file in its parent excludes it, and ignore files above the named source are not read. Unlike git, the answers of different files are combined, so a `!` in a deeper file cannot re-include what a higher one excluded; within one file negation behaves as gitignore does. An ignore file that cannot be read as a regular file is a configuration error.
 
-The engine only copies; it assigns no meaning to a destination and knows no harness paths. A project-level skill is one use: place its directory where the harness discovers it, for example `.agents/skills/` for Pi and Copilot CLI or `.claude/skills/` for Claude Code.
+The engine only copies; it assigns no meaning to a destination and knows no harness paths. A project-level skill is one use: place its directory where the harness discovers it, for example `.agents/skills/` for Pi and Copilot CLI or `.claude/skills/` for Claude Code. A user-level skill or instruction file is the same mechanism under `~/`: `~/.claude/skills/…` for Claude Code, or other paths a harness reads from HOME.
+
+Order inside HOME is agent `files` → login files → the case's `~/` entries. The agent file's `files` may not collide with its own login files; a case may replace an agent-placed file but never a login file. Case/agent collisions are configuration errors before the harness starts; two case entries normalizing to one path and a file-versus-directory conflict are placement errors before the harness runs.
 
 ## Mocks
 
@@ -201,15 +212,16 @@ runner:
     model: opencode-go/deepseek-v4.1-flash
 ```
 
-| Parameter | Contract                                                                                                                                                                       |
-| --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `agent`   | Required. An inline [agent object](#acp-preparation-helpers), or a config-relative path to a standalone file holding one. `acpCommand`, `environment` and `home` are used.     |
-| `config`  | Optional mapping of session config values (string or boolean), applied in declaration order. A key names an option's category when exactly one has it, otherwise an option ID. |
+| Parameter | Contract                                                                                                                                                                                 |
+| --------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `agent`   | Required. An inline [agent object](#agent-files), or a config-relative path to a standalone file holding one. `acpCommand`, `environment`, `deps`, `path`, `files` and `login` are used. |
+| `config`  | Optional mapping of session config values (string or boolean), applied in declaration order. A key names an option's category when exactly one has it, otherwise an option ID.           |
 
-A path-referenced file resolves its own directories from its location and its placeholders like the case's own parameters; an inline object is part of them. Missing deps or an invalid login root are configuration errors before any run resource exists.
+A path-referenced file resolves its own directories from its location and its placeholders like the case's own parameters; an inline object is part of them. Missing `deps`, an invalid login directory, an agent `files` destination without `~/`, or an agent `files`/login collision are configuration errors before any run resource exists.
 
-Each run assembles the harness home in the run's own HOME exactly as the helpers do, starts `acpCommand` in the workspace under the same sandbox, creates one session, applies `config`, then sends the input as one prompt. `agent-evals config <agent.yml>` lists the offered options. A key matching no option, or a value the agent does not offer, fails the run before prompting; set `model` first because other choices may depend on it. Skills and project settings come from the prepared workspace (`fixture` and `files`), not runner parameters.
-The run completes only when the turn ends with `end_turn`; any other stop reason, an agent exit or a protocol error is an execution error. The runner records a [trace](#inspecting-and-recording); output is the agent's text after its last tool call. Permission requests are approved (`allow_once`, else `allow_always`): the sandbox is the boundary. On completion, timeout or cancellation the whole sandbox is stopped, then changed original login files are copied back. Only the workspace, the run HOME and its temporary directory are writable; deps is read-only, and the baseline, policy and case files are unreadable. With [`mocks`](#mocks), the runner puts the forwarder directory first on the process `PATH` and makes it readable but not writable inside the sandbox.
+Each run links `deps` at the run root, copies the agent file's `files` and declared login files into the run HOME, then lets the case's `~/` entries overlay them, starts `acpCommand` in the workspace under the sandbox, creates one session, applies `config`, then sends the input as one prompt. `agent-evals config <agent.yml>` lists the offered options. A key matching no option, or a value the agent does not offer, fails the run before prompting; set `model` first because other choices may depend on it. Project skills come from the prepared workspace (`fixture` and `files`); user-level skills and user data come from the case's `~/` entries and from the agent file's `files`, not from runner parameters. The agent declares the ACP runner's own HOME content; a case cannot replace its login state.
+
+The run completes only when the turn ends with `end_turn`; any other stop reason, an agent exit or a protocol error is an execution error. The runner records a [trace](#inspecting-and-recording); output is the agent's text after its last tool call. Permission requests are approved (`allow_once`, else `allow_always`): the sandbox is the boundary. On completion, timeout or cancellation the whole sandbox is stopped, then changed original login files are copied back. `deps` and `mocks` are readable but never writable; `home`, `workspace` and `tmp` are writable; `engine/` — the baseline, policy, placement staging and check state — is unreadable. With [`mocks`](#mocks), the runner puts the forwarder directory first on the process `PATH`.
 
 Example: [`deploy-runbook`](../examples/cases/deploy-runbook/case.yml), whose Pi, Claude and Copilot cases share one fixture and one [`mocks`](mocks.md) declaration and differ in agent, model and whether `files` places `skill` where that harness discovers it (`.agents/skills/` or `.claude/skills/`).
 
@@ -217,13 +229,13 @@ Example: [`deploy-runbook`](../examples/cases/deploy-runbook/case.yml), whose Pi
 
 A parameterless baseline runner. It starts no harness and no sandbox and completes at once with `finalText: null`, no diagnostics, an empty trace (`trace.json` is `[]`), and no usage. It declares mock support, so a case with `mocks` loads; the forwarders are written and nothing calls them, so `mocks.json` is `[]`.
 
-Run a case under it to see which checks need the agent: `file` `matches` or `notMatches`, a `mock` or `trace` check with its default count, or a `shell` command over a broken fixture fail, while restraint checks (`times: 0`, `changed: false` on a file that already exists) pass by construction. Select it per named case; `run` has no baseline flag.
+Run a case under it to see which checks need the agent: `file` `matches` or `notMatches`, a `mock` or `trace` check with its default count, or a `shell` command over a broken fixture fail, while restraint checks (`times: 0`, `changed: false` on a file that already exists) pass by construction. It has no HOME, so a case that places or checks a `~/` path is a configuration error rather than a vacuous pass. Select it per named case; `run` has no baseline flag.
 
 ### File Checker (`$type: file`)
 
 | Parameter    | Contract                                                                                                                                                                   |
 | ------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `path`       | Required workspace-relative file path, not absolute and without `..` segments.                                                                                             |
+| `path`       | Required workspace-relative file or directory path, or `~/…` for the run HOME. Not absolute and without `..` segments; `~/` alone names HOME, not a file.                  |
 | `exists`     | Optional boolean; `false` is supported. Only regular files count.                                                                                                          |
 | `changed`    | Optional boolean; compare bytes with the initial baseline. `false` passes for identical or both-absent files, `true` only for a file the run created, removed or modified. |
 | `matches`    | Optional literal or `/…/` RE2 pattern, or a non-empty list of up to 100. Search semantics, not an implicit whole-file match.                                               |
@@ -231,7 +243,7 @@ Run a case under it to see which checks need the agent: `file` `matches` or `not
 
 At least one of `exists`, `changed`, `matches` or `notMatches` is required, and every declared pattern produces its own result. A pattern scalar is a non-empty string or a finite number compared as its text; unquoted booleans and mappings are configuration errors, since an unquoted `state: failed` in a list is a mapping rather than a string. A string is a literal substring unless it starts and ends with `/`, which makes it a RE2 pattern searched within the file: `^` and `$` bind to the file's start and end unless the pattern uses `(?m)`. A literal that itself starts and ends with `/` is written as a regex, such as `/\/bin\//`. Every `/…/` pattern compiles at load time on the shared RE2 engine ([Mocks](mocks.md#regexes) owns the dialect), which is linear-time and needs no worker or timeout.
 
-A missing file fails both `matches` and `notMatches`, so a restraint check never passes because the agent wrote nothing. File reads are capped at 1 MiB. Unsafe/replaced roots, escaping/broken symlinks, non-regular files, oversized files and unreadable evidence are errors rather than passes. No content normalization or `includes` alias is provided.
+A missing file fails both `matches` and `notMatches`, so a restraint check never passes because the agent wrote nothing. File reads are capped at 1 MiB. Unsafe/replaced roots, escaping/broken symlinks, non-regular files, oversized files and unreadable evidence are errors rather than passes. No content normalization or `includes` alias is provided. A `~/` path is rejected at load for a runner that gives the run no HOME, and `changed` compares against the case's own HOME placement, not against the agent file's or the login's content.
 
 ### Mock Checker (`$type: mock`)
 
@@ -261,10 +273,10 @@ Runs an author's program after the run and judges its exit status; use it for ou
   run: [node, --test, tests/acceptance.test.js]
 ```
 
-| Parameter | Contract                                                                                                                                                                                                                                                                                                                   |
-| --------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `run`     | Required non-empty list of non-empty strings: a program and its arguments, the same form as a mock's `run`. Never a shell interpreter.                                                                                                                                                                                     |
-| `files`   | Optional mapping from a workspace-relative destination to an authoring file or directory, with the same destination rules as `case.files` but not `.` for the root. Sources resolve from the case file; `../shared/test.js` is allowed, and a source directory's `.agentevalsignore` applies. Placed when this check runs. |
+| Parameter | Contract                                                                                                                                                                                                                                                                                                                                |
+| --------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `run`     | Required non-empty list of non-empty strings: a program and its arguments, the same form as a mock's `run`. Never a shell interpreter.                                                                                                                                                                                                  |
+| `files`   | Optional mapping from a workspace-relative destination (never `~/`) to an authoring file or directory, with the same destination rules as `case.files` but not `.` for the root. Sources resolve from the case file; `../shared/test.js` is allowed, and a source directory's `.agentevalsignore` applies. Placed when this check runs. |
 
 The program starts in the workspace root in the engine's check sandbox: open reads, writes only beneath the workspace and a private HOME and temporary directory, no network, and only `PATH`, `HOME` and `TMPDIR` in its environment (`PATH` is the operator's). It is supervised like the harness, so its whole process tree ends with the check. Exit `0` passes; any other exit fails with the tail of its output as the reason; a program that cannot start, dies from a signal or exceeds the check deadline (`timeoutMs`) is an error, not a failed judgment.
 
@@ -292,14 +304,14 @@ Asserts on what the run's trace shows, through derived events rather than raw en
 
 Strict parameters; an unknown field is a configuration error. A literal `name` matches at most one consultation, so `times` other than `0` or `1` requires a `/…/` pattern. One result: `pass` or `fail`. Its reason always lists the run's consulted skills, so a pass also shows why it held: `found 1 consultation, consulted: deploy-runbook`, or `expected exactly 0 consultations of markdown-writing, consulted: knowledge-base, markdown-writing`.
 
-When an executed command's text names the path of a `SKILL.md` the baseline placed, the reason adds that skill separately, as in `; touched via shell: knowledge-base`. Shell access is **reported, never counted**: it changes neither the status nor `times`, because whether reading a body through a shell is a consultation is ambiguous and parsing shell commands would err in both directions. A `SKILL.md` the agent created during the run is not reported; only the baseline's placed files are.
+When an executed command's text names the path of a `SKILL.md` a baseline placed, the reason adds that skill separately, as in `; touched via shell: knowledge-base`. Shell access is **reported, never counted**: it changes neither the status nor `times`, because whether reading a body through a shell is a consultation is ambiguous and parsing shell commands would err in both directions. A `SKILL.md` the agent created during the run is not reported; only a case's placed files are.
 
 Only completed tool calls (`type: "tool"`, `status: "completed"`) count, in the two forms harnesses report:
 
 - **A dedicated skill tool.** Any non-`read` call with a non-empty `rawInput.skill` contributes that string. Claude Code titles it `Load skill: <name>` and GitHub Copilot CLI `Using skill: <name>`.
-- **A `SKILL.md` read.** A `read` call whose target (`locations[0].path`, `rawInput.path` or `rawInput.file_path`) has the basename `SKILL.md`, as Pi reports it. The name is the frontmatter `name` of the same file in the run's initial baseline when the target is in the workspace, so offsets, chunks and edits during the run do not change it; otherwise the frontmatter `name` of the text the read returned; otherwise the parent directory's name, which the result's reason says was used. Traces spell workspace paths relative, `/var/…` or `/private/var/…`, and all three resolve to the same file.
+- **A `SKILL.md` read.** A `read` call whose target (`locations[0].path`, `rawInput.path` or `rawInput.file_path`) has the basename `SKILL.md`, as Pi reports it. The name is the frontmatter `name` of the same file in the run's initial baseline when the target is in the workspace or in HOME, so offsets, chunks and edits during the run do not change it; otherwise the frontmatter `name` of the text the read returned; otherwise the parent directory's name, which the result's reason says was used. Traces spell a path relative to the workspace, as `~/…`, or as an absolute `/var/…` or `/private/var/…`; all of these resolve to the same file.
 
-A skill is one consultation however often or in however many chunks it was read. The derivation is the exported, asynchronous `skillConsultations(trace, { workspace, baseline })` from the [package entry](../src/index.ts), so an extension checker can reuse it; see [Extensions](extensions.md#current-limits).
+A skill is one consultation however often or in however many chunks it was read. The derivation is the exported, asynchronous `skillConsultations(trace, sources)` from the [package entry](../src/index.ts), where `sources` names the run's workspace and HOME and the baselines that recorded what the case placed in each; an extension checker can reuse it. See [Extensions](extensions.md#current-limits).
 
 What `trace` cannot prove: shell reads such as `cat SKILL.md` are not consultations, so a positive check can fail although the skill body was read, and `times: 0` proves only that no recognized tool call loaded it — the `touched via shell` note is informational and never evidence of a consultation; a placed skill's `description` stays visible in the harness's roster, so `times: 0` is about loading the body; any completed non-read call with a string `skill` parameter counts, so an unrelated tool with that parameter would be read as a consultation; and copies of a same-named skill are not distinguished, because skill tools report only a name. Ordering assertions and field matching on raw trace entries are not offered. "No skill consulted at all" needs no new option: `name: /.*/` with `times: 0` matches every consultation and asserts there are none.
 
@@ -328,6 +340,8 @@ The judge receives the task, the selected regular-file evidence (or an explicit 
 ## Inspecting and Recording
 
 `view` uses the same authoring resolver as `run`, then prints the resolved declaration and each top-level field's source file, 1-based declaration line, and common/selected-case origin. Case labels are JSON-escaped. Placeholders are shown unsubstituted. It does not show implementation defaults or invoke implementation schemas, factories, environment lookups or harnesses; it is not a runtime-readiness check.
+
+A `placement:` section follows the field origins: one line per case-level entry — `fixture <dir>`, `files "<destination>"` and `home "<~/destination>"` — with how many paths that entry would place and how many it excludes. The dry run uses the same traversal and `.agentevalsignore` rules as a run, and names the agent file's HOME content only as the runner's business: it is not listed. `--files` lists every placed destination with its authoring source and every exclusion with the deciding ignore file's directory; an excluded directory is one line without its contents, and the `.agentevalsignore` file itself is not listed. A missing source is a configuration error, so `view` fails where a run would, but it starts nothing.
 
 `run` writes `.agent-evals/<run-id>/result.json` in the invocation directory by default; `--results-dir` changes the root. This is retained report data, not the evaluated workspace. Schema version 1 retains source path/optional case name, declared `resolvedConfig`, runner outcome, individual checks, overall status, diagnostics and cleanup status. The runner record also carries an optional `usage`, as far as the harness reports it: `context` (`used` and `size` from the last ACP `usage_update`), `cost` (that update's cumulative session `amount` and `currency`; omitted leaves it, `null` clears it) and `tokens` (`totalTokens`, `inputTokens`, `outputTokens`, plus optional `thoughtTokens`, `cachedReadTokens` and `cachedWriteTokens` from the prompt response's unstable `usage`). Each part is optional, nothing is estimated, and `_meta` is not recorded. Usage is reported whether or not the run completed, so a timed-out run keeps the last context and cost it saw; tokens arrive with the turn's completion. Native Pi and `noop` report no usage. Substituted and schema-normalized/defaulted values do not replace the declaration; implementation outputs are retained normally. A runner that records a trace (currently `acp`) also writes `trace.json` beside it, including for failed, timed-out or cancelled runs: an ordered list of `message` and `thought` entries (consecutive chunks joined) and `tool` entries. ACP updates replace the fields they carry, so each tool entry is one `toolCallId` in its final state with the harness's own fields (`title`, `kind`, `status`, `rawInput`, `content`, ...); intermediate states are not kept. Non-text content and other session updates are not recorded. A case that declares [`mocks`](#mocks) also writes `mocks.json`: the calls that reached a mocked command in arrival order, each as a `target` and its `arguments`. It is run evidence, not a copy of the `mocks` declaration, and holds no output or exit code and no judgment. The [judge](#judge-checker-type-judge) can take the trace as evidence, and the [trace checker](#trace-checker-type-trace) asserts derived skill consultations; raw trace entries have no field-level assertions, because field meanings differ between harnesses. Literal keys authored in YAML are declaration data and are not automatically masked. No resource hashes or workspace snapshots are retained, so old resource contents cannot be reconstructed from their unchanged paths.
 

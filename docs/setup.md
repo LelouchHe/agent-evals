@@ -55,13 +55,15 @@ Lookup commands execute as trusted operator code from the invocation directory, 
 
 ### How Isolated Harness Homes Work
 
-Seatbelt blocks the operator's real `$HOME`, login keychain, Homebrew prefix and version-manager directories so everyday dotfiles, global skills and session history never leak into an evaluation or get mutated by it. Instead, every ACP run (and `config` / `login` command) starts in a fresh temporary `$HOME` assembled from three parts declared in [`AgentConfig`](configuration.md#acp-preparation-helpers), then deletes that `$HOME` when finished:
+Seatbelt blocks the operator's real `$HOME`, login keychain, Homebrew prefix and version-manager directories so everyday dotfiles, global skills and session history never leak into an evaluation or get mutated by it. Instead, every ACP run (and `config` / `login` command) gets a fresh temporary run directory, assembled from what the [agent file](configuration.md#agent-files) declares and deleted when finished:
 
-- **`home.deps` — read-only software and static evaluation settings.** Holds the harness executable, ACP adapter, language runtime (when needed) and evaluation-specific user settings (such as disabling telemetry, connectors or interactive trust prompts), laid out relative to `$HOME`. Setup recreates its directories and links every file into the temporary `$HOME` as a **read-only symlink** — tens of thousands of files assemble in under a second, and a runaway agent cannot modify `deps` across runs.
-- **`home.login` — mutable authentication state (optional).** Holds only the credential or account files the harness reads from `$HOME` (kept separate from your everyday sessions). Because harnesses lock, rewrite or rotate refresh tokens in place, these files cannot be read-only symlinks: setup **copies** them into the temporary `$HOME` before launch, copies modified originals back after the sandbox stops, and discards transient caches, logs and session databases created during the run.
-- **`home.path` — `$HOME`-relative command directories.** Inside the sandbox, `PATH` contains only `home.path` entries followed by `/usr/bin:/bin:/usr/sbin:/sbin`. Naming the directory where `deps` placed its executables (for example `[.local/bin]` or `[bin]`) makes `acpCommand` and tool subshells find the harness's own binaries without inheriting the host `PATH`.
+- **`deps` — read-only software.** The harness executable, ACP adapter and language runtime (when needed), laid out by the caller. The run root gets one directory symlink, `deps`, and `PATH` entries are `run-xxxx/deps/<path>`; the software is referenced in place, never copied or mirrored into `HOME`, so `which pi` answers a run-root path and a runaway agent cannot modify it. `path` defaults to `[bin]`, so `deps/bin` plus shared files beside it is the example layout; any other layout works by declaring `path`.
+- **`files` — the harness's static settings.** A `~/` destination per settings file, with the authoring file beside the agent file. The run **copies** them into `HOME` (a directory source merges, and `.agentevalsignore` applies), so a harness that rewrites its settings at startup changes only that run. There is no prepared HOME-base directory to drift out of date.
+- **`login` — mutable authentication state (optional).** `dir` is the persistent login directory (kept separate from your everyday sessions); `files` is its composition. Because harnesses lock, rewrite or rotate refresh tokens in place, those files are **copied** into `HOME` before launch, and changed originals are copied back after the sandbox stops. Caches, logs and session databases created during the run are discarded.
 
-Nothing in `agent-evals` fixes directory names such as `deps/`, `login/` or `.local/bin`, or limits which ACP harnesses you can run: any directory layout that satisfies the three rules above (real subdirectories and regular files in `deps`, non-overlapping regular files in `login`, matching `home.path` and `acpCommand`) works unchanged, either in a standalone `.yml` file or inline under `runner.agent`.
+Inside the sandbox, `PATH` contains only the declared `path` entries under the run's `deps`, followed by `/usr/bin:/bin:/usr/sbin:/sbin`, and the mock forwarder directory first when the case declares mocks. `HOME` holds the agent file's `files`, the login files and the case's own `~/` entries — never the software. The workspace (with any project skills) is the working directory, and `engine/` is unreadable to the agent.
+
+Nothing in `agent-evals` fixes directory names: any layout with regular files under `deps`, regular files in the login directory, and matching `path` and `acpCommand` works, either in a standalone `.yml` file or inline under `runner.agent`.
 
 ### Reference Examples
 
@@ -73,13 +75,13 @@ Nothing in `agent-evals` fixes directory names such as `deps/`, `login/` or `.lo
 ./examples/agents/copilot-setup.sh ~/agent-evals-home/copilot
 ```
 
-Each example script populates `deps/` and `login/` under its target path and prints the `*_DEPS` / `*_LOGIN` lines for `.env`:
+Each example script prepares only software, under `deps/` (`deps/bin` plus `deps/share`), and an empty `login/`; it prints the `*_DEPS` / `*_LOGIN` lines for `.env`. The harness settings stay beside the agent file and are placed by its `files`:
 
-| Harness                                                           | Setup script & overrides                                                                                                                                                                                | Settings file copied into `deps/`                                                                                                             | Authentication                                                                                                                                                                 |
-| ----------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| **Pi** ([`pi.yml`](../examples/agents/pi.yml))                    | [`pi-setup.sh`](../examples/agents/pi-setup.sh) installs official Node 24, `@earendil-works/pi-coding-agent` and official `pi-acp` (`NODE_VERSION`, `PI_ACP_SPEC`).                                     | [`pi-settings.json`](../examples/agents/pi-settings.json) → `.pi/agent/settings.json` (`defaultProjectTrust: "always"`, no telemetry/retries) | `npm run eval -- login examples/agents/pi.yml` saves `.pi/agent/auth.json` into `PI_LOGIN`.                                                                                    |
-| **Claude Code** ([`claude.yml`](../examples/agents/claude.yml))   | [`claude-setup.sh`](../examples/agents/claude-setup.sh) installs official Node 24 and `@agentclientprotocol/claude-agent-acp`, linking its bundled `claude` binary (`NODE_VERSION`, `CLAUDE_ACP_SPEC`). | [`claude-settings.json`](../examples/agents/claude-settings.json) → `.claude/settings.json` (disables account skill sync and connectors)      | One-year [`claude setup-token`](#claude-code-claudeyml) stored in Keychain as `CLAUDE_OAUTH_TOKEN`.                                                                            |
-| **Copilot CLI** ([`copilot.yml`](../examples/agents/copilot.yml)) | [`copilot-setup.sh`](../examples/agents/copilot-setup.sh) downloads the standalone `@github/copilot-<platform>` binary or copies `COPILOT_BIN` (`COPILOT_VERSION`, `COPILOT_BIN`).                      | [`copilot-settings.json`](../examples/agents/copilot-settings.json) → `.copilot/settings.json` (`storeTokenPlaintext: true`, sandbox off)     | `npm run eval -- login examples/agents/copilot.yml` (or copy `copilotTokens`, `authTokens`, `lastLoggedInUser` and `loggedInUsers` into `COPILOT_LOGIN/.copilot/config.json`). |
+| Harness                                                           | Setup script & overrides                                                                                                                                                                                | Settings placed by `files`                                                                                                                      | Authentication                                                                                                                                                                 |
+| ----------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **Pi** ([`pi.yml`](../examples/agents/pi.yml))                    | [`pi-setup.sh`](../examples/agents/pi-setup.sh) installs official Node 24, `@earendil-works/pi-coding-agent` and official `pi-acp` (`NODE_VERSION`, `PI_ACP_SPEC`).                                     | [`pi-settings.json`](../examples/agents/pi-settings.json) → `~/.pi/agent/settings.json` (`defaultProjectTrust: "always"`, no telemetry/retries) | `npm run eval -- login examples/agents/pi.yml` saves `.pi/agent/auth.json` into `PI_LOGIN`.                                                                                    |
+| **Claude Code** ([`claude.yml`](../examples/agents/claude.yml))   | [`claude-setup.sh`](../examples/agents/claude-setup.sh) installs official Node 24 and `@agentclientprotocol/claude-agent-acp`, linking its bundled `claude` binary (`NODE_VERSION`, `CLAUDE_ACP_SPEC`). | [`claude-settings.json`](../examples/agents/claude-settings.json) → `~/.claude/settings.json` (disables account skill sync and connectors)      | One-year [`claude setup-token`](#claude-code-claudeyml) stored in Keychain as `CLAUDE_OAUTH_TOKEN`.                                                                            |
+| **Copilot CLI** ([`copilot.yml`](../examples/agents/copilot.yml)) | [`copilot-setup.sh`](../examples/agents/copilot-setup.sh) downloads the standalone `@github/copilot-<platform>` binary or copies `COPILOT_BIN` (`COPILOT_VERSION`, `COPILOT_BIN`).                      | [`copilot-settings.json`](../examples/agents/copilot-settings.json) → `~/.copilot/settings.json` (`storeTokenPlaintext: true`, sandbox off)     | `npm run eval -- login examples/agents/copilot.yml` (or copy `copilotTokens`, `authTokens`, `lastLoggedInUser` and `loggedInUsers` into `COPILOT_LOGIN/.copilot/config.json`). |
 
 #### Pi (`pi.yml`)
 
@@ -90,7 +92,7 @@ PI_ACP_SPEC=/path/to/pi-acp ./examples/agents/pi-setup.sh ~/agent-evals-home/pi
 npm run eval -- login examples/agents/pi.yml
 ```
 
-If interactive `pi` startup needs `fd` or `rg`, place them in `$PI_DEPS/.local/bin` as well.
+If interactive `pi` startup needs `fd` or `rg`, place them in `$PI_DEPS/bin` as well: a prepared tool is software. Pi's own downloads land in the run `HOME` and disappear with the run.
 
 #### Claude Code (`claude.yml`)
 
@@ -98,7 +100,7 @@ Claude runs on a one-year [`claude setup-token`](https://code.claude.com/docs/en
 
 ```sh
 # Opens browser authorization and prints the token without saving it:
-"$CLAUDE_DEPS/.local/bin/claude" setup-token
+"$CLAUDE_DEPS/bin/claude" setup-token
 # Store in macOS Keychain (-w last prompts without echoing into shell history):
 security add-generic-password -U -a "$USER" -s claude-oauth-token -w
 ```
@@ -108,6 +110,15 @@ Reference it in `.env` as `CLAUDE_OAUTH_TOKEN="!security find-generic-password -
 #### GitHub Copilot CLI (`copilot.yml`)
 
 `copilot-setup.sh` downloads the standalone native Mach-O binary from `@github/copilot-<platform>` by default. If you already have the standalone native binary installed (for example via Homebrew Cask at `/opt/homebrew/bin/copilot` — **not** an `npm install -g @github/copilot` JS wrapper, which requires Node and its `node_modules` tree), you can pass `COPILOT_BIN=/path/to/copilot` to copy it instead; the script verifies that `COPILOT_BIN` is a Mach-O executable.
+
+### Migrating From the Prepared-HOME Layout
+
+Agent files previously declared `home.deps`, `home.login` and `home.path`, and the settings file lived inside `deps/`. That syntax is not kept, and nothing migrates it for you:
+
+1. Re-run the setup script into a new target directory (or the same one after moving the old tree aside). It prepares `deps/{bin,share}` with software only.
+2. Replace the agent file's `home:` block with `deps:`, an optional `path:` (the examples use the default `bin`) and a `files:` map for the harness settings. Move `command` and the login file list under `login:`.
+3. Point `*_DEPS` at the new `deps/`. Keep `*_LOGIN`; existing login directories work unchanged. Any `settings.json` left inside an old `deps/` is now simply unread software data.
+4. Run `agent-evals config <agent.yml>` for each harness. A missing `deps` is a configuration error; a stale agent file fails on the unknown `home` key.
 
 ## Verify Readiness
 

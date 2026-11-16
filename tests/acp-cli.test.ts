@@ -252,7 +252,7 @@ test("helpers reject invalid schemas, YAML reuse and run-only flags before launc
 });
 
 test(
-  "helpers reject overlapping software/login roots and recursive runtime mirroring",
+  "helpers reject overlapping software/login roots and a run directory inside deps",
   { skip: process.platform !== "darwin" },
   async (t) => {
     const fixture = await makeAcpAgent(t);

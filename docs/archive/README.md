@@ -9,5 +9,4 @@ Historical design, verification and delivery records for completed milestones. C
 | [M3](m3-plan.md) | Shell collaborator mocks (`return`, `run`, `pass`) and RE2 matching         |
 | [M4](m4-plan.md) | `mock` and `shell` checkers, check sandbox, usage recording, `noop`         |
 | [M5](m5-plan.md) | Deterministic `trace` checker and cross-harness skill consultations         |
-
-The [M6](m6-plan.md) plan is in review; it is not delivered.
+| [M6](m6-plan.md) | Run layout: `deps` outside `HOME`, layered home, `~/` placement, `view`     |
