@@ -441,7 +441,22 @@ async function runChecks(
           reject(new Error(`checker exceeded the ${timeoutMs}ms execution timeout`));
         }, timeoutMs + 1_000);
       });
-      results.push(...(await Promise.race([promise, timeout])));
+      const settled = await Promise.race([promise, timeout]);
+      // A pass that arrives after the budget signal fired is not trusted: the deadline exists to
+      // bound the check, and claiming success past it is the loophole. A checker that reports its
+      // own error or fail is kept, because that is the deadline it is already reporting.
+      results.push(
+        ...settled.map((result) =>
+          timedOutCheck && result.status === "pass"
+            ? {
+                checker: result.checker,
+                subject: result.subject,
+                status: "error" as const,
+                reason: truncate(`checker exceeded the ${timeoutMs}ms execution timeout: ${result.reason}`, 800),
+              }
+            : result,
+        ),
+      );
     } catch (caught) {
       const reason = signal.aborted
         ? "run was cancelled while this check was running"

@@ -11,6 +11,7 @@ import { runEvaluation } from "../src/engine/run.ts";
 import type { EvaluationRecord } from "../src/engine/results.ts";
 import { fileChecker } from "../src/checkers/file/index.ts";
 import { judgeChecker } from "../src/checkers/judge/index.ts";
+import { noopRunner } from "../src/runners/noop/index.ts";
 import { piRunner } from "../src/runners/pi/index.ts";
 import { createFakePi, makeTempDir } from "./helpers/fake-pi-control.ts";
 import { z } from "zod";
@@ -705,4 +706,79 @@ test("integration: a checker that returns results synchronously is judged, not d
     ],
   );
   assert.match(record.checks[1]?.reason ?? "", /synchronous failure/);
+});
+
+test("integration: a checker that answers after its budget is an error, not a pass", async (t) => {
+  const directory = await makeTempDir(t, "ae-late-checker-");
+  const casePath = join(directory, "case.yml");
+  await writeFile(
+    casePath,
+    stringify({
+      input: "noop",
+      timeoutMs: 20,
+      checks: [{ $type: "late-pass" }, { $type: "sentinel" }],
+      runner: { $type: "noop" },
+    }),
+  );
+
+  // The budget is the verdict: a checker that finishes after its abort signal fired has still
+  // exceeded it, and the remaining checks must run regardless.
+  const registry = createRegistry();
+  addRunner(registry, noopRunner, "built-in");
+  addChecker(
+    registry,
+    {
+      type: "late-pass",
+      params: z.strictObject({}),
+      create: () => ({
+        check: ({ signal }: { signal: AbortSignal }) =>
+          new Promise((resolve) => {
+            signal.addEventListener("abort", () =>
+              setTimeout(
+                () =>
+                  resolve([
+                    { checker: "late-pass", subject: "late result", status: "pass" as const, reason: "answered late" },
+                  ]),
+                50,
+              ),
+            );
+          }),
+      }),
+    },
+    "test",
+  );
+  addChecker(
+    registry,
+    {
+      type: "sentinel",
+      params: z.strictObject({}),
+      create: () => ({
+        check: () => [
+          {
+            checker: "sentinel",
+            subject: "sentinel result",
+            status: "pass" as const,
+            reason: "ran after the late check",
+          },
+        ],
+      }),
+    },
+    "test",
+  );
+
+  const record = await runEvaluation({
+    case: await loadCase(casePath),
+    registry,
+    resultsDir: await makeTempDir(t, "ae-results-"),
+    tempParent: await makeTempDir(t, "ae-runs-"),
+  });
+
+  assert.deepEqual(
+    record.checks.map((check) => [check.checker, check.status]),
+    [
+      ["late-pass", "error"],
+      ["sentinel", "pass"],
+    ],
+  );
+  assert.match(record.checks[0]?.reason ?? "", /checker exceeded the 20ms execution timeout/);
 });
