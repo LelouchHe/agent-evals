@@ -139,6 +139,23 @@ Application order is agent `files` → login files → the case's `~/` entries. 
 
 One implementation detail beyond the design text: a case `~/` entry that a login file would replace is rejected at load from the runner's declared `homeFiles`, not only at placement. Two case entries normalizing to one path and a file-versus-directory conflict are detected while staging, which is also when a workspace `files` collision is detected.
 
+## Verified at Delivery
+
+- **Gates.** `npm run check` passes (320 tests, including the new layout, HOME placement, trace, file-check and `view` tests) and `npm run test:package` passes (1 test). Every commit ran the pre-commit lint/format hook.
+- **Free evidence, from the built CLI.** `agent-evals config` answered for all three example agent files with software under the new `deps` and the run layout in place. A model-free ACP runner test shows a run whose `PATH` starts with `run-xxxx/deps/bin`, whose `which agent` is a run-root path, whose `home/`, `workspace/` and `tmp/` writes succeed, whose `deps` write and `engine/` read are denied, and whose HOME holds only the agent placement and harness-written state. Placement tests cover the case replacing an agent file, `file` `~/` paths with `changed: false`, a HOME-root placement, `.agentevalsignore` under `~/`, all collision rules, and the `noop` rejection. `view` on the routing document's q10 reports `files ".agents/skills": 72 placed, 17 excluded` and `home "~/mine/space": 1 placed, 0 excluded`; `--files` names the vault source and the deciding ignore files.
+- **Paid runs** (authorized budget): `deploy-runbook` once per harness and routing q10 once.
+
+| Run                                 | Status                                                     | Runner    | Duration | Reported cost                           |
+| ----------------------------------- | ---------------------------------------------------------- | --------- | -------- | --------------------------------------- |
+| deploy-runbook `pi-with-skill`      | pass (13/13 checks)                                        | completed | 23.6 s   | none reported by the installed `pi-acp` |
+| deploy-runbook `claude-with-skill`  | pass (13/13)                                               | completed | 15.1 s   | 0.00334776 USD                          |
+| deploy-runbook `copilot-with-skill` | pass (13/13)                                               | completed | 29.6 s   | none reported (100,335 tokens)          |
+| routing q10 (Pi)                    | fail (knowledge-base loaded, markdown-writing also loaded) | completed | 35.1 s   | none reported                           |
+
+Two earlier `pi-with-skill` attempts ended as `error` with every deterministic check passing and both judges failing `getaddrinfo ENOTFOUND`. The cause was pre-existing and outside this milestone's layout: the native Pi sandbox policy (shared with the judge) denied the `/etc` and `/var` literals libc stats before falling back to `resolv.conf`. Allowing those literal reads, as the ACP policy already does, fixed it; the runs above used the fixed build.
+
+The q10 trace shows the agent `cd ~/mine/space` in the shell and read the vault's `index.md` there, then stopped to ask for the owning project instead of writing; one `read` of the literal host path `/Users/lelouch/mine/space` was denied by the sandbox. It consulted knowledge-base and markdown-writing, so the negative check fails as it did in the pre-change sweep.
+
 ## Verified Premises
 
 Each premise decided whether decision 1 was workable. The probe assembled the proposed layout by hand under `/private/tmp/m6-premise/runs/<harness>/`, copied the settings file from a clone of `deps` into `home/`, copied the declared login files, linked `deps` to the clone, granted the sandbox the proposed roots, and spoke ACP `initialize` + `session/new` with the real adapter. It was the same session work `agent-evals config` does, so it started each harness and listed its options without prompting a model. The probe used the then-current example layout (`deps/.local/bin`); the delivered examples use `deps/bin` and the same probe shape was re-run after delivery through `agent-evals config`.
