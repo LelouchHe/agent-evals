@@ -138,7 +138,7 @@ A workspace-script target's real script leaves the agent's reach unless a rule c
 
 - With no `pass` rule the real file is moved out of the workspace, so only the forwarder is runnable.
 - When any rule can `pass`, the real script stays beside its forwarder under the same name with a leading dot (`scripts/deploy.sh` becomes `scripts/.deploy.sh`), so `dirname "$0"` and `BASH_SOURCE`-style lookups keep working. An existing file of that name is a configuration error; a `pass` rule without a real script is one too.
-- The forwarder is written before the baseline snapshot, so `file` `unchanged` compares forwarder with forwarder.
+- The forwarder is written before the baseline snapshot, so `file` `changed: false` compares forwarder with forwarder.
 
 Workspace scripts are executed, not sourced: a sourced script would see the calling shell as `$0`, so the forwarder could not identify itself.
 
@@ -197,7 +197,7 @@ Not expressible yet: repeated options (`-e A=1 -e B=2`), exact argument lists (a
 
 ## Regexes
 
-Every pattern in a case is RE2: mock `args` patterns here, and the [`file` checker's](configuration.md#file-checker-type-file) `matches`. RE2 has no lookaround or backreferences, and such a pattern is a configuration error at load time; every accepted pattern runs in linear time, so matching cannot be driven into catastrophic backtracking by agent-controlled input. One dialect covers both places; the `file` checker searches within the file while mock patterns must match a whole token. Patterns that rely on JavaScript-only syntax need rewriting, for example asserting the absence of a substring with an anchored pattern over the allowed shapes instead of `(?!…)`.
+One rule covers every pattern in a case, here and in the [`file` checker's](configuration.md#file-checker-type-file) `matches` and `notMatches`: a scalar is a literal, and a string that starts and ends with `/` is RE2. Only the scope differs — a mock pattern must match a whole argv token, while the `file` checker searches within the file's UTF-8 text, so `^` and `$` bind to the file's start and end unless the pattern uses `(?m)`. A literal that itself starts and ends with `/`, such as `/tmp/`, is written as a regex. RE2 has no lookaround or backreferences, and such a pattern is a configuration error at load time; every accepted pattern runs in linear time, so matching cannot be driven into catastrophic backtracking by agent-controlled input. Patterns that rely on JavaScript-only syntax need rewriting; for the `file` checker, a forbidden substring is `notMatches` rather than `(?!…)`.
 
 ## Faults
 

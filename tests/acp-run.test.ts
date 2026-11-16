@@ -31,7 +31,7 @@ async function runCase(
     stringify({
       input: INPUT,
       ...extra,
-      checks: [{ $type: "file", path: "answer.txt", matches: `^model-b: ${INPUT}$` }],
+      checks: [{ $type: "file", path: "answer.txt", matches: `/^model-b: ${INPUT}$/` }],
       runner: { $type: "acp", ...runner(fixture) },
     }),
   );

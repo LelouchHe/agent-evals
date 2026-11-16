@@ -56,7 +56,7 @@ my-case/
   skill/SKILL.md
 ```
 
-`fixture` is the base environment. A case's `files` entry places a file or directory at a workspace-relative destination, for example `.agents/skills/deploy-runbook: skill` for Pi's project-level discovery path; the engine copies and assigns no meaning to the destination. Placed files are part of the baseline that `unchanged` compares against, so a case may replace a fixture file rather than duplicate the whole fixture.
+`fixture` is the base environment. A case's `files` entry places a file or directory at a workspace-relative destination, for example `.agents/skills/deploy-runbook: skill` for Pi's project-level discovery path; the engine copies and assigns no meaning to the destination. Placed files are part of the baseline that `changed: false` compares against, so a case may replace a fixture file rather than duplicate the whole fixture.
 
 Add a fixture directory only when initial files are needed. Do not populate an intentionally empty workspace with placeholder files or require a setup/check script for every case. Dedicated setup/custom-check assets may be useful authoring resources, but M1 does not provide generic setup-script or arbitrary checker-script YAML fields.
 
@@ -66,7 +66,7 @@ Expose only the intended task, resources and environment to the agent. Case/chec
 
 ## Choose Evidence and Checks
 
-Use deterministic checks for exact facts and a judge for qualitative criteria. A file check need not become a new checker class for every assertion; one checker can return several results. A rubric can be a list of statements without mandatory business categories. Use `shell` for an outcome only execution shows, such as the project's tests; it runs the command, so pair it with `file` `unchanged` on files the agent must not edit. A `shell` check's `files` places authored tests into the workspace only when it runs, so the agent never sees them; placement replaces whatever the agent left at that path without following a symlink.
+Use deterministic checks for exact facts and a judge for qualitative criteria. A file check need not become a new checker class for every assertion; one checker can return several results. A rubric can be a list of statements without mandatory business categories. Use `shell` for an outcome only execution shows, such as the project's tests; it runs the command, so pair it with `file` `changed: false` on files the agent must not edit. A `shell` check's `files` places authored tests into the workspace only when it runs, so the agent never sees them; placement replaces whatever the agent left at that path without following a symlink.
 
 Do not create routing-versus-behavior pipelines. Skill loading, tool choices, restraint and result quality are concerns expressed through checks and evidence when those observations exist.
 

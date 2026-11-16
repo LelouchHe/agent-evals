@@ -94,7 +94,7 @@ test(
     const { record } = await runCase(t, {
       checks: [
         { $type: "shell", run: ["/bin/sh", "-c", "printf made > artifact.txt"] },
-        { $type: "file", path: "artifact.txt", matches: "^made$" },
+        { $type: "file", path: "artifact.txt", matches: "/^made$/" },
       ],
     });
     assert.equal(record.status, "pass", record.error);
@@ -267,7 +267,7 @@ test(
             run: ["node", "--test", "tests/acceptance.test.js"],
           },
           // The placed file stays in the live workspace for the next check.
-          { $type: "file", path: "tests/acceptance.test.js", matches: 'require\\("node:test"\\)' },
+          { $type: "file", path: "tests/acceptance.test.js", matches: '/require\\("node:test"\\)/' },
         ],
       },
       { caseSubdir: "cases", assets: { "shared/acceptance.test.js": PASSING_TEST } },

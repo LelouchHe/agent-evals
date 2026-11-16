@@ -1,58 +1,103 @@
 import { z } from "zod";
-import { errorMessage } from "../../engine/config.ts";
+import { errorMessage, parsePatternScalar, type PatternScalarResult, type PatternSyntax } from "../../engine/config.ts";
 import type { CheckResult, Checker, CheckerContext, CheckerDefinition } from "../../engine/registry.ts";
 import { runRelativePathSchema } from "../../engine/params.ts";
 import { truncate } from "../../engine/truncate.ts";
-import { compilePattern, searches } from "../../engine/regex.ts";
+import { searches } from "../../engine/regex.ts";
 import { isMissing, readRunFile, runFileExists, type RunRoot } from "../../engine/workspace.ts";
 
 const MAX_PATTERNS = 100;
 
-const patternSchema = z
-  .string()
-  .min(1, "must not be empty")
-  .superRefine((pattern, context) => {
-    try {
-      compilePattern(pattern);
-    } catch (error) {
-      context.addIssue({
-        code: "custom",
-        message: `is not a valid RE2 regular expression: ${errorMessage(error)}`,
-      });
+/**
+ * One literal or /…/ pattern. A YAML number is compared as its text; a boolean or a mapping is
+ * rejected, because an unquoted `state: failed` in a list is a mapping rather than the string
+ * the author meant.
+ */
+const patternSchema = z.unknown().transform((value, context): PatternSyntax => {
+  const parsed = parsePatternScalar(value);
+  if (parsed.kind === "pattern") {
+    if (parsed.pattern.regex && parsed.pattern.source.length === 0) {
+      context.addIssue({ code: "custom", message: "must name a pattern inside /…/" });
+      return z.NEVER;
     }
+    return parsed.pattern;
+  }
+  context.addIssue({ code: "custom", message: patternIssue(value, parsed) });
+  return z.NEVER;
+});
+
+/** The field-level message for a scalar that is not a pattern; each case names its own mistake. */
+function patternIssue(value: unknown, parsed: Extract<PatternScalarResult, { kind: "invalid" }>): string {
+  if (parsed.reason === "regex") {
+    return `is not a valid RE2 pattern: ${parsed.message}`;
+  }
+  if (typeof value === "object" && value !== null) {
+    return 'must be a string, number or /…/ RE2 pattern; quote a string containing ": ", as in "state: failed"';
+  }
+  if (typeof value === "boolean") {
+    return "must be a string, number or /…/ RE2 pattern; quote a boolean literal";
+  }
+  return "must be a non-empty string, number or /…/ RE2 pattern";
+}
+
+/** One pattern or a non-empty list of them, normalized to a list in declaration order. */
+const patternListSchema = z.unknown().transform((value, context): readonly PatternSyntax[] => {
+  if (Array.isArray(value) && value.length === 0) {
+    context.addIssue({ code: "custom", message: "must hold at least one pattern" });
+    return [];
+  }
+  const entries = Array.isArray(value) ? value : [value];
+  if (entries.length > MAX_PATTERNS) {
+    context.addIssue({ code: "custom", message: `must hold at most ${MAX_PATTERNS} patterns` });
+    return [];
+  }
+  const listed = Array.isArray(value);
+  return entries.flatMap((entry, index) => {
+    const parsed = patternSchema.safeParse(entry);
+    if (parsed.success) {
+      return [parsed.data];
+    }
+    // A scalar names the field itself; only a list entry needs its position.
+    const path = listed ? [index] : [];
+    for (const issue of parsed.error.issues) {
+      context.addIssue({ code: "custom", path: [...path, ...issue.path], message: issue.message });
+    }
+    return [];
   });
+});
 
 const fileCheckParamsSchema = z
   .strictObject({
     path: runRelativePathSchema,
     exists: z.boolean().optional(),
-    matches: z.union([patternSchema, z.array(patternSchema).max(MAX_PATTERNS)]).optional(),
-    unchanged: z.literal(true).optional(),
+    changed: z.boolean().optional(),
+    matches: patternListSchema.optional(),
+    notMatches: patternListSchema.optional(),
   })
   .superRefine((params, context) => {
-    const patternCount =
-      params.matches === undefined ? 0 : typeof params.matches === "string" ? 1 : params.matches.length;
-    if (params.exists === undefined && params.unchanged === undefined && patternCount === 0) {
+    if (
+      params.exists === undefined &&
+      params.changed === undefined &&
+      params.matches === undefined &&
+      params.notMatches === undefined
+    ) {
       context.addIssue({
         code: "custom",
-        message: "needs at least one of exists, matches, or unchanged",
+        message: "needs at least one of exists, changed, matches, or notMatches",
       });
     }
   })
-  .transform((params) => {
-    const patterns =
-      params.matches === undefined ? [] : typeof params.matches === "string" ? [params.matches] : params.matches;
-    return {
-      path: params.path,
-      ...(params.exists === undefined ? {} : { exists: params.exists }),
-      ...(params.unchanged === undefined ? {} : { unchanged: params.unchanged }),
-      patterns,
-    };
-  });
+  .transform((params) => ({
+    path: params.path,
+    ...(params.exists === undefined ? {} : { exists: params.exists }),
+    ...(params.changed === undefined ? {} : { changed: params.changed }),
+    matches: params.matches ?? [],
+    notMatches: params.notMatches ?? [],
+  }));
 
 type FileCheckParams = z.output<typeof fileCheckParamsSchema>;
 
-/** Declarative workspace file assertions: exists, regex search, unchanged. */
+/** Declarative workspace file assertions: exists, changed, matches, notMatches. */
 export const fileChecker: CheckerDefinition<FileCheckParams> = {
   type: "file",
   params: fileCheckParamsSchema,
@@ -60,6 +105,12 @@ export const fileChecker: CheckerDefinition<FileCheckParams> = {
     return new FileChecker(params);
   },
 };
+
+/** One declared pattern and whether it must be found or must be absent. */
+interface DeclaredPattern {
+  readonly kind: "matches" | "notMatches";
+  readonly pattern: PatternSyntax;
+}
 
 class FileChecker implements Checker {
   readonly #params: FileCheckParams;
@@ -69,77 +120,98 @@ class FileChecker implements Checker {
   }
 
   readonly check = async (context: CheckerContext): Promise<readonly CheckResult[]> => {
-    const parsed = this.#params;
+    const params = this.#params;
     const results: CheckResult[] = [];
 
-    if (parsed.exists !== undefined) {
+    if (params.exists !== undefined) {
+      const expected = params.exists;
       results.push(
-        await condition(`${parsed.path} ${parsed.exists ? "exists" : "does not exist"}`, async () => {
-          const exists = await runFileExists(context.workspace, parsed.path);
-          if (exists === parsed.exists) {
-            return pass(`${parsed.path} ${parsed.exists ? "is a regular file" : "is absent"}`);
+        await condition(`${params.path} ${expected ? "exists" : "does not exist"}`, async () => {
+          const exists = await runFileExists(context.workspace, params.path);
+          if (exists === expected) {
+            return pass(`${params.path} ${expected ? "is a regular file" : "is absent"}`);
           }
-          return fail(`${parsed.path} ${exists ? "exists" : "does not exist"}`);
+          return fail(`${params.path} ${exists ? "exists" : "does not exist"}`);
         }),
       );
     }
 
-    if (parsed.patterns.length > 0) {
-      let content: Buffer | undefined;
-      let readError: string | undefined;
-      try {
-        content = await readRunFile(context.workspace, parsed.path);
-      } catch (error) {
-        if (!isMissing(error)) {
-          readError = errorMessage(error);
-        }
-      }
-
-      if (readError !== undefined || content === undefined) {
-        for (const pattern of parsed.patterns) {
-          const subject = `${parsed.path} matches /${truncate(pattern, 120)}/`;
-          results.push(
-            readError !== undefined
-              ? errorResult(subject, readError)
-              : { ...fail(`${parsed.path} does not exist`), subject },
-          );
-        }
-      } else {
-        const text = content.toString("utf8");
-        for (const pattern of parsed.patterns) {
-          const subject = `${parsed.path} matches /${truncate(pattern, 120)}/`;
-          try {
-            results.push({ ...(searches(pattern, text) ? pass("pattern found") : fail("pattern not found")), subject });
-          } catch (error) {
-            results.push(errorResult(subject, `regular expression failed: ${errorMessage(error)}`));
-          }
-        }
-      }
+    if (params.changed !== undefined) {
+      results.push(await this.#changed(context, params.changed));
     }
 
-    if (parsed.unchanged === true) {
-      results.push(
-        await condition(`${parsed.path} unchanged since run start`, async () => {
-          const current = await readOptional(context.workspace, parsed.path);
-          const baseline = await readOptional(context.baseline, parsed.path);
-          if (current === undefined && baseline === undefined) {
-            return pass("file is absent in both the run and the initial baseline");
-          }
-          if (current === undefined) {
-            return fail(`${parsed.path} is missing but existed at run start`);
-          }
-          if (baseline === undefined) {
-            return fail(`${parsed.path} was created during the run`);
-          }
-          return current.equals(baseline)
-            ? pass("content matches the initial baseline")
-            : fail("content changed during the run");
-        }),
-      );
+    const declared: DeclaredPattern[] = [
+      ...params.matches.map((pattern) => ({ kind: "matches" as const, pattern })),
+      ...params.notMatches.map((pattern) => ({ kind: "notMatches" as const, pattern })),
+    ];
+    if (declared.length > 0) {
+      results.push(...(await this.#patterns(context, declared)));
     }
 
     return results;
   };
+
+  async #changed(context: CheckerContext, expected: boolean): Promise<CheckResult> {
+    const { path } = this.#params;
+    return condition(`${path} ${expected ? "changed" : "unchanged"} since run start`, async () => {
+      const current = await readOptional(context.workspace, path);
+      const baseline = await readOptional(context.baseline, path);
+      const change =
+        current === undefined
+          ? baseline === undefined
+            ? "absent"
+            : "removed"
+          : baseline === undefined
+            ? "created"
+            : current.equals(baseline)
+              ? "same"
+              : "modified";
+      const reasons = {
+        absent: "the file is absent in both the run and the initial baseline",
+        created: `${path} was created during the run`,
+        removed: `${path} was removed during the run`,
+        modified: "content changed during the run",
+        same: "content matches the initial baseline",
+      } as const;
+      const isChanged = change === "created" || change === "removed" || change === "modified";
+      return (isChanged === expected ? pass : fail)(reasons[change]);
+    });
+  }
+
+  /**
+   * Read the file once for every declared pattern. A missing file fails both kinds: a restraint
+   * check must not pass because the agent wrote nothing at all.
+   */
+  async #patterns(context: CheckerContext, declared: readonly DeclaredPattern[]): Promise<CheckResult[]> {
+    const { path } = this.#params;
+    let text: string | undefined;
+    let readError: string | undefined;
+    try {
+      text = (await readRunFile(context.workspace, path)).toString("utf8");
+    } catch (error) {
+      if (!isMissing(error)) {
+        readError = errorMessage(error);
+      }
+    }
+
+    return declared.map(({ kind, pattern }) => {
+      const subject = `${path} ${kind === "matches" ? "matches" : "does not match"} ${display(pattern)}`;
+      if (readError !== undefined) {
+        return errorResult(subject, readError);
+      }
+      if (text === undefined) {
+        return { ...fail(`${path} does not exist`), subject };
+      }
+      const found = pattern.regex ? searches(pattern.source, text) : text.includes(pattern.source);
+      const reason = found ? "pattern found" : "pattern not found";
+      return { ...(found === (kind === "matches") ? pass : fail)(reason), subject };
+    });
+  }
+}
+
+/** A literal in quotes, or a regex between slashes, so the subject says which pattern was used. */
+function display(pattern: PatternSyntax): string {
+  return pattern.regex ? `/${truncate(pattern.source, 120)}/` : `"${truncate(pattern.source, 120)}"`;
 }
 
 async function readOptional(root: RunRoot, path: string): Promise<Buffer | undefined> {

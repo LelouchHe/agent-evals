@@ -10,7 +10,7 @@ Complete one local evaluation: prepare independent files and harness state, let 
 - One YAML case or common fields plus one explicitly selected named case; top-level collisions are errors, with no inheritance/overrides.
 - Engine-only, quote-aware `$env` value lookup before declared Zod validation; factories capture ordinary typed fields and return context-only instances. Business logic and output visibility belong to implementations.
 - `view` uses the run resolver for declared configuration/source annotations, without harnesses, implementation readiness or credential resolution.
-- File existence/regex/unchanged assertions and independent tool-free Pi judging over one evidence file.
+- File existence, literal-or-RE2 content and change assertions, and independent tool-free Pi judging over one evidence file.
 - One built CLI entry for npm and the installed command, Node `parseArgs` flag parsing, and workers/supervisor/shell assets included in the private tarball. Retained reports default to `.agent-evals/`; extension module directories are repeatable options.
 - Small result records preserve declarations/reference metadata, source/case identity, judgments, diagnostics and cleanup—not expanded config snapshots, resource snapshots or hashes.
 

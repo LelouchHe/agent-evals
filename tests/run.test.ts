@@ -30,7 +30,7 @@ async function writeScenario(t: Parameters<typeof makeTempDir>[0], options: Scen
   const directory = await makeTempDir(t, "ae-scenario-");
   const casePath = join(directory, "case.yml");
   const checks = options.checks ?? [
-    { $type: "file", path: "hello.txt", exists: true, matches: "^Hello, world!\\n?$" },
+    { $type: "file", path: "hello.txt", exists: true, matches: "/^Hello, world!\\n?$/" },
     {
       $type: "judge",
       model: "test/judge-model",
@@ -149,14 +149,14 @@ test("integration: success runs file and judge checks and cleans the run directo
   assert.equal("resolvedExecutable" in saved.resolvedConfig.runner, false);
 });
 
-test("integration: unchanged uses the engine baseline, which is outside agent access", async (t) => {
+test("integration: changed false uses the engine baseline, which is outside agent access", async (t) => {
   const runner = await createFakePi(t, "probe-baseline");
   const { record, tempParent } = await runScenario(t, {
     runnerExecutable: runner.executable,
     fixtureFiles: { "seed.txt": "keep me\n" },
     checks: [
-      { $type: "file", path: "seed.txt", unchanged: true },
-      { $type: "file", path: "probe.txt", matches: "EPERM|EACCES|ENOENT" },
+      { $type: "file", path: "seed.txt", changed: false },
+      { $type: "file", path: "probe.txt", matches: "/EPERM|EACCES|ENOENT/" },
     ],
   });
 
@@ -176,9 +176,9 @@ test("integration: files entries replace fixture files and belong to the baselin
     assets: { "override/seed.txt": "from override\n", "skill/SKILL.md": "skill body\n" },
     files: { "seed.txt": "override/seed.txt", ".agents/skills/demo": "skill" },
     checks: [
-      { $type: "file", path: "seed.txt", matches: "^from override\\n$" },
-      { $type: "file", path: "seed.txt", unchanged: true },
-      { $type: "file", path: ".agents/skills/demo/SKILL.md", matches: "^skill body" },
+      { $type: "file", path: "seed.txt", matches: "/^from override\\n$/" },
+      { $type: "file", path: "seed.txt", changed: false },
+      { $type: "file", path: ".agents/skills/demo/SKILL.md", matches: "/^skill body/" },
     ],
   });
 
@@ -187,7 +187,7 @@ test("integration: files entries replace fixture files and belong to the baselin
     record.checks.map((check) => check.status),
     ["pass", "pass", "pass"],
   );
-  // The placed files are part of the baseline, so `unchanged` saw the replaced bytes.
+  // The placed files are part of the baseline, so `changed: false` saw the replaced bytes.
   // The source fixture keeps its own bytes.
   assert.equal(await readFile(join(scenario.directory, "fixture", "seed.txt"), "utf8"), "from fixture\n");
   assert.deepEqual(await readdir(tempParent), []);
@@ -227,7 +227,7 @@ test("integration: a replaced workspace root is rejected instead of reading outs
     checks: [
       { $type: "file", path: "hello.txt", exists: true },
       { $type: "file", path: "hello.txt", matches: "outside-sentinel" },
-      { $type: "file", path: "hello.txt", unchanged: true },
+      { $type: "file", path: "hello.txt", changed: false },
       {
         $type: "judge",
         model: "test/judge-model",
@@ -278,11 +278,11 @@ test("integration: a final provider error without satisfied files is also an exe
   assert.deepEqual(await readdir(tempParent), []);
 });
 
-test("integration: unchanged false is rejected before run resources", async (t) => {
+test("integration: the removed unchanged key is rejected before run resources", async (t) => {
   const runner = await createFakePi(t, "success");
   const scenario = await writeScenario(t, {
     runnerExecutable: runner.executable,
-    checks: [{ $type: "file", path: "hello.txt", unchanged: false }],
+    checks: [{ $type: "file", path: "hello.txt", unchanged: true }],
   });
   const resultsDir = await makeTempDir(t, "ae-results-unchanged-");
   const tempParent = await makeTempDir(t, "ae-runs-unchanged-");
@@ -398,7 +398,7 @@ test("integration: invalid configuration is rejected before any run resource", a
   const runner = await createFakePi(t, "success");
   const scenario = await writeScenario(t, {
     runnerExecutable: runner.executable,
-    checks: [{ $type: "file", path: "hello.txt", matches: "(" }],
+    checks: [{ $type: "file", path: "hello.txt", matches: "/(/" }],
   });
   const resultsDir = await makeTempDir(t, "ae-results-invalid-");
   const tempParent = await makeTempDir(t, "ae-runs-invalid-");
@@ -551,7 +551,7 @@ test("integration: a backtracking pattern is bounded and the CLI exits", { timeo
   const scenario = await writeScenario(t, {
     runnerExecutable: runner.executable,
     timeoutMs: 500,
-    checks: [{ $type: "file", path: "hello.txt", matches: "(a+)+$" }],
+    checks: [{ $type: "file", path: "hello.txt", matches: "/(a+)+$/" }],
   });
   const resultsDir = await makeTempDir(t, "ae-cli-regex-results-");
   const tempParent = await makeTempDir(t, "ae-cli-regex-runs-");

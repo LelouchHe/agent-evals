@@ -35,12 +35,15 @@ export interface MockResult {
   readonly stderr: string;
 }
 
-/** A literal token, or a RE2 pattern written as /…/ and matched against the whole token. */
-export interface MockPattern {
-  /** The literal token, or the pattern source without its slashes. */
+/** A literal text, or a RE2 pattern written as /…/; the caller decides what it is matched against. */
+export interface PatternSyntax {
+  /** The literal text, or the pattern source without its slashes. */
   readonly source: string;
   readonly regex: boolean;
 }
+
+/** A literal token, or a RE2 pattern written as /…/ and matched against the whole token. */
+export type MockPattern = PatternSyntax;
 
 /** One entry of a rule's option map: required, forbidden, or required with a value. */
 export type MockArgument =
@@ -387,30 +390,56 @@ function expectMockOptions(value: object, label: string): readonly MockArgument[
 }
 
 /**
+ * Read one pattern scalar, shared by mock rules and file checks. A finite number is compared as
+ * its text; a non-empty string that starts and ends with `/` is a RE2 pattern with the outer
+ * slashes removed; any other string is a literal. Callers own the labels, the wording of each
+ * error, and whether an empty `/…/` source is allowed.
+ */
+export function parsePatternScalar(value: unknown): PatternScalarResult {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return { kind: "pattern", pattern: { source: String(value), regex: false } };
+  }
+  if (typeof value === "string" && value.length === 0) {
+    return { kind: "invalid", reason: "empty" };
+  }
+  if (typeof value !== "string") {
+    return { kind: "invalid", reason: "unsupported" };
+  }
+  if (value.length < 2 || !value.startsWith("/") || !value.endsWith("/")) {
+    return { kind: "pattern", pattern: { source: value, regex: false } };
+  }
+  const source = value.slice(1, -1);
+  try {
+    compilePattern(source);
+  } catch (error) {
+    return { kind: "invalid", reason: "regex", message: errorMessage(error) };
+  }
+  return { kind: "pattern", pattern: { source, regex: true } };
+}
+
+/** A parsed pattern scalar, or why the value is not one. */
+export type PatternScalarResult =
+  | { readonly kind: "pattern"; readonly pattern: PatternSyntax }
+  | { readonly kind: "invalid"; readonly reason: "empty" | "unsupported" }
+  | { readonly kind: "invalid"; readonly reason: "regex"; readonly message: string };
+
+/**
  * Read one literal or /…/ pattern. A YAML number is compared as its text; an unquoted boolean
  * is rejected because it would read as a required or forbidden option.
  */
 function expectMockPattern(value: unknown, label: string, optionName = false): MockPattern {
-  if (typeof value === "number" && Number.isFinite(value)) {
-    return { source: String(value), regex: false };
+  const parsed = parsePatternScalar(value);
+  if (parsed.kind === "pattern") {
+    return parsed.pattern;
   }
-  if (typeof value !== "string" || value.length === 0) {
-    throw new ConfigError(
-      optionName
-        ? `${label} must be a non-empty string`
-        : `${label} must be a non-empty string, number, or /…/ pattern; quote a boolean literal`,
-    );
+  if (parsed.reason === "regex") {
+    throw new ConfigError(`${label} is not a valid RE2 pattern: ${parsed.message}`);
   }
-  if (value.length >= 2 && value.startsWith("/") && value.endsWith("/")) {
-    const source = value.slice(1, -1);
-    try {
-      compilePattern(source);
-    } catch (error) {
-      throw new ConfigError(`${label} is not a valid RE2 pattern: ${errorMessage(error)}`);
-    }
-    return { source, regex: true };
-  }
-  return { source: value, regex: false };
+  throw new ConfigError(
+    optionName
+      ? `${label} must be a non-empty string`
+      : `${label} must be a non-empty string, number, or /…/ pattern; quote a boolean literal`,
+  );
 }
 
 function expectMockResult(value: unknown, label: string): MockResult {

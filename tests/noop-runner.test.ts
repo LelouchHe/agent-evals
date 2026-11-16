@@ -59,7 +59,7 @@ test(
       {
         mocks: { shell: { tool: { return: { stdout: "never called\n" } } } },
         checks: [
-          { $type: "file", path: "deploy.log", unchanged: true },
+          { $type: "file", path: "deploy.log", changed: false },
           { $type: "mock", shell: ["tool"], times: 0 },
           // An empty trace is still a trace, so this is judged rather than erroring.
           {
@@ -98,7 +98,9 @@ test(
       mocks: { shell: { tool: { return: { stdout: "never called\n" } } } },
       checks: [
         { $type: "file", path: "diagnosis.md", matches: "fix" },
-        { $type: "file", path: "deploy.log", unchanged: true },
+        // A restraint check cannot pass when the agent wrote nothing at all.
+        { $type: "file", path: "diagnosis.md", notMatches: "prune" },
+        { $type: "file", path: "deploy.log", changed: false },
         { $type: "mock", shell: ["tool"] },
         { $type: "mock", shell: ["tool", "deploy"], times: 0 },
         { $type: "shell", run: ["/bin/sh", "-c", "exit 1"] },
@@ -107,7 +109,7 @@ test(
     assert.equal(record.status, "fail");
     assert.deepEqual(
       record.checks.map((check) => check.status),
-      ["fail", "pass", "fail", "pass", "fail"],
+      ["fail", "fail", "pass", "fail", "pass", "fail"],
     );
   },
 );

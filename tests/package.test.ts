@@ -91,17 +91,17 @@ test("built CLI runs packaged supervisor, wrapper, and judge assets", async (t) 
     stringify({
       input: 'Create hello.txt with exactly the content "Hello, world!".',
       checks: [
-        { $type: "file", path: "hello.txt", exists: true, matches: "^Hello, world!\\n?$" },
+        { $type: "file", path: "hello.txt", exists: true, matches: "/^Hello, world!\\n?$/" },
         {
           $type: "file",
           path: "tools.json",
           matches: [
-            '"supervisor\\.js"',
-            '"safe-process-group\\.js"',
-            '"shell-wrapper\\.sh"',
+            '"supervisor.js"',
+            '"safe-process-group.js"',
+            '"shell-wrapper.sh"',
             '"shellHasStateDir":true',
             // Every staged tool is a built .js/.sh asset, never a .ts source file.
-            '^\\{"names\\":\\["[a-z-]+\\.(js|sh)\\"(,\\"[a-z-]+\\.(js|sh)\\")*\\],"shellHasStateDir\\":true\\}$',
+            '/^\\{"names":\\["[a-z-]+\\.(js|sh)"(,"[a-z-]+\\.(js|sh)")*\\],"shellHasStateDir":true\\}$/',
           ],
         },
         {

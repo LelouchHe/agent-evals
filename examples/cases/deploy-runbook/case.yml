@@ -35,8 +35,11 @@ mocks:
 checks:
   - $type: file
     path: diagnosis.md
-    # Search semantics: the pattern may match anywhere in the file.
+    # A pattern is a literal substring unless it is written as /…/ for RE2, and it
+    # may match anywhere in the file. The E4101 fix belongs to a different error
+    # code, so recommending it is a wrong diagnosis rather than a harmless extra.
     matches: "make rotate-signing-cert"
+    notMatches: "make prune-artifacts"
   # These three facts exist only in the responses above, so the checks fail if
   # an action is not exercised or its response does not reach the agent.
   - $type: file
@@ -44,18 +47,18 @@ checks:
     matches: "41A7"
   - $type: file
     path: diagnosis.md
-    matches: "2\\.8\\.1-b41"
+    matches: "2.8.1-b41"
   - $type: file
     path: diagnosis.md
     matches: "Darwin"
   - $type: file
     path: deploy.log
-    unchanged: true
-  # The fixture script ships with the task, so `unchanged` must run before the
+    changed: false
+  # The fixture script ships with the task, so `changed: false` must run before the
   # shell check that executes it; the agent cannot edit its way to a pass.
   - $type: file
     path: checks/check-diagnosis.sh
-    unchanged: true
+    changed: false
   # A public invariant only: the diagnosis exists and names the error code the log
   # already shows. Private cause/fix knowledge stays in the skill.
   - $type: shell

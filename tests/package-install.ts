@@ -99,7 +99,7 @@ test("the packed CLI installs and runs without source or development dependencie
       executable: runner.executable,
     },
     checks: [
-      { $type: "file", path: "hello.txt", exists: true, matches: "^Hello, world!\\n?$" },
+      { $type: "file", path: "hello.txt", exists: true, matches: "/^Hello, world!\\n?$/" },
       {
         $type: "judge",
         model: "opencode-go/test-judge",
