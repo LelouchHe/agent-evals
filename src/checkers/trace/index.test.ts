@@ -29,6 +29,7 @@ async function context(
   t: TestContext,
   trace?: readonly TraceEntry[],
   skills: Readonly<Record<string, string>> = {},
+  homeSkills: Readonly<Record<string, string>> = {},
 ): Promise<CheckerContext> {
   const root = await makeTempDir(t, "ae-trace-check-");
   const workspace = join(root, "workspace");
@@ -41,6 +42,12 @@ async function context(
   await mkdir(homeBaseline);
   for (const [relative, content] of Object.entries(skills)) {
     for (const directory of [workspace, baseline]) {
+      await mkdir(dirname(join(directory, relative)), { recursive: true });
+      await writeFile(join(directory, relative), content);
+    }
+  }
+  for (const [relative, content] of Object.entries(homeSkills)) {
+    for (const directory of [home, homeBaseline]) {
       await mkdir(dirname(join(directory, relative)), { recursive: true });
       await writeFile(join(directory, relative), content);
     }
@@ -172,6 +179,42 @@ test("a shell command naming a placed SKILL.md is reported but never counted", a
   const restraint = await checkIn(await context(t, trace, files), { event: "skill", name: "/.*/", times: 0 });
   assert.deepEqual(statuses(restraint), ["pass"]);
   assert.equal(restraint[0]?.reason, "found 0 consultations, consulted: none; touched via shell: knowledge-base");
+});
+
+test("a check sees a skill the case placed under ~/, while shell access stays uncounted", async (t) => {
+  const read: ToolEntry = {
+    type: "tool",
+    toolCallId: "call-home",
+    title: "read",
+    kind: "read",
+    status: "completed",
+    locations: [{ path: "~/.claude/skills/aw-task-delegation/SKILL.md" }],
+    rawInput: { path: "~/.claude/skills/aw-task-delegation/SKILL.md" },
+    content: [{ type: "content", content: { type: "text", text: "# body after frontmatter\n" } }],
+  };
+  const traceContext = await context(
+    t,
+    [read, shellCommand("head -40 ~/.claude/skills/knowledge-base/SKILL.md")],
+    {},
+    {
+      ".claude/skills/aw-task-delegation/SKILL.md": "---\nname: task-delegation\n---\nbody\n",
+      ".claude/skills/knowledge-base/SKILL.md": "---\nname: knowledge-base\n---\nbody\n",
+    },
+  );
+
+  const consulted = await checkIn(traceContext, { event: "skill", name: "task-delegation" });
+  assert.deepEqual(statuses(consulted), ["pass"]);
+  assert.equal(
+    consulted[0]?.reason,
+    "found 1 consultation, consulted: task-delegation; touched via shell: knowledge-base",
+  );
+
+  const shellOnly = await checkIn(traceContext, { event: "skill", name: "knowledge-base" });
+  assert.deepEqual(statuses(shellOnly), ["fail"]);
+  assert.equal(
+    shellOnly[0]?.reason,
+    "expected knowledge-base, consulted: task-delegation; touched via shell: knowledge-base",
+  );
 });
 
 test("a shell command naming a SKILL.md the baseline did not place is not reported", async (t) => {

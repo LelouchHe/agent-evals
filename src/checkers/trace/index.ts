@@ -68,14 +68,14 @@ class TraceChecker implements Checker {
       ];
     }
 
-    const consultations = await skillConsultations(context.trace, {
+    const sources = {
       workspace: context.workspace,
-      baseline: context.baseline,
-    });
-    const shell = await shellSkillAccess(context.trace, {
-      workspace: context.workspace,
-      baseline: context.baseline,
-    });
+      home: context.home,
+      workspaceBaseline: context.baseline,
+      homeBaseline: context.homeBaseline,
+    };
+    const consultations = await skillConsultations(context.trace, sources);
+    const shell = await shellSkillAccess(context.trace, sources);
     const matching = consultations.filter((consultation) => matches(name, consultation.name));
     const satisfied = times === undefined ? matching.length >= 1 : matching.length === times;
     return [
