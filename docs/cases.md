@@ -7,7 +7,7 @@ Treat a case like a test: arrange an environment, send input, observe what happe
 | Testing concept    | Agent evaluation                                                                                            | Status                                    |
 | ------------------ | ----------------------------------------------------------------------------------------------------------- | ----------------------------------------- |
 | Input              | The user's prompts: the first message and any later turns.                                                  | First message only.                       |
-| Output             | The messages the agent returns to the user. A view of the trace, not a separate record.                     | Final text retained, not checkable.       |
+| Output             | The messages the agent returns to the user. A view of the trace, not a separate record.                     | ACP runner; `trace` `event: message`.     |
 | Trace              | How the agent ran: messages, reasoning, tool requests and results, skill loading, usage.                    | ACP runner; `trace` and `judge`.          |
 | Interactions       | Calls that reached a collaborator, recorded by its mock.                                                    | Shell mocks on `acp`; `mock` checks.      |
 | Side effects       | Changes to the environment: files, commands, network and other state.                                       | Files and commands.                       |
@@ -28,7 +28,7 @@ Code can be read to learn its execution paths, so tests can focus on results. An
 
 The three observation sources are complementary and cannot be derived from one another:
 
-- **Trace** comes from the runner, because only the harness sees the agent's internals. It reports what the agent said, thought and requested. Harnesses expose different detail (reasoning may be hidden), so a check needing detail a runner cannot provide is an error, not a pass. Skill consultations are derived deterministically across harnesses ([`trace`](configuration.md#trace-checker-type-trace)); other trace questions need a judge.
+- **Trace** comes from the runner, because only the harness sees the agent's internals. It reports what the agent said, thought and requested. Harnesses expose different detail (reasoning may be hidden), so a check needing detail a runner cannot provide is an error, not a pass. Skill consultations and the text the agent produced are derived deterministically across harnesses ([`trace`](configuration.md#trace-checker-type-trace) `event: skill` and `event: message`); other trace questions need a judge.
 - **Interactions** come from mocks. They record what actually reached a collaborator, including calls the trace does not show, such as a command run from inside a script. The `mock` checker asserts on them; a matching record proves a call, while absence is only meaningful when the sandbox also denies the real command.
 - **Side effects** come from the environment after the run. They show what changed, not who changed it or why.
 

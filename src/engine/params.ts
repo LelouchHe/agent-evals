@@ -25,6 +25,34 @@ export const patternSyntaxSchema = z.unknown().transform((value, context): Patte
   return z.NEVER;
 });
 
+const MAX_PATTERNS = 100;
+
+/** One pattern or a non-empty list of them, normalized to a list in declaration order. */
+export const patternListSchema = z.unknown().transform((value, context): readonly PatternSyntax[] => {
+  if (Array.isArray(value) && value.length === 0) {
+    context.addIssue({ code: "custom", message: "must hold at least one pattern" });
+    return [];
+  }
+  const entries = Array.isArray(value) ? value : [value];
+  if (entries.length > MAX_PATTERNS) {
+    context.addIssue({ code: "custom", message: `must hold at most ${MAX_PATTERNS} patterns` });
+    return [];
+  }
+  const listed = Array.isArray(value);
+  return entries.flatMap((entry, index) => {
+    const parsed = patternSyntaxSchema.safeParse(entry);
+    if (parsed.success) {
+      return [parsed.data];
+    }
+    // A scalar names the field itself; only a list entry needs its position.
+    const path = listed ? [index] : [];
+    for (const issue of parsed.error.issues) {
+      context.addIssue({ code: "custom", path: [...path, ...issue.path], message: issue.message });
+    }
+    return [];
+  });
+});
+
 /** The field-level message for a scalar that is not a pattern; each caller names its own mistake. */
 function patternIssue(value: unknown, parsed: Extract<PatternScalarResult, { kind: "invalid" }>): string {
   if (parsed.reason === "regex") {
