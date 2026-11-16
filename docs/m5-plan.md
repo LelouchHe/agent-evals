@@ -1,6 +1,8 @@
 # M5: Deterministic Trace Checks
 
-Status: draft, design agreed, not implemented. [M2](m2-plan.md) retains `trace.json` and lets `judge` inspect it; [M4](m4-plan.md) gave mock records and workspace execution their deterministic checkers (`mock` and `shell`). This milestone gives the third observation source — the runner's trace — its deterministic checker (`trace`), starting with skill consultations across harnesses.
+Status: delivered. [M2](m2-plan.md) retains `trace.json` and lets `judge` inspect it; [M4](m4-plan.md) gave mock records and workspace execution their deterministic checkers (`mock` and `shell`). This milestone gives the third observation source — the runner's trace — its deterministic checker (`trace`), starting with skill consultations across harnesses.
+
+Implemented as specified below: the derivation in [`engine/skills.ts`](../src/engine/skills.ts), exported as `skillConsultations(trace, baseline)` from the [package entry](../src/index.ts); the [`trace` checker](../src/checkers/trace/index.ts) registered beside the other built-ins; and the worked-example update. [Configuration](configuration.md#trace-checker-type-trace) owns the shipped parameter and recognition details, and [Extensions](extensions.md#current-limits) owns what an extension can reuse.
 
 ## Scope
 
@@ -92,6 +94,12 @@ Traces spell workspace paths three ways — relative, `/var/…` and `/private/v
 - **Description visibility vs body consultation.** A placed skill's `description` stays visible in the harness's skill roster; `times: 0` is about loading the body.
 - **A tool parameter named `skill`.** Rule 1 counts any completed non-read tool call with a string `rawInput.skill`. No retained trace has such an unrelated tool; the risk is accepted.
 - **Sample size.** The Copilot CLI form rests on one retained trace.
+
+## Verified
+
+- **The derivation replays against the 23 retained traces** under `.agent-evals/*/trace.json` in the development checkout (local run records, not part of the repository): every case labelled `with-skill` derives `deploy-runbook` through both forms (Pi reads of `SKILL.md`, Claude Code and Copilot CLI skill tools), and every `without-skill` run derives none. The replay had no baseline, because retained run roots are removed, so its Pi reads were named from the returned text; the baseline branch is covered by tests that place the same skill in both roots.
+- **`npm run check` passes** (284 tests) and **`npm run test:package` passes** (1 test). Every named case of the [worked example](../examples/cases/deploy-runbook/case.yml) loads, and its `baseline` (`noop`) case runs: the positive `trace` check fails with `consulted: none` while the `mock` `times: 0` restraint check passes.
+- **Live harness verification is still outstanding.** This delivery did not run the example against a real harness; the recognition table remains measured against the retained traces above.
 
 ## Deferred
 

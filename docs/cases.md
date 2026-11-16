@@ -8,7 +8,7 @@ Treat a case like a test: arrange an environment, send input, observe what happe
 | ------------------ | -------------------------------------------------------------------------------------------------------- | -------------------------------------- |
 | Input              | The user's prompts: the first message and any later turns.                                               | First message only.                    |
 | Output             | The messages the agent returns to the user. A view of the trace, not a separate record.                  | Final text retained, not checkable.    |
-| Trace              | How the agent ran: messages, reasoning, tool requests and results, skill loading, usage.                 | ACP runner; judge evidence.            |
+| Trace              | How the agent ran: messages, reasoning, tool requests and results, skill loading, usage.                 | ACP runner; `trace` and `judge`.       |
 | Interactions       | Calls that reached a collaborator, recorded by its mock.                                                 | Shell mocks on `acp`; `mock` checks.   |
 | Side effects       | Changes to the environment: files, commands, network and other state.                                    | Files and commands.                    |
 | Fixture            | Fixed initial data, such as the files copied into the workspace. Part of the environment, not all of it. | `fixture`.                             |
@@ -28,7 +28,7 @@ Code can be read to learn its execution paths, so tests can focus on results. An
 
 The three observation sources are complementary and cannot be derived from one another:
 
-- **Trace** comes from the runner, because only the harness sees the agent's internals. It reports what the agent said, thought and requested. Harnesses expose different detail (reasoning may be hidden), so a check needing detail a runner cannot provide is an error, not a pass.
+- **Trace** comes from the runner, because only the harness sees the agent's internals. It reports what the agent said, thought and requested. Harnesses expose different detail (reasoning may be hidden), so a check needing detail a runner cannot provide is an error, not a pass. Skill consultations are derived deterministically across harnesses ([`trace`](configuration.md#trace-checker-type-trace)); other trace questions need a judge.
 - **Interactions** come from mocks. They record what actually reached a collaborator, including calls the trace does not show, such as a command run from inside a script. The `mock` checker asserts on them; a matching record proves a call, while absence is only meaningful when the sandbox also denies the real command.
 - **Side effects** come from the environment after the run. They show what changed, not who changed it or why.
 
@@ -68,7 +68,7 @@ Expose only the intended task, resources and environment to the agent. Case/chec
 
 Use deterministic checks for exact facts and a judge for qualitative criteria. A file check need not become a new checker class for every assertion; one checker can return several results. A rubric can be a list of statements without mandatory business categories. Use `shell` for an outcome only execution shows, such as the project's tests; it runs the command, so pair it with `file` `changed: false` on files the agent must not edit. A `shell` check's `files` places authored tests into the workspace only when it runs, so the agent never sees them; placement replaces whatever the agent left at that path without following a symlink.
 
-Do not create routing-versus-behavior pipelines. Skill loading, tool choices, restraint and result quality are concerns expressed through checks and evidence when those observations exist.
+Do not create routing-versus-behavior pipelines. Use the [`trace`](configuration.md#trace-checker-type-trace) checker for skill consultations; tool choices, restraint and result quality remain concerns for checks and evidence as those observations exist: a requested call in the trace does not prove its effect, so restraint is stronger when a mock proves the call never reached the collaborator.
 
 Environment and interaction evidence is stronger than an agent's own account alone. Shell collaborator mocks ([usage](mocks.md), [plan](m3-plan.md)) and their `mock` checker are implemented; broader directions are in [Roadmap](roadmap.md), and none of this is added through ad hoc Case fields.
 
