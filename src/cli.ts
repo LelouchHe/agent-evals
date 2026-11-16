@@ -5,6 +5,7 @@ import { fileChecker } from "./checkers/file/index.ts";
 import { judgeChecker } from "./checkers/judge/index.ts";
 import { mockChecker } from "./checkers/mock/index.ts";
 import { shellChecker } from "./checkers/shell/index.ts";
+import { traceChecker } from "./checkers/trace/index.ts";
 import { loadCase } from "./engine/authoring.ts";
 import { ConfigError, errorMessage } from "./engine/config.ts";
 import { addChecker, addRunner, createRegistry, loadTrustedImplementations } from "./engine/registry.ts";
@@ -103,6 +104,7 @@ async function runCommand(options: CliOptions): Promise<number> {
   addChecker(registry, judgeChecker, "built-in");
   addChecker(registry, mockChecker, "built-in");
   addChecker(registry, shellChecker, "built-in");
+  addChecker(registry, traceChecker, "built-in");
 
   const abort = new AbortController();
   let interrupted = false;
