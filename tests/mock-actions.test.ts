@@ -30,13 +30,16 @@ async function host(
 ): Promise<{ host: MockHost; root: string }> {
   const root = await makeTempDir(t, "ae-mock-actions-");
   const workspaceDir = join(root, "workspace");
-  const scratchDir = join(root, "scratch");
-  await mkdir(workspaceDir);
-  await mkdir(scratchDir);
+  const tmpDir = join(root, "tmp");
+  const engineDir = join(root, "engine");
+  const mocksDir = join(root, "mocks");
+  await Promise.all([mkdir(workspaceDir), mkdir(tmpDir), mkdir(engineDir), mkdir(mocksDir)]);
   const started = await startMockHost({
     runRootDir: root,
+    engineDir,
+    mocksDir,
     workspaceDir,
-    scratchDir,
+    tmpDir,
     authoringDir: root,
     timeoutMs: 5_000,
     signal: new AbortController().signal,
@@ -427,8 +430,10 @@ test("a false workspace rule hides the real script and does not require one", as
   await writeFile(join(workspaceDir, "scripts/real.sh"), "#!/bin/sh\necho real script\n", { mode: 0o755 });
   const started = await startMockHost({
     runRootDir: root,
+    engineDir: await mkdir(join(root, "engine"), { recursive: true }).then(() => join(root, "engine")),
+    mocksDir: await mkdir(join(root, "mocks"), { recursive: true }).then(() => join(root, "mocks")),
     workspaceDir: await realpath(workspaceDir),
-    scratchDir: root,
+    tmpDir: root,
     authoringDir: root,
     timeoutMs: 5_000,
     signal: new AbortController().signal,
@@ -449,7 +454,7 @@ test("a false workspace rule hides the real script and does not require one", as
   assert.deepEqual(refused, { status: 126, stdout: "", stderr: "scripts/real.sh: Operation not permitted\n" });
   // The real script left the sandbox instead of sitting beside its forwarder.
   await assert.rejects(() => stat(join(workspaceDir, "scripts/.real.sh")), { code: "ENOENT" });
-  assert.match(await readFile(join(root, "replaced/scripts/real.sh"), "utf8"), /real script/);
+  assert.match(await readFile(join(root, "engine/replaced/scripts/real.sh"), "utf8"), /real script/);
   const absent = await call(join(workspaceDir, "scripts/absent.sh"));
   assert.equal(absent.status, 126);
   const { records, faults } = await close();
@@ -564,8 +569,10 @@ test("workspace scripts run through their forwarder and keep the real one out of
   await writeFile(join(workspaceDir, "scripts/inspect.sh"), '#!/bin/sh\necho "real inspect $*"\n', { mode: 0o755 });
   const started = await startMockHost({
     runRootDir: root,
+    engineDir: await mkdir(join(root, "engine"), { recursive: true }).then(() => join(root, "engine")),
+    mocksDir: await mkdir(join(root, "mocks"), { recursive: true }).then(() => join(root, "mocks")),
     workspaceDir: await realpath(workspaceDir),
-    scratchDir: root,
+    tmpDir: root,
     authoringDir: root,
     timeoutMs: 5_000,
     signal: new AbortController().signal,
@@ -579,7 +586,7 @@ test("workspace scripts run through their forwarder and keep the real one out of
   assert.deepEqual(publish, { status: 0, stdout: "mocked publish\n", stderr: "" });
   // The real script left the sandbox instead of sitting beside its forwarder.
   await assert.rejects(() => stat(join(workspaceDir, "scripts/.publish.sh")), { code: "ENOENT" });
-  assert.match(await readFile(join(root, "replaced/scripts/publish.sh"), "utf8"), /real publish/);
+  assert.match(await readFile(join(root, "engine/replaced/scripts/publish.sh"), "utf8"), /real publish/);
 
   const inspect = await call(join(workspaceDir, "scripts/inspect.sh"), ["alpha"]);
   assert.deepEqual(inspect, { status: 0, stdout: "real inspect alpha\n", stderr: "" });
@@ -603,8 +610,10 @@ test("a workspace script target rejects a pass without a real script and a name 
     const start = async (shell: ShellMocks) =>
       startMockHost({
         runRootDir: root,
+        engineDir: await mkdir(join(root, "engine"), { recursive: true }).then(() => join(root, "engine")),
+        mocksDir: await mkdir(join(root, "mocks"), { recursive: true }).then(() => join(root, "mocks")),
         workspaceDir: await realpath(workspaceDir),
-        scratchDir: root,
+        tmpDir: root,
         authoringDir: root,
         timeoutMs: 5_000,
         signal: new AbortController().signal,

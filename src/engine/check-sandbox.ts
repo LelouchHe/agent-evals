@@ -15,8 +15,8 @@ const CHECK_RUNNER = fileURLToPath(siblingRuntimeModule(import.meta.url, "check-
 export interface CheckSandboxOptions {
   /** Prepared workspace root; the program starts here and may write in it. */
   readonly workspaceDir: string;
-  /** The run root, where the private HOME, temporary directory and policy are created. */
-  readonly runRootDir: string;
+  /** Engine-private directory; the check's own HOME, temporary directory and policy live here. */
+  readonly engineDir: string;
   /** Where a checker's `files` sources resolve from, normally the case file's directory. */
   readonly authoringDir: string;
   /** The check's deadline or cancellation. */
@@ -49,7 +49,7 @@ async function runProgram(
     return { kind: "failed", reason: "the check named no program", output: "" };
   }
   const path = process.env.PATH ?? SYSTEM_PATH.join(":");
-  const directory = await mkdtemp(join(options.runRootDir, "check-"));
+  const directory = await mkdtemp(join(options.engineDir, "check-"));
   const homeDir = join(directory, "home");
   const tmpDir = join(directory, "tmp");
   let supervised: SupervisedProcess | undefined;

@@ -9,8 +9,12 @@ import type { RunRoot } from "./workspace.ts";
 export interface RunnerContext {
   readonly workspaceDir: string;
   readonly homeDir: string;
+  /** Temporary directory named by `TMPDIR`. */
+  readonly tmpDir: string;
+  /** Engine-private state; unreadable to the agent. */
+  readonly engineDir: string;
+  /** A runner-owned writable configuration directory; the native Pi runner's own layout. */
   readonly configDir: string;
-  readonly scratchDir: string;
   readonly runRootDir: string;
   /** The case's initial user message. An engine-owned value, not a runner parameter. */
   readonly input: string;
@@ -94,6 +98,14 @@ export interface CheckSandbox {
 
 /** A prepared runner instance; its factory already captured validated parameters. */
 export interface Runner {
+  /**
+   * Place runner-owned HOME content (agent files, login state) before the case's `~/` entries.
+   * Returns the HOME-relative login files the case may not touch. Absent for a runner without
+   * a HOME.
+   */
+  readonly prepareHome?: (context: RunnerContext) => Promise<readonly string[]>;
+  /** HOME-relative login files a case may never place over; independent of `prepareHome`. */
+  readonly homeFiles?: readonly string[];
   readonly run: (context: RunnerContext) => Promise<RunnerOutcome>;
   /** Stop the harness and its owned processes. Must be idempotent. */
   readonly stop: () => Promise<void>;
@@ -111,6 +123,8 @@ export interface ImplementationContext {
   readonly validateFiles: (files: Readonly<Record<string, string>>) => Promise<void>;
   /** The case's declared `mocks.shell` targets, for a checker that must name one at load time. */
   readonly mockTargets?: readonly string[];
+  /** True when the selected runner gives the run a HOME a case may place files in. */
+  readonly runnerSupportsHome: boolean;
 }
 
 export interface RunnerDefinition<P> {
@@ -119,6 +133,8 @@ export interface RunnerDefinition<P> {
   readonly params: ZodType<P>;
   /** True when the runner wires the mocks it receives into `PATH` and its sandbox. */
   readonly mocks?: true;
+  /** True when the runner gives the run a HOME that a case may place `~/` files in. */
+  readonly home?: true;
   /** Validate operational readiness for parsed params, then create the instance. */
   readonly create: (params: P, context: ImplementationContext) => Runner | Promise<Runner>;
 }
@@ -130,6 +146,8 @@ export interface RegisteredRunnerDefinition {
   readonly create: (params: unknown, context: ImplementationContext) => Runner | Promise<Runner>;
   /** Declared by the definition when the runner wires mocks. */
   readonly mocks?: boolean;
+  /** Declared by the definition when the runner gives the run a HOME. */
+  readonly home?: boolean;
 }
 
 export interface CheckerContext {
@@ -137,6 +155,10 @@ export interface CheckerContext {
   readonly workspace: RunRoot;
   /** Initial workspace snapshot, outside the evaluated agent's writable area. */
   readonly baseline: RunRoot;
+  /** The run HOME; only checks whose runner declares `home` receive meaningful content. */
+  readonly home: RunRoot;
+  /** What the case placed in HOME, outside the evaluated agent's writable area. */
+  readonly homeBaseline: RunRoot;
   readonly runRootDir: string;
   readonly input: string;
   /** The runner's trace, when it records one. */

@@ -10,7 +10,6 @@ if [ "$#" -ne 1 ] || [ -z "$1" ]; then
   exit 1
 fi
 
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 case "$(uname -s)-$(uname -m)" in
   Darwin-arm64) PLATFORM="darwin-arm64" ;;
@@ -25,7 +24,7 @@ mkdir -p "$1"
 ROOT="$(cd "$1" && pwd)"
 DEPS="$ROOT/deps"
 LOGIN="$ROOT/login"
-mkdir -p "$DEPS/.local/bin" "$DEPS/.local/share/pkgs" "$DEPS/.pi/agent"
+mkdir -p "$DEPS/bin" "$DEPS/share/pkgs"
 mkdir -p -m 700 "$LOGIN"
 
 WORK_TMP=""
@@ -34,16 +33,16 @@ cleanup() {
 }
 trap cleanup EXIT
 
-if [ ! -x "$DEPS/.local/share/node/bin/node" ]; then
+if [ ! -x "$DEPS/share/node/bin/node" ]; then
   WORK_TMP="$(mktemp -d)"
   ARCHIVE="node-${NODE_VERSION}-${PLATFORM}.tar.gz"
   curl -fsSL "https://nodejs.org/dist/${NODE_VERSION}/${ARCHIVE}" -o "$WORK_TMP/$ARCHIVE"
-  rm -rf "$DEPS/.local/share/node"
-  mkdir -p "$DEPS/.local/share/node"
-  tar -xzf "$WORK_TMP/$ARCHIVE" -C "$DEPS/.local/share/node" --strip-components=1
+  rm -rf "$DEPS/share/node"
+  mkdir -p "$DEPS/share/node"
+  tar -xzf "$WORK_TMP/$ARCHIVE" -C "$DEPS/share/node" --strip-components=1
 fi
 
-NODE_BIN="$DEPS/.local/share/node/bin"
+NODE_BIN="$DEPS/share/node/bin"
 if [ -d "$PI_ACP_SPEC" ] && [ -f "$PI_ACP_SPEC/package.json" ]; then
   [ -n "$WORK_TMP" ] || WORK_TMP="$(mktemp -d)"
   TGZ="$(cd "$PI_ACP_SPEC" && PATH="$NODE_BIN:$PATH" "$NODE_BIN/npm" pack --silent --pack-destination "$WORK_TMP" | tail -n 1)"
@@ -52,15 +51,14 @@ else
   PI_ACP_INSTALL="$PI_ACP_SPEC"
 fi
 
-[ -f "$DEPS/.local/share/pkgs/package.json" ] || printf '%s\n' '{"private":true}' > "$DEPS/.local/share/pkgs/package.json"
-PATH="$NODE_BIN:$PATH" "$NODE_BIN/npm" install --prefix "$DEPS/.local/share/pkgs" --no-audit --no-fund \
+[ -f "$DEPS/share/pkgs/package.json" ] || printf '%s\n' '{"private":true}' > "$DEPS/share/pkgs/package.json"
+PATH="$NODE_BIN:$PATH" "$NODE_BIN/npm" install --prefix "$DEPS/share/pkgs" --no-audit --no-fund \
   @earendil-works/pi-coding-agent "$PI_ACP_INSTALL"
 
-ln -sfn ../share/node/bin/node "$DEPS/.local/bin/node"
-ln -sfn ../share/node/bin/npm "$DEPS/.local/bin/npm"
-ln -sfn ../share/pkgs/node_modules/.bin/pi "$DEPS/.local/bin/pi"
-ln -sfn ../share/pkgs/node_modules/.bin/pi-acp "$DEPS/.local/bin/pi-acp"
-cp "$SCRIPT_DIR/pi-settings.json" "$DEPS/.pi/agent/settings.json"
+ln -sfn ../share/node/bin/node "$DEPS/bin/node"
+ln -sfn ../share/node/bin/npm "$DEPS/bin/npm"
+ln -sfn ../share/pkgs/node_modules/.bin/pi "$DEPS/bin/pi"
+ln -sfn ../share/pkgs/node_modules/.bin/pi-acp "$DEPS/bin/pi-acp"
 
 cat <<EOF
 

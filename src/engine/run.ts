@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto";
-import { cp, mkdir, rm, stat } from "node:fs/promises";
+import { cp, lstat, mkdir, realpath, rm, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import {
@@ -18,6 +18,7 @@ import {
   type MockRecord,
   type Registry,
   type Runner,
+  type RunnerContext,
   type RunnerOutcome,
   type RunnerUsage,
   type TraceEntry,
@@ -31,13 +32,22 @@ import {
   type RunnerStatus,
 } from "./results.ts";
 import { createEnvSource, type EnvSource } from "./env-source.ts";
-import { placeCaseFiles, validateCheckFiles, authoringCopyFilter } from "./files.ts";
+import {
+  authoringCopyFilter,
+  copyPlacement,
+  fileIdentity,
+  homeEntries,
+  placeCaseFiles,
+  placedPaths,
+  stageEntries,
+  validateCheckFiles,
+} from "./files.ts";
 import { startMockHost, type MockHost } from "./mocks.ts";
 import { createCheckSandbox } from "./check-sandbox.ts";
 import { parseImplementationParams } from "./params.ts";
 import { truncate, truncateNullable } from "./truncate.ts";
 import { substituteValues, type ValueSource } from "./values.ts";
-import { openRunRoot, type RunRoot } from "./workspace.ts";
+import { isMissing, openRunRoot, type RunRoot } from "./workspace.ts";
 
 const DEFAULT_TIMEOUT_MS = 300_000;
 const CHECK_ABORT_GRACE_MS = 12_000;
@@ -54,11 +64,97 @@ export interface RunRequest {
   readonly envSource?: EnvSource;
 }
 
-/** Validate configuration, execute one runner, run all checks, and clean up. */
-export async function runEvaluation(request: RunRequest): Promise<EvaluationRecord> {
-  const timeoutMs = request.case.config.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+/** One validated case, bound to run directories that do not exist yet. */
+export interface PreparedEvaluation {
+  readonly request: RunRequest;
+  readonly runId: string;
+  readonly startedAt: string;
+  readonly root: string;
+  readonly workspaceDir: string;
+  readonly homeDir: string;
+  readonly tmpDir: string;
+  readonly mocksDir: string;
+  readonly engineDir: string;
+  /** A runner-owned writable directory; only the native Pi runner uses it. */
+  readonly configDir: string;
+  readonly baselineWorkspaceDir: string;
+  readonly baselineHomeDir: string;
+  readonly registered: {
+    readonly runnerType: string;
+    readonly runner: Runner;
+    readonly checks: readonly { readonly type: string; readonly checker: Checker }[];
+  };
+}
+
+/**
+ * Validate a case and bind it to new run directories without creating them, so a caller can
+ * validate every selected case before the first one runs.
+ */
+export async function prepareEvaluation(request: RunRequest): Promise<PreparedEvaluation> {
   const runId = newRunId();
   const startedAt = new Date().toISOString();
+  // Placeholders need the run directories' paths; they are created only after validation.
+  // The parent is canonicalized first: the sandbox authorizes the `deps` link only when the
+  // run-root path and its target carry no symlink spelling such as `/tmp` for `/private/tmp`.
+  const parent = await realpath(request.tempParent ?? tmpdir());
+  const root = join(parent, `run-${randomBytes(6).toString("hex")}`);
+  const workspaceDir = join(root, "workspace");
+  const homeDir = join(root, "home");
+  const tmpDir = join(root, "tmp");
+  const mocksDir = join(root, "mocks");
+  const engineDir = join(root, "engine");
+  const configDir = join(root, "config");
+  const baselineWorkspaceDir = join(engineDir, "baseline", "workspace");
+  const baselineHomeDir = join(engineDir, "baseline", "home");
+  const registered = await prepareImplementations(
+    request,
+    {
+      env: request.envSource ?? createEnvSource(process.cwd(), request.signal),
+      run: { HOME: homeDir, TMPDIR: tmpDir },
+    },
+    request.signal,
+  );
+  await validateAuthoringAssets(request.case);
+  return {
+    request,
+    runId,
+    startedAt,
+    root,
+    workspaceDir,
+    homeDir,
+    tmpDir,
+    mocksDir,
+    engineDir,
+    configDir,
+    baselineWorkspaceDir,
+    baselineHomeDir,
+    registered,
+  };
+}
+
+/** Validate configuration, execute one runner, run all checks, and clean up. */
+export async function runEvaluation(request: RunRequest): Promise<EvaluationRecord> {
+  return executeEvaluation(await prepareEvaluation(request));
+}
+
+/** Execute one prepared case: prepare the run root, drive the runner, check, record and clean up. */
+export async function executeEvaluation(prepared: PreparedEvaluation): Promise<EvaluationRecord> {
+  const {
+    request,
+    runId,
+    startedAt,
+    root,
+    workspaceDir,
+    homeDir,
+    tmpDir,
+    mocksDir,
+    engineDir,
+    configDir,
+    baselineWorkspaceDir,
+    baselineHomeDir,
+    registered,
+  } = prepared;
+  const timeoutMs = request.case.config.timeoutMs ?? DEFAULT_TIMEOUT_MS;
 
   const abort = new AbortController();
   let cancelled = request.signal?.aborted ?? false;
@@ -71,25 +167,7 @@ export async function runEvaluation(request: RunRequest): Promise<EvaluationReco
   }
   request.signal?.addEventListener("abort", onAbort, { once: true });
 
-  // Placeholders need the run directories' paths; they are created only after validation.
-  const root = join(request.tempParent ?? tmpdir(), `run-${randomBytes(6).toString("hex")}`);
-  const workspaceDir = join(root, "workspace");
-  const homeDir = join(root, "home");
-  const configDir = join(root, "config");
-  const scratchDir = join(root, "scratch");
-  const baselineDir = join(root, "baseline");
-
-  let registered: Awaited<ReturnType<typeof prepareImplementations>>;
   try {
-    registered = await prepareImplementations(
-      request,
-      {
-        env: request.envSource ?? createEnvSource(process.cwd(), abort.signal),
-        run: { HOME: homeDir, TMPDIR: scratchDir },
-      },
-      abort.signal,
-    );
-    await validateAuthoringAssets(request.case);
     // Exclusive creation, like mkdtemp: an existing path is an error, not reused.
     await mkdir(root, { mode: 0o700 });
   } catch (error) {
@@ -122,9 +200,10 @@ export async function runEvaluation(request: RunRequest): Promise<EvaluationReco
     await Promise.all([
       mkdir(workspaceDir, { mode: 0o700 }),
       mkdir(homeDir, { mode: 0o700 }),
-      mkdir(configDir, { mode: 0o700 }),
-      mkdir(scratchDir, { mode: 0o700 }),
-      mkdir(baselineDir, { mode: 0o700 }),
+      mkdir(tmpDir, { mode: 0o700 }),
+      mkdir(mocksDir, { mode: 0o700 }),
+      mkdir(join(engineDir, "baseline", "workspace"), { recursive: true, mode: 0o700 }),
+      mkdir(join(engineDir, "baseline", "home"), { recursive: true, mode: 0o700 }),
     ]);
 
     const fixture = request.case.config.fixture;
@@ -136,26 +215,72 @@ export async function runEvaluation(request: RunRequest): Promise<EvaluationReco
         filter: authoringCopyFilter(source),
       });
     }
-    await placeCaseFiles(request.case, join(root, "files"), workspaceDir);
+    await placeCaseFiles(request.case, join(engineDir, "files", "workspace"), workspaceDir);
     const workspaceRoot = await openRunRoot(workspaceDir);
+
+    // The runner places its own HOME content first; the case then overlays it without
+    // touching login state, and only what the case placed becomes the HOME baseline.
+    const context: RunnerContext = {
+      workspaceDir,
+      homeDir,
+      tmpDir,
+      engineDir,
+      configDir,
+      runRootDir: root,
+      input: request.case.config.input,
+      timeoutMs,
+      signal: abort.signal,
+    };
+    runner = registered.runner;
+    const protectedPaths = (await runner.prepareHome?.(context)) ?? [];
+    // Login state is protected by the file the filesystem actually holds at each declared
+    // path, so a differently-cased or otherwise normalised spelling cannot alias it.
+    const protectedIdentities: string[] = [];
+    for (const path of protectedPaths) {
+      try {
+        const info = await lstat(join(homeDir, path), { bigint: true });
+        if (info.isFile()) protectedIdentities.push(fileIdentity(info));
+      } catch (error) {
+        if (!isMissing(error)) throw error;
+      }
+    }
+    const homePlacements = homeEntries(request.case.config.files);
+    const homeStaging = join(engineDir, "files", "home");
+    if (homePlacements.length > 0) {
+      await stageEntries(homePlacements, request.case.dir, homeStaging, "files", abort.signal);
+      try {
+        await copyPlacement(homeStaging, homeDir, {
+          label: "files",
+          overwrite: true,
+          protect: { paths: protectedPaths, identities: protectedIdentities },
+          signal: abort.signal,
+        });
+        await cp(homeStaging, baselineHomeDir, { recursive: true, preserveTimestamps: true });
+      } finally {
+        await rm(homeStaging, { recursive: true, force: true });
+      }
+    }
+    const homeRoot = await openRunRoot(homeDir);
 
     // Forwarders are written before the baseline snapshot, so it already holds them.
     const mocks = request.case.config.mocks;
     if (mocks !== undefined) {
       mockHost = await startMockHost({
         runRootDir: root,
+        engineDir,
+        mocksDir,
         workspaceDir: workspaceRoot.path,
-        scratchDir,
+        tmpDir,
         authoringDir: request.case.dir,
         shell: mocks.shell,
         timeoutMs,
         signal: abort.signal,
       });
     }
-    await cp(workspaceDir, baselineDir, { recursive: true, preserveTimestamps: true });
-    const baselineRoot = await openRunRoot(baselineDir);
+    await cp(workspaceDir, baselineWorkspaceDir, { recursive: true, preserveTimestamps: true });
+    const baselineRoot = await openRunRoot(baselineWorkspaceDir);
+    const homeBaselineRoot = await openRunRoot(baselineHomeDir);
 
-    runner = registered.runner;
     const started = performance.now();
     let outcome: RunnerOutcome | undefined;
 
@@ -167,14 +292,7 @@ export async function runEvaluation(request: RunRequest): Promise<EvaluationReco
 
     try {
       outcome = await runner.run({
-        workspaceDir,
-        homeDir,
-        configDir,
-        scratchDir,
-        runRootDir: root,
-        input: request.case.config.input,
-        timeoutMs,
-        signal: abort.signal,
+        ...context,
         ...(mockHost === undefined ? {} : { mocks: mockHost.wiring }),
       });
     } catch (caught) {
@@ -235,6 +353,8 @@ export async function runEvaluation(request: RunRequest): Promise<EvaluationReco
         root,
         workspaceRoot,
         baselineRoot,
+        homeRoot,
+        homeBaselineRoot,
         trace,
         mockRecords,
         timeoutMs,
@@ -320,7 +440,7 @@ export async function runEvaluation(request: RunRequest): Promise<EvaluationReco
 async function prepareImplementations(
   request: RunRequest,
   values: ValueSource,
-  signal: AbortSignal,
+  signal: AbortSignal | undefined,
 ): Promise<{
   runnerType: string;
   runner: Runner;
@@ -328,22 +448,28 @@ async function prepareImplementations(
 }> {
   const mockTargets =
     request.case.config.mocks === undefined ? undefined : Object.keys(request.case.config.mocks.shell);
+  const runnerDefinition = requireRunner(request.registry, request.case.config.runner.$type);
+  if (request.case.config.mocks !== undefined && runnerDefinition.mocks !== true) {
+    throw new ConfigError(`runner "${runnerDefinition.type}" does not support mocks`);
+  }
+  const runnerSupportsHome = runnerDefinition.home === true;
+  if (!runnerSupportsHome && homeEntries(request.case.config.files).length > 0) {
+    throw new ConfigError(`runner "${runnerDefinition.type}" does not support case files under "~"`);
+  }
   const context: ImplementationContext = {
     authoringDir: request.case.dir,
     values,
     validateFiles: (files) => validateCheckFiles(files, request.case.dir, "check files", signal),
     ...(mockTargets === undefined ? {} : { mockTargets }),
+    runnerSupportsHome,
   };
-  const runnerDefinition = requireRunner(request.registry, request.case.config.runner.$type);
-  if (request.case.config.mocks !== undefined && runnerDefinition.mocks !== true) {
-    throw new ConfigError(`runner "${runnerDefinition.type}" does not support mocks`);
-  }
   const runnerParams = await parseImplementationParams(
     runnerDefinition.params,
     await substituteValues(paramsOf(request.case.config.runner), "runner", values),
     `runner "${runnerDefinition.type}"`,
   );
   const runner = await runnerDefinition.create(runnerParams, context);
+  await validateCaseHomePlacement(request.case, runner.homeFiles ?? [], signal);
 
   const checks: { type: string; checker: Checker }[] = [];
   for (const [index, record] of request.case.config.checks.entries()) {
@@ -357,6 +483,35 @@ async function prepareImplementations(
   }
 
   return { runnerType: runnerDefinition.type, runner, checks };
+}
+
+/**
+ * Reject a case's `~/` placement that would land on login state, including a directory source
+ * whose contents name a login file. Runs while every selected case is prepared, before any
+ * case executes; the filesystem-level alias guard still applies at placement time.
+ */
+async function validateCaseHomePlacement(
+  loadedCase: ResolvedCase,
+  loginFiles: readonly string[],
+  signal: AbortSignal | undefined,
+): Promise<void> {
+  const entries = homeEntries(loadedCase.config.files);
+  if (entries.length === 0 || loginFiles.length === 0) {
+    return;
+  }
+  let placed: readonly string[];
+  try {
+    placed = await placedPaths(entries, loadedCase.dir, "files", signal);
+  } catch (error) {
+    if (signal?.aborted) throw error;
+    throw new ConfigError(`case files: ${errorMessage(error)}`, { cause: error });
+  }
+  for (const target of placed) {
+    const file = loginFiles.find((login) => target === login || target.startsWith(`${login}/`));
+    if (file !== undefined) {
+      throw new ConfigError(`case files place ${target}, which collides with login state at ${file}`);
+    }
+  }
 }
 
 async function validateAuthoringAssets(loadedCase: ResolvedCase): Promise<void> {
@@ -391,6 +546,8 @@ async function runChecks(
   root: string,
   workspaceRoot: RunRoot,
   baselineRoot: RunRoot,
+  homeRoot: RunRoot,
+  homeBaselineRoot: RunRoot,
   trace: readonly TraceEntry[] | undefined,
   mockRecords: readonly MockRecord[] | undefined,
   timeoutMs: number,
@@ -423,13 +580,15 @@ async function runChecks(
       check.checker.check({
         workspace: workspaceRoot,
         baseline: baselineRoot,
+        home: homeRoot,
+        homeBaseline: homeBaselineRoot,
         runRootDir: root,
         input: request.case.config.input,
         ...(trace === undefined ? {} : { trace }),
         ...(mockRecords === undefined ? {} : { mockRecords }),
         checkSandbox: createCheckSandbox({
           workspaceDir: workspaceRoot.path,
-          runRootDir: root,
+          engineDir: join(root, "engine"),
           authoringDir: request.case.dir,
           signal: combined,
           cancelled: signal,

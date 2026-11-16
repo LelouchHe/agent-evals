@@ -15,15 +15,38 @@ async function runRoots(t: TestContext) {
   const root = await makeTempDir(t, "ae-skills-");
   const workspace = join(root, "workspace");
   const baseline = join(root, "baseline");
-  await mkdir(workspace);
-  await mkdir(baseline);
-  return { root, workspace, baseline };
+  const home = join(root, "home");
+  const homeBaseline = join(root, "home-baseline");
+  await Promise.all([mkdir(workspace), mkdir(baseline), mkdir(home), mkdir(homeBaseline)]);
+  return { root, workspace, baseline, home, homeBaseline };
 }
 
-/** A `SKILL.md` as the fixture places it: identical in the workspace and the baseline. */
-/** The two run directories the derivation reads. */
+/** The four run directories the derivation reads. */
 async function sources(dirs: Awaited<ReturnType<typeof runRoots>>) {
-  return { workspace: await openRunRoot(dirs.workspace), baseline: await openRunRoot(dirs.baseline) };
+  return {
+    workspace: await openRunRoot(dirs.workspace),
+    home: await openRunRoot(dirs.home),
+    workspaceBaseline: await openRunRoot(dirs.baseline),
+    homeBaseline: await openRunRoot(dirs.homeBaseline),
+  };
+}
+
+/** Place one `SKILL.md` in the live root and the baseline that records the case's placement. */
+async function placeHomeSkill(dirs: Awaited<ReturnType<typeof runRoots>>, path: string, name: string) {
+  await placeSkill(dirs.home, dirs.homeBaseline, path, `name: ${name}\n`);
+}
+
+/** A completed shell call, as the harnesses that report one describe it. */
+function shellCommand(command: string): ToolEntry {
+  return {
+    type: "tool",
+    toolCallId: "call-shell",
+    kind: "execute",
+    title: "bash",
+    status: "completed",
+    rawInput: { command },
+    content: [{ type: "content", content: { type: "text", text: "" } }],
+  };
 }
 
 async function placeSkill(workspace: string, baseline: string, path: string, frontmatter: string): Promise<void> {
@@ -159,6 +182,8 @@ test("a workspace read is named from the baseline in every path spelling, not fr
 test("workspace paths resolve against the given workspace, not the baseline's location", async (t) => {
   const workspaceDir = await makeTempDir(t, "ae-skills-workspace-");
   const baselineDir = await makeTempDir(t, "ae-skills-baseline-");
+  const homeDir = await makeTempDir(t, "ae-skills-home-");
+  const homeBaselineDir = await makeTempDir(t, "ae-skills-home-baseline-");
   const relative = ".agents/skills/aw-deploy/SKILL.md";
   await placeSkill(workspaceDir, baselineDir, relative, "name: deploy-runbook\n");
   const workspace = await openRunRoot(workspaceDir);
@@ -168,7 +193,9 @@ test("workspace paths resolve against the given workspace, not the baseline's lo
 
   const consultations = await skillConsultations([piRead(join(workspace.path, relative), edited)], {
     workspace,
-    baseline,
+    home: await openRunRoot(homeDir),
+    workspaceBaseline: baseline,
+    homeBaseline: await openRunRoot(homeBaselineDir),
   });
 
   assert.deepEqual(consultations, [{ name: "deploy-runbook", fromDirectory: false }]);
@@ -226,7 +253,7 @@ test("whitespace-only skill names and frontmatter names are ignored, and paths a
   assert.deepEqual(consultations, [{ name: "fallback-dir", fromDirectory: true }]);
 });
 
-test("a read outside the workspace is named from its text, then from its parent directory", async (t) => {
+test("a read outside the placed roots is named from its text, then from its parent directory", async (t) => {
   const dirs = await runRoots(t);
   const home = join(dirs.root, "home", "skills");
   await mkdir(join(home, "named-dir"), { recursive: true });
@@ -280,4 +307,43 @@ test("a workspace read falls back to the returned text when the baseline gives n
   const consultations = await skillConsultations([piRead(relative, `---\nname: text-name\n---\n${SKILL_BODY}`)], roots);
 
   assert.deepEqual(consultations, [{ name: "text-name", fromDirectory: false }]);
+});
+
+test("a home-placed skill is named from the HOME baseline, by ~/ and absolute spellings", async (t) => {
+  const dirs = await runRoots(t);
+  const relative = ".claude/skills/aw-task-delegation/SKILL.md";
+  await placeHomeSkill(dirs, relative, "task-delegation");
+  const roots = await sources(dirs);
+  const edited = `---\nname: edited-during-run\n---\n${SKILL_BODY}`;
+
+  const consultations = await skillConsultations(
+    [
+      piRead(`~/${relative}`, edited),
+      piRead(join(roots.home.path, relative), edited),
+      // A path the case did not place falls back to its returned text.
+      piRead("~/.claude/skills/unplaced/SKILL.md", `---\nname: from-text\n---\n${SKILL_BODY}`),
+    ],
+    roots,
+  );
+
+  assert.deepEqual(consultations, [
+    { name: "task-delegation", fromDirectory: false },
+    { name: "from-text", fromDirectory: false },
+  ]);
+});
+
+test("shell command text naming a placed HOME SKILL.md is reported, not counted", async (t) => {
+  const dirs = await runRoots(t);
+  const relative = ".pi/agent/skills/knowledge-base/SKILL.md";
+  await placeHomeSkill(dirs, relative, "knowledge-base");
+  const roots = await sources(dirs);
+
+  const { shellSkillAccess } = await import("./skills.ts");
+  const accessed = await shellSkillAccess(
+    [shellCommand(`head -40 ~/${relative} && cat ${join(roots.home.path, relative)}`)],
+    roots,
+  );
+  assert.deepEqual(accessed, [{ name: "knowledge-base" }]);
+  // A command naming an unplaced file reports nothing.
+  assert.deepEqual(await shellSkillAccess([shellCommand(`cat ~/elsewhere/SKILL.md`)], roots), []);
 });

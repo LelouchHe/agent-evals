@@ -214,7 +214,9 @@ export async function buildPolicy(executable: string, config: PiSessionConfig): 
   return {
     writableRoots: [config.dirs.workspaceDir, config.dirs.homeDir, config.dirs.configDir, config.dirs.scratchDir],
     readableRoots: [...readableRoots],
-    readableFiles: [executable],
+    // The resolver's fallback stats `/etc` and `/var` (symlinks to `/private/...`) before it
+    // reads `/private/etc/resolv.conf`; without them a sandboxed Node fails DNS with ENOTFOUND.
+    readableFiles: [executable, "/etc", "/var"],
     allowNetwork: config.allowNetwork,
   };
 }

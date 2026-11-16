@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto";
-import { mkdir, rm } from "node:fs/promises";
+import { mkdir, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { stringify } from "yaml";
@@ -8,42 +8,54 @@ import { ConfigError, errorMessage } from "../../engine/config.ts";
 import { createEnvSource } from "../../engine/env-source.ts";
 import { spawnSupervised, type SupervisedProcess } from "../../platform/macos/supervise.ts";
 import { agentSchema } from "./agent.ts";
-import { assembleEnvironment, resolveHome } from "./environment.ts";
+import { harnessEnvironment, prepareHarnessHome, resolveHarnessHome, saveLogin } from "./environment.ts";
 import { withSession } from "./session.ts";
 
 /** Helpers share the same typed agent configuration and isolated lifecycle. */
 export async function runAgentCommand(command: "config" | "login", path: string, signal: AbortSignal): Promise<string> {
-  // Placeholders need the directories' paths; they are created only after validation.
-  const directory = join(tmpdir(), `ae-acp-${randomBytes(6).toString("hex")}`);
+  // Placeholders need the directories' paths; they are created only after validation. The
+  // parent is canonical so the sandbox authorizes traversal through the `deps` link.
+  const directory = join(await realpath(tmpdir()), `ae-acp-${randomBytes(6).toString("hex")}`);
   const dirs = {
     home: join(directory, "home"),
     workspace: join(directory, "workspace"),
-    scratch: join(directory, "tmp"),
+    tmp: join(directory, "tmp"),
+    engine: join(directory, "engine"),
   };
   const { params: agent, dir } = await loadImplementationParameters(path, agentSchema, {
     env: createEnvSource(process.cwd(), signal),
-    run: { HOME: dirs.home, TMPDIR: dirs.scratch },
+    run: { HOME: dirs.home, TMPDIR: dirs.tmp },
   });
-  if (command === "login" && (agent.command === undefined || agent.home.login === undefined || !agent.login?.length)) {
-    throw new ConfigError("login requires command, home.login and a non-empty login file list");
+  if (command === "login" && agent.login === undefined) {
+    throw new ConfigError("login requires login.command, login.dir and login.files");
   }
   signal.throwIfAborted();
-  const home = await resolveHome(agent, dir);
+  const home = await resolveHarnessHome(agent, dir);
   // Exclusive creation, like mkdtemp: an existing path is an error, not reused.
   await mkdir(directory, { mode: 0o700 });
   const failures: unknown[] = [];
   let output = "";
-  let environment: Awaited<ReturnType<typeof assembleEnvironment>> | undefined;
+  let prepared: Awaited<ReturnType<typeof prepareHarnessHome>> | undefined;
+  let environment: Awaited<ReturnType<typeof harnessEnvironment>> | undefined;
   let supervised: SupervisedProcess | undefined;
   try {
     await Promise.all(Object.values(dirs).map((path) => mkdir(path, { mode: 0o700 })));
-    environment = await assembleEnvironment(home, dirs, { interactive: command === "login" });
+    prepared = await prepareHarnessHome(home, {
+      home: dirs.home,
+      runRootDir: directory,
+      engineDir: dirs.engine,
+    });
+    environment = await harnessEnvironment(
+      home,
+      { home: dirs.home, workspace: dirs.workspace, tmp: dirs.tmp, runRootDir: directory },
+      { interactive: command === "login" },
+    );
     const operationSignal = command === "config" ? AbortSignal.any([signal, AbortSignal.timeout(30_000)]) : signal;
     operationSignal.throwIfAborted();
     const process = await spawnSupervised({
-      command: command === "config" ? agent.acpCommand : agent.command!,
+      command: command === "config" ? agent.acpCommand : agent.login!.command,
       policy: environment.policy,
-      policyDirectory: directory,
+      policyDirectory: dirs.engine,
       cwd: dirs.workspace,
       env: environment.env,
       interactive: command === "login",
@@ -80,7 +92,7 @@ export async function runAgentCommand(command: "config" | "login", path: string,
       };
       output = await Promise.race([work(), cancelled]);
       operationSignal.throwIfAborted();
-      if (command === "login") await environment.saveLogin(agent.login!);
+      if (command === "login") await saveLogin(home, prepared.homeRoot, agent.login!.files);
     } finally {
       operationSignal.removeEventListener("abort", onAbort);
     }
@@ -90,7 +102,7 @@ export async function runAgentCommand(command: "config" | "login", path: string,
   try {
     if (supervised !== undefined) {
       await supervised.stop();
-      await environment!.copyBack();
+      await prepared!.copyBack();
     }
   } catch (error) {
     failures.push(new Error(`cleanup failed: ${errorMessage(error)}`, { cause: error }));

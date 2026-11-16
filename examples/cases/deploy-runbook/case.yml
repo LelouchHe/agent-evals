@@ -1,7 +1,7 @@
 # The skill holds team-private knowledge (what our error codes mean and how to
 # fix them). The task does not state it and the log does not reveal it.
 # Each harness runs through the generic ACP runner; prepare its deps and login
-# directories first (docs/configuration.md#acp-preparation-helpers).
+# directories first and point its agent file at them (docs/configuration.md#agent-files).
 input: Our deploy failed. Read deploy.log, confirm the release state with `deployctl status`, read the build facts with `release-facts`, check the platform with `uname -s`, then write the cause, the certificate serial, the build id, the platform and the commands to fix it into diagnosis.md.
 fixture: fixture
 timeoutMs: 120000

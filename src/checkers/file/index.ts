@@ -4,7 +4,7 @@ import { patternSyntaxSchema, runRelativePathSchema } from "../../engine/params.
 import { truncate } from "../../engine/truncate.ts";
 import { searches } from "../../engine/regex.ts";
 import { isMissing, readRunFile, runFileExists, type RunRoot } from "../../engine/workspace.ts";
-import { errorMessage, type PatternSyntax } from "../../engine/config.ts";
+import { ConfigError, errorMessage, type PatternSyntax } from "../../engine/config.ts";
 
 const MAX_PATTERNS = 100;
 
@@ -34,9 +34,16 @@ const patternListSchema = z.unknown().transform((value, context): readonly Patte
   });
 });
 
+/** A workspace path, or `~/…` for a file in the run HOME. `~/` alone names HOME, not a file. */
+const filePathSchema = runRelativePathSchema.superRefine((value, context) => {
+  if (value === "~/" || value === "~/.") {
+    context.addIssue({ code: "custom", message: "must name a file or directory inside HOME, not HOME itself" });
+  }
+});
+
 const fileCheckParamsSchema = z
   .strictObject({
-    path: runRelativePathSchema,
+    path: filePathSchema,
     exists: z.boolean().optional(),
     changed: z.boolean().optional(),
     matches: patternListSchema.optional(),
@@ -69,7 +76,12 @@ type FileCheckParams = z.output<typeof fileCheckParamsSchema>;
 export const fileChecker: CheckerDefinition<FileCheckParams> = {
   type: "file",
   params: fileCheckParamsSchema,
-  create(params) {
+  create(params, context) {
+    if (params.path.startsWith("~/") && !context.runnerSupportsHome) {
+      throw new ConfigError(
+        `file check path "${params.path}" is in the run HOME, which the selected runner does not provide`,
+      );
+    }
     return new FileChecker(params);
   },
 };
@@ -89,13 +101,14 @@ class FileChecker implements Checker {
 
   readonly check = async (context: CheckerContext): Promise<readonly CheckResult[]> => {
     const params = this.#params;
+    const target = this.#target(context);
     const results: CheckResult[] = [];
 
     if (params.exists !== undefined) {
       const expected = params.exists;
       results.push(
         await condition(`${params.path} ${expected ? "exists" : "does not exist"}`, async () => {
-          const exists = await runFileExists(context.workspace, params.path);
+          const exists = await runFileExists(target.root, target.relative);
           if (exists === expected) {
             return pass(`${params.path} ${expected ? "is a regular file" : "is absent"}`);
           }
@@ -121,9 +134,10 @@ class FileChecker implements Checker {
 
   async #changed(context: CheckerContext, expected: boolean): Promise<CheckResult> {
     const { path } = this.#params;
+    const target = this.#target(context);
     return condition(`${path} ${expected ? "changed" : "unchanged"} since run start`, async () => {
-      const current = await readOptional(context.workspace, path);
-      const baseline = await readOptional(context.baseline, path);
+      const current = await readOptional(target.root, target.relative);
+      const baseline = await readOptional(target.baseline, target.relative);
       const change =
         current === undefined
           ? baseline === undefined
@@ -152,10 +166,11 @@ class FileChecker implements Checker {
    */
   async #patterns(context: CheckerContext, declared: readonly DeclaredPattern[]): Promise<CheckResult[]> {
     const { path } = this.#params;
+    const target = this.#target(context);
     let text: string | undefined;
     let readError: string | undefined;
     try {
-      text = (await readRunFile(context.workspace, path)).toString("utf8");
+      text = (await readRunFile(target.root, target.relative)).toString("utf8");
     } catch (error) {
       if (!isMissing(error)) {
         readError = errorMessage(error);
@@ -174,6 +189,14 @@ class FileChecker implements Checker {
       const reason = found ? "pattern found" : "pattern not found";
       return { ...(found === (kind === "matches") ? pass : fail)(reason), subject };
     });
+  }
+
+  /** Which run root a declared path names, and the path inside it. */
+  #target(context: CheckerContext): { readonly root: RunRoot; readonly baseline: RunRoot; readonly relative: string } {
+    const { path } = this.#params;
+    return path.startsWith("~/")
+      ? { root: context.home, baseline: context.homeBaseline, relative: path.slice(2) }
+      : { root: context.workspace, baseline: context.baseline, relative: path };
   }
 }
 

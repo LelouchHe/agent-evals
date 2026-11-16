@@ -38,6 +38,33 @@ interface CaseEntry {
  * field origins. Runtime implementation validation remains a separate step.
  */
 export async function loadCase(path: string, selection: CaseSelection = {}): Promise<ResolvedCase> {
+  const document = await readCaseDocument(path);
+  return buildCase(document, selectCase(document.cases, selection.caseName, document.file));
+}
+
+/**
+ * Resolve every selected case in declaration order: the named one when a name is
+ * given, all entries of a `cases` document when it is not, or the one ordinary case.
+ */
+export async function loadCases(path: string, selection: CaseSelection = {}): Promise<readonly ResolvedCase[]> {
+  const document = await readCaseDocument(path);
+  const { cases, file } = document;
+  if (cases === undefined) {
+    return [buildCase(document, selectCase(undefined, selection.caseName, file))];
+  }
+  if (selection.caseName !== undefined) {
+    return [buildCase(document, selectCase(cases, selection.caseName, file))];
+  }
+  return [...cases.values()].map((entry) => buildCase(document, entry));
+}
+
+interface CaseDocument {
+  readonly file: string;
+  readonly common: readonly FieldEntry[];
+  readonly cases?: ReadonlyMap<string, CaseEntry>;
+}
+
+async function readCaseDocument(path: string): Promise<CaseDocument> {
   const { file, text, fields } = await readMapping(path);
   const common: FieldEntry[] = [];
   let casesField: FieldEntry | undefined;
@@ -53,7 +80,11 @@ export async function loadCase(path: string, selection: CaseSelection = {}): Pro
   }
 
   const cases = casesField === undefined ? undefined : parseCases(casesField, file, text);
-  const selected = selectCase(cases, selection.caseName, file);
+  return { file, common, ...(cases === undefined ? {} : { cases }) };
+}
+
+function buildCase(document: CaseDocument, selected: CaseEntry | undefined): ResolvedCase {
+  const { file, common } = document;
   if (selected !== undefined) {
     const commonKeys = new Set(common.map((field) => field.key));
     const shared = selected.fields.filter((field) => commonKeys.has(field.key)).map((field) => field.key);

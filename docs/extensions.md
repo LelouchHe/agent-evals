@@ -37,26 +37,29 @@ Runner and checker definitions have the same three parts:
 | `params` | A Zod schema for the record's other keys. The engine substitutes [placeholders](configuration.md#placeholders), then parses with this schema once. |
 | `create` | `create(params, context)` returns the instance, or a promise of one. It runs before the agent starts, so it is where to reject an unusable setup.  |
 
-A runner definition may also set `mocks: true`: the runner places the mocked commands it receives in [`RunnerContext.mocks`](#runner). A case that declares mocks is rejected for a runner without it.
+A runner definition may also set `mocks: true`: the runner places the mocked commands it receives in [`RunnerContext.mocks`](#runner). A case that declares mocks is rejected for a runner without it. A runner that gives the run a HOME sets `home: true` and implements `prepareHome`; a case that places or checks a `~/` path is rejected for a runner without it.
 
 `create` receives an `ImplementationContext`:
 
-| Field           | Meaning                                                                                                      |
-| --------------- | ------------------------------------------------------------------------------------------------------------ |
-| `authoringDir`  | Directory of the case file, for resolving the author's relative paths.                                       |
-| `values`        | The run's placeholder sources, for a parameter the implementation loads itself.                              |
-| `validateFiles` | Validates and stages a checker's check-time `files` (workspace destination → authoring source) at load time. |
-| `mockTargets`   | The case's declared `mocks.shell` targets; absent when the case declares no mocks.                           |
+| Field                | Meaning                                                                                                      |
+| -------------------- | ------------------------------------------------------------------------------------------------------------ |
+| `authoringDir`       | Directory of the case file, for resolving the author's relative paths.                                       |
+| `values`             | The run's placeholder sources, for a parameter the implementation loads itself.                              |
+| `validateFiles`      | Validates and stages a checker's check-time `files` (workspace destination → authoring source) at load time. |
+| `mockTargets`        | The case's declared `mocks.shell` targets; absent when the case declares no mocks.                           |
+| `runnerSupportsHome` | True when the selected runner gives the run a HOME; a checker that reads `~/` paths needs it.                |
 
 An error thrown from `create` stops the case before the agent starts, so a setup that cannot work costs no agent run.
 
 ## Runner
 
 ```text
-Runner.run(RunnerContext) -> RunnerOutcome
-Runner.stop()             -> completion; must be safe to call more than once
-Runner.trace?()           -> TraceEntry[]
-Runner.usage?()           -> RunnerUsage | undefined
+Runner.prepareHome?(RunnerContext) -> readonly string[]
+Runner.run(RunnerContext)          -> RunnerOutcome
+Runner.stop()                      -> completion; must be safe to call more than once
+Runner.trace?()                    -> TraceEntry[]
+Runner.usage?()                    -> RunnerUsage | undefined
+Runner.homeFiles?                  -> readonly string[]
 ```
 
 `RunnerContext`:
@@ -64,10 +67,11 @@ Runner.usage?()           -> RunnerUsage | undefined
 | Field          | Meaning                                                                                                                                                                |
 | -------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `workspaceDir` | The prepared workspace; the agent's working directory.                                                                                                                 |
-| `homeDir`      | The run's private `HOME`.                                                                                                                                              |
-| `configDir`    | Per-run directory for harness configuration the runner stages.                                                                                                         |
-| `scratchDir`   | Per-run temporary directory.                                                                                                                                           |
-| `runRootDir`   | Parent of the directories above; removed after the run.                                                                                                                |
+| `homeDir`      | The run's private `HOME`; the case may place `~/` content in it.                                                                                                       |
+| `tmpDir`       | The run's temporary directory, named by `TMPDIR`.                                                                                                                      |
+| `engineDir`    | Engine-private state: unreadable to the agent. A runner may stage or write here.                                                                                       |
+| `configDir`    | A runner-owned writable directory; only the native Pi runner uses it.                                                                                                  |
+| `runRootDir`   | Parent of the directories above; removed after the run. The `deps` link lives here.                                                                                    |
 | `input`        | The case's initial user message.                                                                                                                                       |
 | `timeoutMs`    | The run's execution budget. The engine enforces it and aborts `signal`.                                                                                                |
 | `signal`       | Aborted on timeout or cancellation.                                                                                                                                    |
@@ -75,7 +79,13 @@ Runner.usage?()           -> RunnerUsage | undefined
 
 `RunnerOutcome` is `finalText` (string or `null`) and `diagnostics`, a short list such as a stderr tail.
 
-The two optional methods are how a runner supplies evidence, and both are read after a failed run too:
+Three optional members describe a runner's HOME:
+
+- **`prepareHome(context)`** runs before the case's `~/` entries and the baseline snapshot. The runner links its `deps`, copies its agent-file `files` and login state into `homeDir`, and returns the HOME-relative login files the case may not touch. Absent for a runner without a HOME.
+- **`homeFiles`** is the same login-file list, available without running `prepareHome`, so the engine can reject a case `~/` entry at load time.
+- A definition sets `home: true` only when both are true; without it, a case that places or checks a `~/` path is a configuration error.
+
+The two optional evidence methods are read after a failed run too:
 
 - **`trace()`** returns the run's steps in order of first appearance. An entry is `{ type: "message" | "thought", text }` or `{ type: "tool", toolCallId, ...fields }`, where the other fields are the harness's own. The engine writes it to `trace.json` and hands it to every checker. A runner without `trace()` records no trace; checks that need one then report an `error`.
 - **`usage()`** returns what the harness reported it consumed: optional `context`, `cost` and `tokens`. Nothing is estimated.
@@ -94,6 +104,8 @@ Checker.check(CheckerContext) -> CheckResult[]
 | -------------- | ----------------------------------------------------------------------------------------------------------------- |
 | `workspace`    | The workspace as the agent left it: `path` plus the directory identity the engine recorded.                       |
 | `baseline`     | The workspace as it was before the agent started, outside the agent's writable area. Same shape as `workspace`.   |
+| `home`         | The run HOME as the agent left it. For a runner without a HOME it is an empty directory.                          |
+| `homeBaseline` | What the case placed in HOME before the agent started; agent-file and login content is not part of it.            |
 | `trace`        | The runner's complete trace, the same data as `trace.json`; absent when the runner records none.                  |
 | `mockRecords`  | Calls that reached a mocked command, in arrival order, each a `target` and its `arguments`; absent without mocks. |
 | `checkSandbox` | `run(command, { files })` runs a program in the engine's fixed check sandbox and reports how it ended.            |
@@ -156,7 +168,7 @@ checks:
 
 ## Current Limits
 
-- **The package entry exports the contracts and one trace derivation.** `import type { CheckerDefinition, CheckResult } from "agent-evals"` gives the contracts on this page, and `await skillConsultations(trace, { workspace, baseline })` returns the skills a run consulted, as the built-in [`trace` checker](configuration.md#trace-checker-type-trace) derives them ([`index.ts`](../src/index.ts)). Type imports are erased before the module runs. The package is not published, and nothing resolves it for an extension directory by itself, so the function is not yet importable at run time from an arbitrary extension.
+- **The package entry exports the contracts and one trace derivation.** `import type { CheckerDefinition, CheckResult } from "agent-evals"` gives the contracts on this page, and `await skillConsultations(trace, { workspace, home, workspaceBaseline, homeBaseline })` returns the skills a run consulted, as the built-in [`trace` checker](configuration.md#trace-checker-type-trace) derives them ([`index.ts`](../src/index.ts)). Type imports are erased before the module runs. The package is not published, and nothing resolves it for an extension directory by itself, so the function is not yet importable at run time from an arbitrary extension.
 - **Engine helpers are not available.** The identity-checked file reads the built-in `file` checker uses, pattern compilation and mock matching are internal. The exported skill derivation encapsulates its own baseline reads; an extension reading other files uses `workspace.path` and `baseline.path` with its own code and owns the containment checks it needs.
 - **An extension resolves its own dependencies.** `params` only has to behave like a Zod schema (`safeParseAsync`), but `import { z } from "zod"` must resolve from the module's own location.
 - **`view` does not load extensions.** `--extension-dir` applies to `run` only.

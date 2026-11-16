@@ -14,7 +14,7 @@ import { IgnoreTree, isIgnored } from "./ignore.ts";
 import { isMissing } from "./workspace.ts";
 
 /**
- * Place the case's `files` entries into the prepared workspace. Entries are
+ * Place the case's workspace `files` entries into the prepared workspace. Entries are
  * combined in an otherwise empty staging directory first, so an entry can
  * replace what the fixture provided but never another entry.
  */
@@ -23,18 +23,196 @@ export async function placeCaseFiles(
   stagingDir: string,
   workspaceDir: string,
 ): Promise<void> {
-  const files = loadedCase.config.files;
-  if (files === undefined) {
+  const entries = workspaceEntries(loadedCase.config.files);
+  if (entries.length === 0) {
     return;
   }
-  await mkdir(stagingDir);
-  await stageFiles(files, loadedCase.dir, stagingDir, "files");
-  await copyInto(stagingDir, workspaceDir, ".", "files", true, undefined, {
-    tree: new IgnoreTree(),
-    root: stagingDir,
-    segments: [],
-  });
+  await stageEntries(entries, loadedCase.dir, stagingDir, "files");
+  await copyPlacement(stagingDir, workspaceDir, { label: "files", overwrite: true });
   await rm(stagingDir, { recursive: true, force: true });
+}
+
+/** One placement: the declared destination, where it goes under its root, and its source. */
+export interface PlacementEntry {
+  /** The destination as the author declared it, for messages and reporting. */
+  readonly destination: string;
+  /** The root-relative path the source is placed at. */
+  readonly target: string;
+  readonly source: string;
+}
+
+/** The case `files` entries that go to the workspace, with normalized relative targets. */
+export function workspaceEntries(files: Readonly<Record<string, string>> | undefined): readonly PlacementEntry[] {
+  return Object.entries(files ?? {})
+    .filter(([destination]) => !isHomeDestination(destination))
+    .map(([destination, source]) => ({ destination, target: workspaceTargetPath(destination), source }));
+}
+
+/** The case `files` entries that go into HOME, with `~/` stripped from their targets. */
+export function homeEntries(files: Readonly<Record<string, string>> | undefined): readonly PlacementEntry[] {
+  return Object.entries(files ?? {})
+    .filter(([destination]) => isHomeDestination(destination))
+    .map(([destination, source]) => ({ destination, target: homePathOf(destination), source }));
+}
+
+/** A `~/` destination names HOME; anything else names the workspace. */
+export function isHomeDestination(destination: string): boolean {
+  return destination.startsWith("~/");
+}
+
+/** The HOME-relative path a `~/` destination names; the HOME root itself is the empty path. */
+export function homePathOf(destination: string): string {
+  return workspaceTargetPath(destination.slice(2));
+}
+
+/**
+ * Copy placement entries into an empty staging directory: the same traversal and ignore rules
+ * as a workspace placement, with each target taken relative to the staging root. Two entries
+ * normalized to one path collide there, because staging never overwrites.
+ */
+export async function stageEntries(
+  entries: readonly PlacementEntry[],
+  authoringDir: string,
+  stagingDir: string,
+  label: string,
+  signal?: AbortSignal,
+): Promise<void> {
+  await mkdir(stagingDir, { recursive: true });
+  const tree = new IgnoreTree();
+  for (const entry of entries) {
+    signal?.throwIfAborted();
+    const path = resolveAuthoringAsset(authoringDir, entry.source, `${label}["${entry.destination}"]`);
+    await copyInto(
+      path,
+      resolve(stagingDir, entry.target),
+      entry.destination,
+      `${label} entry "${entry.destination}"`,
+      false,
+      signal,
+      { tree, root: path, segments: [] },
+    );
+  }
+}
+
+/** Files a placement may never create or replace: by declared path and by file identity. */
+export interface PlacementProtection {
+  /** Target-relative paths, compared as written (login files as declared). */
+  readonly paths?: readonly string[];
+  /** File identities (`dev:ino`), so an alias in any spelling cannot be written through. */
+  readonly identities?: readonly string[];
+}
+
+/**
+ * The target-relative paths a placement would write, without copying anything. Used at load
+ * time to reject a placement that would land on login state before any run resource exists.
+ * The traversal and ignore answers are the staging copy's, so the answer matches what would be
+ * placed; a source that cannot be placed is the same error as it would be there.
+ */
+export async function placedPaths(
+  entries: readonly PlacementEntry[],
+  authoringDir: string,
+  label: string,
+  signal?: AbortSignal,
+): Promise<readonly string[]> {
+  const targets: string[] = [];
+  const tree = new IgnoreTree();
+  const walk = async (
+    source: string,
+    target: string,
+    destination: string,
+    segments: readonly string[],
+    root: string,
+  ): Promise<void> => {
+    const classified = await classify(source, destination, label, signal, { tree, root, segments });
+    if (classified.kind === "ignored") {
+      return;
+    }
+    if (classified.kind === "other") {
+      throw new Error(`${label} source for ${destination} must be a regular file or directory`);
+    }
+    targets.push(target);
+    if (classified.kind === "file") {
+      return;
+    }
+    for (const name of await readdir(source)) {
+      await walk(join(source, name), join(target, name), join(destination, name), [...segments, name], root);
+    }
+  };
+  for (const entry of entries) {
+    signal?.throwIfAborted();
+    const source = resolveAuthoringAsset(authoringDir, entry.source, `${label}["${entry.destination}"]`);
+    await walk(source, entry.target, entry.destination, [], source);
+  }
+  return targets;
+}
+
+/**
+ * Copy a staged placement tree onto its target. `overwrite` decides file-on-file replacement;
+ * `protect` names the login state no copy may place over.
+ */
+export async function copyPlacement(
+  stagingDir: string,
+  targetDir: string,
+  options: {
+    readonly label: string;
+    readonly overwrite: boolean;
+    readonly protect?: PlacementProtection;
+    readonly signal?: AbortSignal;
+  },
+): Promise<void> {
+  await copyInto(
+    stagingDir,
+    targetDir,
+    ".",
+    options.label,
+    options.overwrite,
+    options.signal,
+    { tree: new IgnoreTree(), root: stagingDir, segments: [] },
+    options.protect === undefined ? undefined : new ProtectedPaths(options.protect),
+  );
+}
+
+/** The identity a filesystem uses for one file, independent of the spelling that reached it. */
+export function fileIdentity(info: { readonly dev: bigint; readonly ino: bigint }): string {
+  return `${info.dev}:${info.ino}`;
+}
+
+/** Target-relative files a placement may never create or replace. */
+class ProtectedPaths {
+  readonly #paths: readonly string[];
+  readonly #identities: ReadonlySet<string>;
+
+  constructor(protection: PlacementProtection) {
+    this.#paths = (protection.paths ?? []).map((path) => normalizeRelative(path));
+    this.#identities = new Set(protection.identities ?? []);
+  }
+
+  /**
+   * A protected file at `destination`, or a path beneath one, which cannot be written. The
+   * declared spelling is not enough: the filesystem decides whether the target is the login
+   * file, so the existing target's identity is compared too. A case-insensitive or otherwise
+   * normalising filesystem reports the login file's identity for another spelling.
+   */
+  async blocks(target: string, destination: string): Promise<boolean> {
+    const normalized = normalizeRelative(destination);
+    if (this.#paths.some((path) => path === normalized || normalized.startsWith(`${path}/`))) {
+      return true;
+    }
+    if (this.#identities.size === 0) {
+      return false;
+    }
+    try {
+      const info = await lstat(target, { bigint: true });
+      return this.#identities.has(fileIdentity(info));
+    } catch {
+      // Nothing exists at the target spelling, so it cannot alias an existing login file.
+      return false;
+    }
+  }
+}
+
+function normalizeRelative(path: string): string {
+  return workspaceTargetPath(path);
 }
 
 /**
@@ -158,15 +336,17 @@ interface Traversal {
  * entry-versus-entry overlap. Each directory may declare `.agentevalsignore`,
  * which applies as traversal reaches it, so a directly named source is placed.
  */
-async function copyInto(
+/**
+ * Classify one authoring entry against the ignore rules. `ignored` is decided before a special
+ * file is rejected, so an excluded special file is silently skipped rather than an error.
+ */
+async function classify(
   source: string,
-  target: string,
   destination: string,
   label: string,
-  overwrite: boolean,
   signal: AbortSignal | undefined,
   traversal: Traversal,
-): Promise<void> {
+): Promise<{ readonly kind: "file" | "directory" | "other" } | { readonly kind: "ignored" }> {
   signal?.throwIfAborted();
   let info;
   try {
@@ -193,13 +373,33 @@ async function copyInto(
   }
 
   signal?.throwIfAborted();
-  // Classifying first is what lets a directory-only pattern match a directory entry, and what
-  // keeps an excluded special file silently skipped rather than an error.
+  // Classifying first is what lets a directory-only pattern match a directory entry.
   if (await isIgnored(traversal.tree, traversal.root, traversal.segments, kind === "directory")) {
+    return { kind: "ignored" };
+  }
+  return { kind };
+}
+
+async function copyInto(
+  source: string,
+  target: string,
+  destination: string,
+  label: string,
+  overwrite: boolean,
+  signal: AbortSignal | undefined,
+  traversal: Traversal,
+  protect?: ProtectedPaths,
+): Promise<void> {
+  const classified = await classify(source, destination, label, signal, traversal);
+  if (classified.kind === "ignored") {
     return;
   }
+  const { kind } = classified;
   if (kind === "other") {
     throw new Error(`${label} source for ${destination} must be a regular file or directory`);
+  }
+  if (protect !== undefined && (await protect.blocks(target, destination))) {
+    throw new Error(`${label} may not replace ${destination}, which is login state`);
   }
   await expectTarget(target, destination, label, kind, overwrite);
   signal?.throwIfAborted();
@@ -215,10 +415,16 @@ async function copyInto(
   const entries = await readdir(source);
   signal?.throwIfAborted();
   for (const name of entries) {
-    await copyInto(join(source, name), join(target, name), join(destination, name), label, overwrite, signal, {
-      ...traversal,
-      segments: [...traversal.segments, name],
-    });
+    await copyInto(
+      join(source, name),
+      join(target, name),
+      join(destination, name),
+      label,
+      overwrite,
+      signal,
+      { ...traversal, segments: [...traversal.segments, name] },
+      protect,
+    );
   }
 }
 

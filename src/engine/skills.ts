@@ -19,12 +19,19 @@ export interface SkillConsultation {
   readonly fromDirectory: boolean;
 }
 
-/** The run directories the derivation reads: the workspace a trace names, and its initial snapshot. */
+/**
+ * The run directories the derivation reads: the live workspace and HOME a trace names, and what
+ * the case placed in each before the agent started.
+ */
 export interface SkillSources {
-  /** The workspace as the agent left it; absolute trace paths are resolved against it. */
+  /** The workspace as the agent left it; relative trace paths are resolved against it. */
   readonly workspace: RunRoot;
+  /** The run HOME as the agent left it; `~/` and absolute paths inside it resolve here. */
+  readonly home: RunRoot;
   /** The workspace's initial snapshot, where a placed skill's frontmatter is read. */
-  readonly baseline: RunRoot;
+  readonly workspaceBaseline: RunRoot;
+  /** What the case placed in HOME; agent-file and login content is not part of it. */
+  readonly homeBaseline: RunRoot;
 }
 
 /**
@@ -35,9 +42,9 @@ export interface SkillSources {
  * completed `read` of a `SKILL.md` (Pi). Only completed tool calls count, and a skill is
  * one consultation however many times or chunks it was read.
  *
- * The baseline is each run's initial workspace snapshot, so a skill placed in the
- * workspace is named from its frontmatter there. A read outside the workspace is named
- * from the text it returned, then from the skill's parent directory.
+ * A skill the case placed, in the workspace or in HOME, is named from its frontmatter in that
+ * root's baseline. A read outside both roots is named from the text it returned, then from the
+ * skill's parent directory.
  */
 export async function skillConsultations(
   trace: readonly TraceEntry[],
@@ -71,6 +78,58 @@ export async function skillConsultations(
   return [...consultations.values()];
 }
 
+/** A skill whose placed `SKILL.md` an executed command's text named, reported but never counted. */
+export interface ShellSkillAccess {
+  /** The skill's frontmatter `name` in the baseline, or its parent directory's. */
+  readonly name: string;
+}
+
+/**
+ * The placed skills whose `SKILL.md` path an executed command's text named.
+ *
+ * Whether reading a skill body through a shell is a consultation is ambiguous, so this is
+ * reported separately and never counts as one. Only a `SKILL.md` a baseline placed is
+ * recognized; a file the agent created is not the skill it started with.
+ */
+export async function shellSkillAccess(
+  trace: readonly TraceEntry[],
+  sources: SkillSources,
+): Promise<readonly ShellSkillAccess[]> {
+  const found = new Map<string, ShellSkillAccess>();
+  for (const entry of trace) {
+    if (entry.type !== "tool" || entry.status !== "completed" || entry.kind !== "execute") continue;
+    const command = pathField(entry.rawInput, "command");
+    if (command === undefined) continue;
+    for (const token of commandSkillPaths(command)) {
+      const name = await placedSkillName(token, sources);
+      if (name !== undefined && !found.has(name)) found.set(name, { name });
+    }
+  }
+  return [...found.values()];
+}
+
+/** Path-shaped tokens of a command whose basename is `SKILL.md`, in command order. */
+function commandSkillPaths(command: string): string[] {
+  return command.split(/[\s;|&()<>'"`]+/).filter((token) => token.length > 0 && basename(token) === SKILL_FILE);
+}
+
+/** The skill a workspace path names, when the baseline placed a `SKILL.md` there. */
+async function placedSkillName(target: string, sources: SkillSources): Promise<string | undefined> {
+  const resolved = await resolveTarget(sources, target);
+  if (resolved.placed === undefined) return undefined;
+  let text: string;
+  try {
+    text = (await readRunFile(resolved.placed.baseline, resolved.placed.relativePath)).toString("utf8");
+  } catch {
+    // Not placed by the baseline, unreadable, or not a regular file.
+    return undefined;
+  }
+  const name = frontmatterName(text);
+  if (name !== undefined) return name;
+  const directory = basename(dirname(target));
+  return directory === "" || directory === "." || directory === "/" ? undefined : directory;
+}
+
 async function recognizeRead(
   entry: ToolEntry,
   sources: SkillSources,
@@ -79,9 +138,9 @@ async function recognizeRead(
   const target = readTarget(entry);
   if (target === undefined) return undefined;
 
-  const resolved = await resolveReadTarget(sources.workspace.path, target);
-  if (resolved.relativePath !== undefined) {
-    const fromBaseline = await baselineName(sources.baseline, resolved.relativePath);
+  const resolved = await resolveTarget(sources, target);
+  if (resolved.placed !== undefined) {
+    const fromBaseline = await baselineName(resolved.placed.baseline, resolved.placed.relativePath);
     if (fromBaseline !== undefined) {
       return { key: resolved.key, consultation: { name: fromBaseline, fromDirectory: false } };
     }
@@ -116,18 +175,36 @@ async function baselineName(baseline: RunRoot, path: string): Promise<string | u
   }
 }
 
+/** A resolved read target: its identity, and where it is placed when a run root holds it. */
+interface ResolvedTarget {
+  readonly key: string;
+  readonly placed?: { readonly relativePath: string; readonly baseline: RunRoot };
+}
+
 /**
- * Resolve a read target to a stable per-file identity key and, when inside the workspace, its
- * workspace-relative path. Never follows agent-writable symlinks inside the live workspace.
+ * Resolve a read target to a stable identity and, when it names a run root, the path inside it
+ * and the baseline that recorded the case's placement there. Never follows agent-writable
+ * symlinks inside a live root.
  */
-async function resolveReadTarget(
-  workspacePath: string,
-  target: string,
-): Promise<{ readonly key: string; readonly relativePath?: string }> {
-  const fullPath = isAbsolute(target) ? target : resolve(workspacePath, target);
-  const relativePath = await relativeWithinWorkspace(workspacePath, fullPath);
-  if (relativePath !== undefined) {
-    return { key: `workspace:${relativePath}`, relativePath };
+async function resolveTarget(sources: SkillSources, target: string): Promise<ResolvedTarget> {
+  if (target.startsWith("~/")) {
+    const fullPath = resolve(sources.home.path, target.slice(2));
+    const relativePath = await relativeWithin(sources.home.path, fullPath);
+    return relativePath === undefined
+      ? { key: `outside:${await canonicalExternalPath(fullPath)}` }
+      : { key: `home:${relativePath}`, placed: { relativePath, baseline: sources.homeBaseline } };
+  }
+  const fullPath = isAbsolute(target) ? target : resolve(sources.workspace.path, target);
+  const workspacePath = await relativeWithin(sources.workspace.path, fullPath);
+  if (workspacePath !== undefined) {
+    return {
+      key: `workspace:${workspacePath}`,
+      placed: { relativePath: workspacePath, baseline: sources.workspaceBaseline },
+    };
+  }
+  const homePath = await relativeWithin(sources.home.path, fullPath);
+  if (homePath !== undefined) {
+    return { key: `home:${homePath}`, placed: { relativePath: homePath, baseline: sources.homeBaseline } };
   }
   return { key: `outside:${await canonicalExternalPath(fullPath)}` };
 }
@@ -149,26 +226,25 @@ async function canonicalExternalPath(target: string): Promise<string> {
 }
 
 /**
- * Strip the outermost workspace root prefix from an absolute trace path (`/var/…` vs
- * `/private/var/…`, or a symlinked temp root) without following agent-writable symlinks inside
- * the live workspace. Walking from `/` downward finds the host's workspace root before entering
- * any workspace child.
+ * Strip the outermost run-root prefix from an absolute trace path (`/var/…` vs `/private/var/…`,
+ * or a symlinked temp root) without following agent-writable symlinks inside the live root.
+ * Walking from `/` downward finds the host's root before entering any of its children.
  */
-async function relativeWithinWorkspace(workspacePath: string, target: string): Promise<string | undefined> {
+async function relativeWithin(rootPath: string, target: string): Promise<string | undefined> {
   const segments = resolve(target).split("/").filter(Boolean);
   let probe = "/";
   for (const [index, segment] of segments.entries()) {
     probe = join(probe, segment);
     const rest = segments.slice(index + 1);
-    if (probe === workspacePath) {
+    if (probe === rootPath) {
       return rest.length === 0 ? undefined : join(...rest);
     }
     try {
-      if ((await realpath(probe)) === workspacePath) {
+      if ((await realpath(probe)) === rootPath) {
         return rest.length === 0 ? undefined : join(...rest);
       }
     } catch {
-      // An unreadable or missing prefix outside the workspace means this path cannot enter it.
+      // An unreadable or missing prefix outside the root means this path cannot enter it.
       return undefined;
     }
   }

@@ -24,14 +24,20 @@ async function makeWorkspace(
   const root = await makeTempDir(t, "ae-shell-check-");
   const workspaceDir = join(root, "workspace");
   const baselineDir = join(root, "baseline");
+  const homeDir = join(root, "home");
+  const homeBaselineDir = join(root, "home-baseline");
   await mkdir(workspaceDir);
   await mkdir(baselineDir);
+  await mkdir(homeDir);
+  await mkdir(homeBaselineDir);
   return {
     root,
     workspaceDir,
     context: {
       workspace: await openRunRoot(workspaceDir),
       baseline: await openRunRoot(baselineDir),
+      home: await openRunRoot(homeDir),
+      homeBaseline: await openRunRoot(homeBaselineDir),
       runRootDir: root,
       input: "task",
       checkSandbox,

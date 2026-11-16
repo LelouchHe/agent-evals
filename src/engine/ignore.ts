@@ -39,33 +39,51 @@ async function readRules(dir: string): Promise<Ignore> {
   return ignore().add(text);
 }
 
+/** One exclusion: the path, and the ignore file whose rules decided it. */
+export interface IgnoreDecision {
+  readonly ignored: boolean;
+  /** The `.agentevalsignore` file that decided the exclusion. */
+  readonly file?: string;
+}
+
 /**
- * True when the path `segments`, relative to `root`, is not placed: the ignore file itself, or a
- * path excluded by the rules of `root` or of any directory between it and the path. Each
- * directory's patterns are matched from that directory, and the answers are combined, so a
- * deeper file cannot re-include what a higher one excluded.
+ * Decide whether the path `segments`, relative to `root`, is not placed, and which ignore file
+ * decided it. Each directory's patterns are matched from that directory, and the answers are
+ * combined, so a deeper file cannot re-include what a higher one excluded; the first (highest)
+ * decision is the one reported.
  *
  * `directory` supplies the one thing a bare path cannot: a trailing `/` marks the entry as a
  * directory, which is how gitignore spells a directory-only pattern such as `evals/`.
  */
+export async function ignoreDecision(
+  tree: IgnoreTree,
+  root: string,
+  segments: readonly string[],
+  directory: boolean,
+): Promise<IgnoreDecision> {
+  if (segments.length === 0) {
+    return { ignored: false };
+  }
+  if (segments[segments.length - 1] === IGNORE_FILE_NAME) {
+    return { ignored: true, file: join(root, ...segments) };
+  }
+  for (let depth = 0; depth < segments.length; depth += 1) {
+    const directoryPath = join(root, ...segments.slice(0, depth));
+    const rules = await tree.read(directoryPath);
+    const relative = segments.slice(depth).join("/") + (directory ? "/" : "");
+    if (rules.ignores(relative)) {
+      return { ignored: true, file: join(directoryPath, IGNORE_FILE_NAME) };
+    }
+  }
+  return { ignored: false };
+}
+
+/** True when the path is not placed, as {@link ignoreDecision} decides. */
 export async function isIgnored(
   tree: IgnoreTree,
   root: string,
   segments: readonly string[],
   directory: boolean,
 ): Promise<boolean> {
-  if (segments.length === 0) {
-    return false;
-  }
-  if (segments[segments.length - 1] === IGNORE_FILE_NAME) {
-    return true;
-  }
-  for (let depth = 0; depth < segments.length; depth += 1) {
-    const rules = await tree.read(join(root, ...segments.slice(0, depth)));
-    const relative = segments.slice(depth).join("/") + (directory ? "/" : "");
-    if (rules.ignores(relative)) {
-      return true;
-    }
-  }
-  return false;
+  return (await ignoreDecision(tree, root, segments, directory)).ignored;
 }

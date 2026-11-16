@@ -1,14 +1,17 @@
-# Prepare deps and login with ./examples/agents/claude-setup.sh <dir> (see docs/setup.md).
-# Authentication uses a one-year `claude setup-token` token from .env rather than a login file;
-# CLAUDE_CODE_TMPDIR redirects Claude Code away from the shared /tmp/claude-<uid> directory.
-command: [claude]
+# Prepare deps with ./examples/agents/claude-setup.sh <dir> (see docs/setup.md).
+# deps holds software only (Node, the adapter and its bundled `claude` binary);
+# the settings file sits beside this file and is copied into the run HOME.
+# Authentication uses a one-year `claude setup-token` token from .env rather than
+# a login file; CLAUDE_CODE_TMPDIR redirects Claude Code away from the shared
+# /tmp/claude-<uid> directory.
 acpCommand: [claude-agent-acp]
+deps: ${env:CLAUDE_DEPS}
 environment:
   CLAUDE_CODE_OAUTH_TOKEN: ${env:CLAUDE_OAUTH_TOKEN}
   CLAUDE_CODE_TMPDIR: ${TMPDIR}
-home:
-  deps: ${env:CLAUDE_DEPS}
-  login: ${env:CLAUDE_LOGIN}
-  path: [.local/bin]
+files:
+  ~/.claude/settings.json: claude-settings.json
 login:
-  - .claude.json
+  command: [claude]
+  dir: ${env:CLAUDE_LOGIN}
+  files: [.claude.json]

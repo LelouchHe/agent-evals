@@ -22,7 +22,7 @@ import { makeTempDir } from "./helpers/fake-pi-control.ts";
 const INPUT = "Check the tool declarations.";
 
 const PROBE_CHECKS = [
-  { path: "where-id", matches: "/run-[0-9a-f]{12}/bin/id\\n?$/" },
+  { path: "where-id", matches: "/run-[0-9a-f]{12}/mocks/id\\n?$/" },
   { path: "call-out", matches: "/^answer\\n?$/" },
   { path: "call-err", matches: "/^denied\\n?$/" },
   { path: "call-status", matches: "/^7$/" },
@@ -465,13 +465,16 @@ function fixed(result: { exitCode?: number; stdout?: string; stderr?: string }):
 /** Host options shared by tests that only need forwarders and records. */
 async function hostOptions(runRootDir: string): Promise<Omit<MockHostOptions, "shell">> {
   const workspaceDir = join(runRootDir, "workspace");
-  const scratchDir = join(runRootDir, "scratch");
-  await mkdir(workspaceDir, { recursive: true });
-  await mkdir(scratchDir, { recursive: true });
+  const tmpDir = join(runRootDir, "tmp");
+  const engineDir = join(runRootDir, "engine");
+  const mocksDir = join(runRootDir, "mocks");
+  await Promise.all([mkdir(workspaceDir, { recursive: true }), mkdir(tmpDir), mkdir(engineDir), mkdir(mocksDir)]);
   return {
     runRootDir,
+    engineDir,
+    mocksDir,
     workspaceDir,
-    scratchDir,
+    tmpDir,
     authoringDir: runRootDir,
     timeoutMs: 5_000,
     signal: new AbortController().signal,

@@ -45,7 +45,7 @@ Responsibility and wiring, not execution order ([One Run in Order](#one-run-in-o
   +-------------+----------------------------------------------------------+
   | HOST: the engine starts the platform launcher                          |
   |   sandbox-exec -f <policy> -- <supervisor> <harness> ...               |
-  |   policy file: native Pi in run/scratch/, ACP in run/config/           |
+  |   policy file: native Pi in run/tmp/, ACP in run/engine/              |
   +-------------+----------------------------------------------------------+
                 |  Seatbelt boundary
   +-------------+----------------------------------------------------------+
@@ -93,7 +93,7 @@ The check-time path from the same checkers box, after the harness stopped:
   $type: judge -> separate tool-free Pi invocation in its own sandbox
 ```
 
-- **CLI** parses commands and flags, registers built-ins, loads each implementation beneath the trusted extension roots and maps outcomes to exit codes. `view` stops at the resolver and prints the resolved declaration; it starts no runtime. `run` hands the resolved case to the engine. `config` and `login` take a standalone agent file and use the ACP preparation helpers instead.
+- **CLI** parses commands and flags, registers built-ins, loads each implementation beneath the trusted extension roots and maps outcomes to exit codes. `view` stops at the resolver and prints the resolved declaration; it starts no runtime. `run` resolves the selected case—or every case of a `cases` document when `--case` is omitted—and hands them to the engine serially. `config` and `login` take a standalone agent file and use the ACP preparation helpers instead.
 - **Engine** validates parameters, prepares the run root, sequences the runner, checks and cleanup, and retains the result. It owns the mock host's lifecycle and the retained records.
 - **Runner** drives one harness and stops its owned processes. The native Pi route is an isolated JSONL RPC session under Seatbelt; the generic route speaks ACP with a caller-prepared harness home.
 - **Mock host** owns mock rules, actions and call records, plus authors' `run` programs. It lives outside the evaluated sandbox; [Mocks](mocks.md#how-a-run-uses-mocks) owns the mechanism.
@@ -130,14 +130,14 @@ Built-ins and trusted extensions share this path and layout: one implementation 
 
 A run follows the test lifecycle in [Writing Cases](cases.md#the-test-model): set up the environment, act, collect observations, assert, tear down. Teardown runs even after failure. Today the runner stops its processes and the engine removes the single runtime root; the engine also starts and stops the mock host that answers declared collaborator substitutes.
 
-1. **Load.** Resolve one case and preserve its declaration. Choose the run root's path without creating it. Select definitions; substitute placeholders from the invocation `.env` and the chosen run directories, validate schemas, create instances and validate the fixture. The engine never interprets provider/key names. [Configuration](configuration.md#placeholders) owns placeholder semantics.
-2. **Set up.** Create the chosen root exclusively; an existing path is an error. The engine copies the fixture into `workspace` or starts empty, places each `files` entry on top, and prepares independent `home`, `config` and `scratch`; source fixtures remain unchanged. For a case declaring [`mocks`](mocks.md), the engine writes the forwarders, workspace scripts included, starts the host service that answers them, and only afterwards captures the initial `baseline` snapshot, so a replaced script compares forwarder with forwarder. The runner assembles its harness configuration, for Pi by staging selected skills with discovery disabled. The platform module builds the Seatbelt policy; a runner that wires mocks adds the forwarder directory as a readable, non-writable root and first on `PATH`.
+1. **Load.** Resolve the selected case or cases and preserve their declarations. Every selected case is validated first: choose each run root's path without creating it, select definitions, substitute placeholders from the invocation `.env` and the chosen run directories, validate schemas, create instances and validate the fixture. A configuration error in any selected case runs none. The engine never interprets provider/key names. [Configuration](configuration.md#placeholders) owns placeholder semantics.
+2. **Set up.** Create the chosen root exclusively; an existing path is an error. The engine copies the fixture into `workspace` or starts empty and places each workspace `files` entry on top. The runner then places its own HOME content through `prepareHome` (agent `files`, then declared login files), and the engine overlays the case's `~/` entries, which may replace agent files but never login state. For a case declaring [`mocks`](mocks.md), the engine writes the forwarders, workspace scripts included, starts the host service that answers them, and only afterwards captures the initial workspace baseline and the case's HOME baseline, so a replaced script compares forwarder with forwarder. The runner assembles its harness environment, for Pi by staging selected skills with discovery disabled. The platform module builds the Seatbelt policy; a runner that wires mocks adds `mocks/` as a readable, non-writable root and first on `PATH`.
 3. **Act.** The runner receives the input, directories, deadline, cancellation signal and optional mock wiring, and drives the harness. Pi runs its isolated RPC session under Seatbelt, with autonomous tool calls after one initial message.
 4. **Collect.** Await supported runner teardown before checks; the runner returns its final text, its trace and its reported usage. The mock host closes only after that teardown, so a call from a process that outlived the turn is still answered and recorded. Timeouts, cancellation and execution failures are not negative judgments. See [Known Limitations](#known-limitations).
 5. **Assert.** Checkers inspect the still-live workspace/baseline, the recorded mock calls and the runner's trace. File, mock and trace name patterns share the linear-time RE2 engine; `trace` derives skill consultations from the trace, the workspace and the baseline; `shell` runs its program in the engine's check sandbox, after the harness stopped and the mock host closed; the judge reads selected evidence and starts a separate tool-free Pi invocation.
 6. **Tear down and record.** Remove runtime state, then save outcomes, declared configuration and cleanup status. Early load errors need not produce a run record.
 
-The ACP runner and the standalone `config` and `login` preparation helpers live in [`runners/acp/`](../src/runners/acp/) and share one agent schema, HOME/login assembly and ACP session setup. These are implementation-owned; generic authoring/value-source/schema utilities are shared with cases. macOS system read roots, default command paths, terminal discovery and Seatbelt policy preparation stay in `platform/macos/`. Both use a sandbox-wide supervisor with a private completion pipe, not the native Pi shell registry. The runner assembles into the engine's run HOME and workspace; the helpers allocate their own temporary directory.
+The ACP runner and the standalone `config` and `login` preparation helpers live in [`runners/acp/`](../src/runners/acp/) and share one agent schema, HOME assembly and ACP session setup. These are implementation-owned; generic authoring/value-source/schema utilities are shared with cases. macOS system read roots, default command paths, terminal discovery and Seatbelt policy preparation stay in `platform/macos/`. Both use a sandbox-wide supervisor with a private completion pipe, not the native Pi shell registry. The native Pi policy (shared with the judge) allows the `/etc` and `/var` literals so libc's resolver fallback can read `resolv.conf` without the `DNSConfiguration` mach service; without them a sandboxed Node lookup fails with `ENOTFOUND`. The runner assembles into the engine's run HOME and workspace; the helpers build the same layout in their own temporary directory.
 
 The host sandbox is a deliberate execution choice: real platform behavior is part of the subject being measured. Seatbelt is the current backend, not a claim that every OS has identical isolation guarantees.
 
@@ -148,47 +148,51 @@ What the sandbox can reach, prepared before the evaluated agent starts and torn 
 ```text
 CASE AUTHORING (operator-owned, in the case YAML's directory)
   <case>.yml
-  fixture/            base tree, copied first
+  fixture/            workspace base tree, copied first
   <asset>             any files source, read from this directory
 
-ACP AGENT CONFIGURATION (its own file and directory)
-  home.deps           harness software, linked read-only into the run HOME
-  home.login          login state, copied into the run HOME
+AGENT FILE (its own file and directory)
+  deps          harness software, linked into the run as run-xxxx/deps
+  path          deps-relative command directories, default [bin]
+  files         ~/ destinations copied into the run HOME (harness settings)
+  login         native command, persistent directory, and its declared files
 
 PREPARATION (host, before the sandbox starts)
   fixture/      --copy-------------->  workspace/
   <asset>       --place at key------>  workspace/<key>     overlay, after the fixture
-  a files key is a destination relative to the prepared workspace root
-  a files value is a source relative to the case YAML's directory, not the
-  fixture directory and not the invocation directory
-  entries are combined in an internal run/files stage, then copied over the
-  workspace; the stage is removed before the harness starts and is never the
-  public base for resolution
-
-  workspace scripts --replace----->  workspace/<target>   mock forwarder; the real
-                                                           script moves out, or to
-                                                           .<name> for a pass rule
-  PATH forwarders and script ----->  run/bin/ and run/forward
-  snapshot ---------------------->  baseline/             after the lines above
+  <asset>       --place at ~/key---->  home/<key>          after agent files + login
+  a files key without ~/ is a workspace destination; one starting with ~/ is a
+  HOME destination; a value is a source relative to the case YAML's directory,
+  not the fixture directory and not the invocation directory
+  entries are combined in internal run/engine/files stages, then copied; the
+  stages are removed before the harness starts and are never the public base
+  for resolution
+  agent files   --copy-------------->  home/               before login state
+  login files   --copy-------------->  home/<file>         declared composition
+  case ~/ files -------------------->  home/<key>          last; may not touch login
+  workspace scripts --replace------->  workspace/<target>   mock forwarder; the real
+                                                            script moves out, or to
+                                                            .<name> for a pass rule
+  forwarders and template ---------->  mocks/<target>, engine/forward
+  snapshot ------------------------->  engine/baseline/workspace/
+  case ~/ snapshot ----------------->  engine/baseline/home/
+  deps link ------------------------>  run/deps -> canonical agent-file deps
 
 RUN ROOT  <tempParent>/run-<id>/                       temporary, removed after
-  workspace/   agent-writable     fixture, then files, then mock forwarders
-  baseline/    host-read only     the snapshot above; not readable in the sandbox
-  home/        agent-writable     ACP: deps as read-only links, login as copies
-                                  native Pi: Pi's isolated HOME
-  config/      ACP: unreadable    ACP: Seatbelt policy
-               native: writable   native Pi: isolated settings, staged skills
-  scratch/     agent-writable     temporary state; native Pi policy; the
-                                  forwarder fault marker
+  workspace/   agent-writable     fixture, then workspace files, then mock forwarders
+  home/        agent-writable     agent files, login copies, then case ~/ files
+  tmp/         agent-writable     TMPDIR; the forwarder fault marker
+  mocks/       read-only          one forwarder per mocked PATH command, first on PATH
+  deps         symlink            the caller's software, referenced in place
+  engine/      unreadable         baseline/{workspace,home}, placement staging,
+                                  Seatbelt policy, replaced workspace scripts, check state
+  config/      native Pi only     native Pi's isolated settings and staged skills
   tools/       native Pi only     the sandbox-resident supervisor and wrapper
-  bin/         ACP mocks only     forwarders first on PATH; readable, not writable
-  forward                         the shared forwarder script text
-  replaced/                       real workspace scripts moved out of reach
-  files/       internal           transient files staging, gone before launch
-  check-*/     one per check      home/ and tmp/ private; sandbox.sb policy;
+
+  engine/check-*/  one per check  home/ and tmp/ private; sandbox.sb policy;
                                   staged/ read-only check-time files, placed
-                                  into workspace/ by the sandboxed
-                                  check-runner; removed after the check
+                                  into workspace/ by the sandboxed check-runner;
+                                  removed after the check
 
 HOST STATE OUTSIDE THE SANDBOX
   engine        case, checks, rubric, policy, run bookkeeping, cancellation
@@ -206,7 +210,7 @@ AFTER THE RUN
 - **Observations:** directory identity and path/symlink containment are checked before file reads. Non-regular and oversized evidence is an error, not a vacuous pass. A missing observation cannot prove a restraint was respected.
 - **Results:** declarations, source/case identity, outcomes, reported usage, diagnostics and cleanup. Expanded parameters do not replace the declaration; runtime outputs remain the implementation's responsibility. No full resource snapshot is retained.
 
-Observations come from three sources defined in [Writing Cases](cases.md#why-the-trace-matters): the runner's trace (with output as its user-facing view), mock call records, and environment side effects. Today the ACP runner retains `trace.json` (which `judge` can take as evidence), a case declaring [shell mocks](mocks.md) retains `mocks.json` (which `mock` asserts on), `file`/`shell` inspect the workspace, `trace` derives skill consultations from `trace.json`, the workspace and the baseline, and `judge` reads selected evidence. Recorded usage is a measurement in `result.json`, not check evidence.
+Observations come from three sources defined in [Writing Cases](cases.md#why-the-trace-matters): the runner's trace (with output as its user-facing view), mock call records, and environment side effects. Today the ACP runner retains `trace.json` (which `judge` can take as evidence), a case declaring [shell mocks](mocks.md) retains `mocks.json` (which `mock` asserts on), `file` inspects the workspace or the run HOME and `shell` the workspace, `trace` derives skill consultations from `trace.json`, both run roots and their baselines, and `judge` reads selected evidence. Recorded usage is a measurement in `result.json`, not check evidence.
 
 ## Source Map
 
@@ -215,7 +219,7 @@ Observations come from three sources defined in [Writing Cases](cases.md#why-the
 | Entry point and display       | [`cli.ts`](../src/cli.ts), [`view.ts`](../src/engine/view.ts)                                                                                                                                                                                                                                                                                                                        |
 | Resolution and contracts      | [`authoring.ts`](../src/engine/authoring.ts), [`config.ts`](../src/engine/config.ts), [`registry.ts`](../src/engine/registry.ts)                                                                                                                                                                                                                                                     |
 | Preparation and lifecycle     | [`params.ts`](../src/engine/params.ts), [`env-source.ts`](../src/engine/env-source.ts), [`run.ts`](../src/engine/run.ts), [`mocks.ts`](../src/engine/mocks.ts), [`mock-match.ts`](../src/engine/mock-match.ts), [`regex.ts`](../src/engine/regex.ts), [`forwarder.sh`](../src/engine/forwarder.sh)                                                                                   |
-| Files and retained records    | [`workspace.ts`](../src/engine/workspace.ts), [`results.ts`](../src/engine/results.ts)                                                                                                                                                                                                                                                                                               |
+| Files and retained records    | [`workspace.ts`](../src/engine/workspace.ts), [`files.ts`](../src/engine/files.ts), [`placement.ts`](../src/engine/placement.ts), [`results.ts`](../src/engine/results.ts)                                                                                                                                                                                                           |
 | Harness adapter and transport | [`runners/pi/`](../src/runners/pi/), [`runners/noop/`](../src/runners/noop/)                                                                                                                                                                                                                                                                                                         |
 | ACP runner and helpers        | [`runners/acp/`](../src/runners/acp/)                                                                                                                                                                                                                                                                                                                                                |
 | Assertions and model judgment | [`checkers/file/`](../src/checkers/file/), [`checkers/mock/`](../src/checkers/mock/), [`checkers/shell/`](../src/checkers/shell/), [`checkers/trace/`](../src/checkers/trace/), [`engine/skills.ts`](../src/engine/skills.ts), [`checkers/judge/`](../src/checkers/judge/), [`check-sandbox.ts`](../src/engine/check-sandbox.ts), [`check-runner.ts`](../src/engine/check-runner.ts) |
@@ -226,8 +230,8 @@ Observations come from three sources defined in [Writing Cases](cases.md#why-the
 ### Runtime
 
 - **Platform.** macOS only (`/usr/bin/sandbox-exec`), Node.js 24+, no standalone single-file binary.
-- **Conversation and execution.** One initial user message and one selected case per invocation; no built-in repetition sweep or statistical aggregation yet. `timeoutMs` bounds runner execution and is also each individual check's budget, not a whole-run wall-clock or cost cap.
-- **Workspace and retention.** Checks run after the harness stops and before the run root is removed; no full workspace snapshot, resource hash or general offline regrading is retained. Fixture symlinks are not a supported sharing mechanism; checks reject unsafe escapes, and file content reads are capped at 1 MiB.
+- **Conversation and execution.** One initial user message per case. A `cases` document runs its entries serially in one invocation without repetition or statistical aggregation; `--case` selects one. `timeoutMs` bounds runner execution and is also each individual check's budget, not a whole-run wall-clock or cost cap.
+- **Workspace and retention.** Checks run after the harness stops and before the run root is removed; no full workspace snapshot, resource hash or general offline regrading is retained. Fixture symlinks are not a supported sharing mechanism; checks reject unsafe escapes, and file content reads are capped at 1 MiB. A `~/` `changed` check compares against what the case placed in HOME, not against the agent file's settings or login state. `shell` checks run after the harness stops and read the workspace, not the run HOME.
 - **Credentials and network.** Network egress is open during agent runs so harnesses reach their model providers; `check` sandboxes deny all network access. Credentials supplied to a run (in `login` files or process `environment`) are readable inside that run's sandbox and can appear in retained output if a tool prints them; a host-side credential proxy was verified for API keys (never subscription OAuth tokens) and remains deferred.
 - **Process cleanup.** ACP and check sandboxes terminate all processes in the Seatbelt instance via a supervisor broadcast; the native `pi` runner tracks shell process groups rather than new-session escapes. Forced supervisor death (`SIGKILL` from outside) is not recoverable.
 - **Extensions.** Extensions execute as trusted host code. Run-time resolution of `agent-evals` from an external `--extension-dir` is not automatic yet; see [Extensions](extensions.md#current-limits).

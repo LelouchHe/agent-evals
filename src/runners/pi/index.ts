@@ -53,7 +53,7 @@ class PiRunner implements Runner {
           workspaceDir: context.workspaceDir,
           homeDir: context.homeDir,
           configDir: context.configDir,
-          scratchDir: context.scratchDir,
+          scratchDir: context.tmpDir,
         },
         skills,
         tools: ["read", "write", "edit", "bash"],

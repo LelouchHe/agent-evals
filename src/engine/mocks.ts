@@ -40,10 +40,14 @@ export interface MockHost {
 
 export interface MockHostOptions {
   readonly runRootDir: string;
+  /** Engine-private state; the replaced workspace scripts move here, out of the agent's reach. */
+  readonly engineDir: string;
+  /** Read-only forwarder directory the runner puts first on `PATH`. */
+  readonly mocksDir: string;
   /** Prepared workspace root; its real path, as the runner's sandbox sees it. */
   readonly workspaceDir: string;
-  /** Run scratch directory; a forwarder that cannot reach the host reports there. */
-  readonly scratchDir: string;
+  /** Temporary directory; a forwarder that cannot reach the host reports there. */
+  readonly tmpDir: string;
   /** Directory of the case file, the working directory of `run` programs. */
   readonly authoringDir: string;
   readonly shell: ShellMocks;
@@ -56,14 +60,15 @@ export interface MockHostOptions {
  * runs this before the baseline snapshot, so the snapshot already holds the forwarders.
  */
 export async function startMockHost(options: MockHostOptions): Promise<MockHost> {
-  const forwarderDir = join(options.runRootDir, "bin");
+  const forwarderDir = options.mocksDir;
   // A Unix socket path is limited to about 100 bytes, so it cannot live under the run root.
   const socketPath = join(tmpdir(), `${basename(options.runRootDir)}.sock`);
-  const faultPath = join(options.scratchDir, ".forward-fault");
-  const scriptPath = join(options.runRootDir, "forward");
+  const faultPath = join(options.tmpDir, ".forward-fault");
+  // The template lives in engine-private state; only its hard links are runnable in mocks/.
+  const scriptPath = join(options.engineDir, "forward");
   const rules = compileShellMocks(options.shell);
   const workspaceRoot = await openRunRoot(options.workspaceDir);
-  await mkdir(forwarderDir, { mode: 0o700 });
+  await mkdir(forwarderDir, { recursive: true, mode: 0o700 });
   // The forwarder canonicalises its own path, so identity comparisons use the real directory.
   const forwarderRoot = await realpath(forwarderDir);
 
@@ -262,7 +267,7 @@ async function placeWorkspaceForwarder(
     }
     await rename(targetPath, beside);
   } else if (real !== undefined) {
-    const stash = join(options.runRootDir, "replaced", ...target.split("/").filter((segment) => segment.length > 0));
+    const stash = join(options.engineDir, "replaced", ...target.split("/").filter((segment) => segment.length > 0));
     await mkdir(dirname(stash), { recursive: true, mode: 0o700 });
     await rename(targetPath, stash);
   }

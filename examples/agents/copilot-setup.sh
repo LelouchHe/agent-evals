@@ -10,7 +10,6 @@ if [ "$#" -ne 1 ] || [ -z "$1" ]; then
   exit 1
 fi
 
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 case "$(uname -s)-$(uname -m)" in
   Darwin-arm64) PLATFORM="darwin-arm64" ;;
@@ -22,7 +21,7 @@ mkdir -p "$1"
 ROOT="$(cd "$1" && pwd)"
 DEPS="$ROOT/deps"
 LOGIN="$ROOT/login"
-mkdir -p "$DEPS/.local/bin" "$DEPS/.copilot"
+mkdir -p "$DEPS/bin"
 mkdir -p -m 700 "$LOGIN"
 
 WORK_TMP=""
@@ -44,7 +43,7 @@ if [ -n "${COPILOT_BIN:-}" ]; then
       exit 1
       ;;
   esac
-  cp "$COPILOT_BIN" "$DEPS/.local/bin/copilot"
+  cp "$COPILOT_BIN" "$DEPS/bin/copilot"
 else
   VERSION="${COPILOT_VERSION:-latest}"
   PKG="@github/copilot-${PLATFORM}"
@@ -57,10 +56,9 @@ else
   ')"
   curl -fsSL "$TARBALL_URL" -o "$WORK_TMP/copilot.tgz"
   tar -xzf "$WORK_TMP/copilot.tgz" -C "$WORK_TMP"
-  cp "$WORK_TMP/package/copilot" "$DEPS/.local/bin/copilot"
+  cp "$WORK_TMP/package/copilot" "$DEPS/bin/copilot"
 fi
-chmod 755 "$DEPS/.local/bin/copilot"
-cp "$SCRIPT_DIR/copilot-settings.json" "$DEPS/.copilot/settings.json"
+chmod 755 "$DEPS/bin/copilot"
 
 cat <<EOF
 

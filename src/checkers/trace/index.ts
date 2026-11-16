@@ -3,7 +3,7 @@ import type { PatternSyntax } from "../../engine/config.ts";
 import { patternSyntaxSchema } from "../../engine/params.ts";
 import { searches } from "../../engine/regex.ts";
 import type { CheckResult, Checker, CheckerContext, CheckerDefinition } from "../../engine/registry.ts";
-import { skillConsultations } from "../../engine/skills.ts";
+import { skillConsultations, shellSkillAccess, type ShellSkillAccess } from "../../engine/skills.ts";
 import { truncate } from "../../engine/truncate.ts";
 
 const MAX_REASON = 800;
@@ -68,10 +68,14 @@ class TraceChecker implements Checker {
       ];
     }
 
-    const consultations = await skillConsultations(context.trace, {
+    const sources = {
       workspace: context.workspace,
-      baseline: context.baseline,
-    });
+      home: context.home,
+      workspaceBaseline: context.baseline,
+      homeBaseline: context.homeBaseline,
+    };
+    const consultations = await skillConsultations(context.trace, sources);
+    const shell = await shellSkillAccess(context.trace, sources);
     const matching = consultations.filter((consultation) => matches(name, consultation.name));
     const satisfied = times === undefined ? matching.length >= 1 : matching.length === times;
     return [
@@ -79,7 +83,11 @@ class TraceChecker implements Checker {
         checker: "trace",
         subject,
         status: satisfied ? "pass" : "fail",
-        reason: truncate(satisfied ? found(matching) : expected(name, times, consultations, matching), MAX_REASON),
+        reason: truncate(
+          (satisfied ? found(matching, consultations) : expected(name, times, consultations, matching)) +
+            shellNote(shell),
+          MAX_REASON,
+        ),
       },
     ];
   };
@@ -98,18 +106,29 @@ function expected(
 ): string {
   const wanted =
     times === undefined ? `expected ${display(name)}` : `expected exactly ${count(times)} of ${display(name)}`;
-  const consulted =
-    consultations.length === 0
-      ? "none"
-      : consultations
-          .slice(0, MAX_LISTED_SKILLS)
-          .map((consultation) => consultation.name)
-          .join(", ") + (consultations.length > MAX_LISTED_SKILLS ? ", …" : "");
-  return `${wanted}, consulted: ${consulted}${fallbackNote(matching)}`;
+  return `${wanted}, consulted: ${listed(consultations)}${fallbackNote(matching)}`;
 }
 
-function found(matching: readonly { readonly name: string; readonly fromDirectory: boolean }[]): string {
-  return `found ${count(matching.length)}${fallbackNote(matching)}`;
+/** A pass still names what the run consulted, so a reader sees why the check held. */
+function found(
+  matching: readonly { readonly name: string; readonly fromDirectory: boolean }[],
+  consultations: readonly { readonly name: string; readonly fromDirectory: boolean }[],
+): string {
+  return `found ${count(matching.length)}, consulted: ${listed(consultations)}${fallbackNote(matching)}`;
+}
+
+function listed(consultations: readonly { readonly name: string }[]): string {
+  return consultations.length === 0
+    ? "none"
+    : consultations
+        .slice(0, MAX_LISTED_SKILLS)
+        .map((consultation) => consultation.name)
+        .join(", ") + (consultations.length > MAX_LISTED_SKILLS ? ", …" : "");
+}
+
+/** Shell access is reported, never counted: it does not change the status or the count. */
+function shellNote(shell: readonly ShellSkillAccess[]): string {
+  return shell.length === 0 ? "" : `; touched via shell: ${listed(shell)}`;
 }
 
 /** Say when a matched name is only the skill's parent directory. */

@@ -14,6 +14,7 @@ import { mockChecker } from "./index.ts";
 function implementationContext(mockTargets?: readonly string[]) {
   return {
     authoringDir: process.cwd(),
+    runnerSupportsHome: true,
     validateFiles: (files: Readonly<Record<string, string>>) => validateCheckFiles(files, process.cwd()),
     values: {
       env: { require: (name: string) => Promise.reject(new Error(`no environment value ${name}`)) },
@@ -27,11 +28,17 @@ async function context(t: TestContext, records?: readonly MockRecord[]): Promise
   const root = await makeTempDir(t, "ae-mock-check-");
   const workspace = join(root, "workspace");
   const baseline = join(root, "baseline");
+  const home = join(root, "home");
+  const homeBaseline = join(root, "home-baseline");
   await mkdir(workspace);
   await mkdir(baseline);
+  await mkdir(home);
+  await mkdir(homeBaseline);
   return {
     workspace: await openRunRoot(workspace),
     baseline: await openRunRoot(baseline),
+    home: await openRunRoot(home),
+    homeBaseline: await openRunRoot(homeBaseline),
     runRootDir: root,
     input: "task",
     ...(records === undefined ? {} : { mockRecords: records }),

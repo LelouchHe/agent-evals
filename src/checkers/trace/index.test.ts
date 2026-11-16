@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
-import { mkdir } from "node:fs/promises";
-import { join } from "node:path";
+import { mkdir, writeFile } from "node:fs/promises";
+import { dirname, join } from "node:path";
 import { test, type TestContext } from "node:test";
 import { makeTempDir } from "../../../tests/helpers/fake-pi-control.ts";
 import { implementationContext } from "../../../tests/helpers/implementation-context.ts";
@@ -25,15 +25,38 @@ function skillTool(name: string): ToolEntry {
   };
 }
 
-async function context(t: TestContext, trace?: readonly TraceEntry[]): Promise<CheckerContext> {
+async function context(
+  t: TestContext,
+  trace?: readonly TraceEntry[],
+  skills: Readonly<Record<string, string>> = {},
+  homeSkills: Readonly<Record<string, string>> = {},
+): Promise<CheckerContext> {
   const root = await makeTempDir(t, "ae-trace-check-");
   const workspace = join(root, "workspace");
   const baseline = join(root, "baseline");
+  const home = join(root, "home");
+  const homeBaseline = join(root, "home-baseline");
   await mkdir(workspace);
   await mkdir(baseline);
+  await mkdir(home);
+  await mkdir(homeBaseline);
+  for (const [relative, content] of Object.entries(skills)) {
+    for (const directory of [workspace, baseline]) {
+      await mkdir(dirname(join(directory, relative)), { recursive: true });
+      await writeFile(join(directory, relative), content);
+    }
+  }
+  for (const [relative, content] of Object.entries(homeSkills)) {
+    for (const directory of [home, homeBaseline]) {
+      await mkdir(dirname(join(directory, relative)), { recursive: true });
+      await writeFile(join(directory, relative), content);
+    }
+  }
   return {
     workspace: await openRunRoot(workspace),
     baseline: await openRunRoot(baseline),
+    home: await openRunRoot(home),
+    homeBaseline: await openRunRoot(homeBaseline),
     runRootDir: root,
     input: "task",
     ...(trace === undefined ? {} : { trace }),
@@ -49,6 +72,25 @@ async function check(t: TestContext, raw: ImplementationParams, trace?: readonly
   const params = await parseImplementationParams(traceChecker.params, raw, 'checker "trace"');
   const checker = await traceChecker.create(params, implementationContext(process.cwd()));
   return checker.check(await context(t, trace));
+}
+
+async function checkIn(context: CheckerContext, raw: ImplementationParams) {
+  const params = await parseImplementationParams(traceChecker.params, raw, 'checker "trace"');
+  const checker = await traceChecker.create(params, implementationContext(process.cwd()));
+  return checker.check(context);
+}
+
+/** A completed shell tool call, as the harnesses that report one describe it. */
+function shellCommand(command: string): ToolEntry {
+  return {
+    type: "tool",
+    toolCallId: "call-shell",
+    title: "bash",
+    kind: "execute",
+    status: "completed",
+    rawInput: { command },
+    content: [{ type: "content", content: { type: "text", text: "" } }],
+  };
 }
 
 function parse(raw: ImplementationParams) {
@@ -96,7 +138,10 @@ test("a literal name matches one exact skill, while a pattern is searched", asyn
   assert.equal(literal[0]?.reason, "expected deploy, consulted: deploy-runbook, deploy-native");
 
   assert.deepEqual(statuses(await check(t, { event: "skill", name: "deploy-runbook" }, trace)), ["pass"]);
-  assert.equal((await check(t, { event: "skill", name: "deploy-runbook" }, trace))[0]?.reason, "found 1 consultation");
+  assert.equal(
+    (await check(t, { event: "skill", name: "deploy-runbook" }, trace))[0]?.reason,
+    "found 1 consultation, consulted: deploy-runbook, deploy-native",
+  );
   assert.deepEqual(statuses(await check(t, { event: "skill", name: "/^deploy-/" }, trace)), ["pass"]);
   assert.deepEqual(statuses(await check(t, { event: "skill", name: "/^deploy-/", times: 2 }, trace)), ["pass"]);
 });
@@ -104,11 +149,83 @@ test("a literal name matches one exact skill, while a pattern is searched", asyn
 test("times 0 passes only when the run consulted no matching skill", async (t) => {
   const none = await check(t, { event: "skill", name: "deploy-runbook", times: 0 }, []);
   assert.deepEqual(statuses(none), ["pass"]);
-  assert.equal(none[0]?.reason, "found 0 consultations");
+  assert.equal(none[0]?.reason, "found 0 consultations, consulted: none");
+
+  const other = await check(t, { event: "skill", name: "deploy-runbook", times: 0 }, [skillTool("markdown-writing")]);
+  assert.deepEqual(statuses(other), ["pass"]);
+  assert.equal(other[0]?.reason, "found 0 consultations, consulted: markdown-writing");
 
   const consulted = await check(t, { event: "skill", name: "deploy-runbook", times: 0 }, [skillTool("deploy-runbook")]);
   assert.deepEqual(statuses(consulted), ["fail"]);
   assert.equal(consulted[0]?.reason, "expected exactly 0 consultations of deploy-runbook, consulted: deploy-runbook");
+});
+
+test("a pattern with times 0 expresses that no skill was consulted at all", async (t) => {
+  const none = await check(t, { event: "skill", name: "/.*/", times: 0 }, []);
+  assert.deepEqual(statuses(none), ["pass"]);
+  const any = await check(t, { event: "skill", name: "/.*/", times: 0 }, [skillTool("deploy-runbook")]);
+  assert.deepEqual(statuses(any), ["fail"]);
+});
+
+test("a shell command naming a placed SKILL.md is reported but never counted", async (t) => {
+  const skill = ".agents/skills/kb-directory/SKILL.md";
+  const trace = [shellCommand(`cd ~ && head -40 ${skill}`)];
+  const files = { [skill]: "---\nname: knowledge-base\n---\nbody\n" };
+
+  const counted = await checkIn(await context(t, trace, files), { event: "skill", name: "knowledge-base" });
+  assert.deepEqual(statuses(counted), ["fail"]);
+  assert.equal(counted[0]?.reason, "expected knowledge-base, consulted: none; touched via shell: knowledge-base");
+
+  const restraint = await checkIn(await context(t, trace, files), { event: "skill", name: "/.*/", times: 0 });
+  assert.deepEqual(statuses(restraint), ["pass"]);
+  assert.equal(restraint[0]?.reason, "found 0 consultations, consulted: none; touched via shell: knowledge-base");
+});
+
+test("a check sees a skill the case placed under ~/, while shell access stays uncounted", async (t) => {
+  const read: ToolEntry = {
+    type: "tool",
+    toolCallId: "call-home",
+    title: "read",
+    kind: "read",
+    status: "completed",
+    locations: [{ path: "~/.claude/skills/aw-task-delegation/SKILL.md" }],
+    rawInput: { path: "~/.claude/skills/aw-task-delegation/SKILL.md" },
+    content: [{ type: "content", content: { type: "text", text: "# body after frontmatter\n" } }],
+  };
+  const traceContext = await context(
+    t,
+    [read, shellCommand("head -40 ~/.claude/skills/knowledge-base/SKILL.md")],
+    {},
+    {
+      ".claude/skills/aw-task-delegation/SKILL.md": "---\nname: task-delegation\n---\nbody\n",
+      ".claude/skills/knowledge-base/SKILL.md": "---\nname: knowledge-base\n---\nbody\n",
+    },
+  );
+
+  const consulted = await checkIn(traceContext, { event: "skill", name: "task-delegation" });
+  assert.deepEqual(statuses(consulted), ["pass"]);
+  assert.equal(
+    consulted[0]?.reason,
+    "found 1 consultation, consulted: task-delegation; touched via shell: knowledge-base",
+  );
+
+  const shellOnly = await checkIn(traceContext, { event: "skill", name: "knowledge-base" });
+  assert.deepEqual(statuses(shellOnly), ["fail"]);
+  assert.equal(
+    shellOnly[0]?.reason,
+    "expected knowledge-base, consulted: task-delegation; touched via shell: knowledge-base",
+  );
+});
+
+test("a shell command naming a SKILL.md the baseline did not place is not reported", async (t) => {
+  const trace = [shellCommand("cat .agents/skills/agent-made/SKILL.md")];
+  const contextWithTrace = await context(t, trace);
+  const created = join(contextWithTrace.workspace.path, ".agents/skills/agent-made");
+  await mkdir(created, { recursive: true });
+  await writeFile(join(created, "SKILL.md"), "---\nname: agent-made\n---\n");
+
+  const results = await checkIn(contextWithTrace, { event: "skill", name: "/.*/", times: 0 });
+  assert.equal(results[0]?.reason, "found 0 consultations, consulted: none");
 });
 
 test("a runner without a trace is an error, not a pass or a fail", async (t) => {
@@ -135,6 +252,6 @@ test("the result says when a matched name is only the parent directory", async (
   assert.deepEqual(statuses(results), ["pass"]);
   assert.match(
     results[0]?.reason ?? "",
-    /found 1 consultation \(named from the parent directory, not frontmatter: legacy-skill\)/,
+    /found 1 consultation, consulted: legacy-skill \(named from the parent directory, not frontmatter: legacy-skill\)/,
   );
 });

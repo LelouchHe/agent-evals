@@ -187,17 +187,35 @@ export function expectRelativePath(value: unknown, label: string): string {
 }
 
 /**
- * Read the case's file placements. Keys are workspace-relative destinations,
- * so unlike authoring sources they may not leave the workspace.
+ * Read the case's file placements. Keys are workspace-relative destinations, or `~/…`
+ * destinations in the run HOME, so unlike authoring sources they may not leave their root.
  */
 function expectFiles(value: unknown, label: string): Readonly<Record<string, string>> {
   const record = expectRecord(value, `${label}.files`);
   return Object.fromEntries(
     Object.entries(record).map(([destination, source]) => {
-      expectWorkspaceDestination(destination, `${label}.files destination "${destination}"`);
+      expectPlacementDestination(destination, `${label}.files destination "${destination}"`);
       return [destination, expectRelativePath(source, `${label}.files["${destination}"]`)];
     }),
   );
+}
+
+/** A placement destination is workspace-relative, or starts with `~/` to name the run HOME. */
+export function expectPlacementDestination(destination: string, label: string): void {
+  expectNonEmptyString(destination, label);
+  if (destination.includes("\0")) {
+    throw new ConfigError(`${label} contains a NUL byte`);
+  }
+  if (destination.startsWith("~/")) {
+    const homePath = destination.slice(2);
+    // `~/` alone names the HOME root; anything after it follows the workspace rules.
+    if (homePath.length === 0) {
+      return;
+    }
+    expectWorkspaceDestination(homePath, label);
+    return;
+  }
+  expectWorkspaceDestination(destination, label);
 }
 
 export function expectWorkspaceDestination(destination: string, label: string): void {

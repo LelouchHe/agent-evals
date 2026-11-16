@@ -6,9 +6,10 @@ export const unusedCheckSandbox: CheckSandbox = {
   run: () => Promise.reject(new Error("this test wires no check sandbox")),
 };
 
-export function implementationContext(authoringDir: string): ImplementationContext {
+export function implementationContext(authoringDir: string, runnerSupportsHome = true): ImplementationContext {
   return {
     authoringDir,
+    runnerSupportsHome,
     validateFiles: (files) => validateCheckFiles(files, authoringDir),
     values: {
       env: {
