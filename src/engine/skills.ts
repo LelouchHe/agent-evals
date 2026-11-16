@@ -71,6 +71,58 @@ export async function skillConsultations(
   return [...consultations.values()];
 }
 
+/** A skill whose placed `SKILL.md` an executed command's text named, reported but never counted. */
+export interface ShellSkillAccess {
+  /** The skill's frontmatter `name` in the baseline, or its parent directory's. */
+  readonly name: string;
+}
+
+/**
+ * The placed skills whose `SKILL.md` path an executed command's text named.
+ *
+ * Whether reading a skill body through a shell is a consultation is ambiguous, so this is
+ * reported separately and never counts as one. Only a `SKILL.md` the run's baseline placed is
+ * recognized; a file the agent created is not the skill it started with.
+ */
+export async function shellSkillAccess(
+  trace: readonly TraceEntry[],
+  sources: SkillSources,
+): Promise<readonly ShellSkillAccess[]> {
+  const found = new Map<string, ShellSkillAccess>();
+  for (const entry of trace) {
+    if (entry.type !== "tool" || entry.status !== "completed" || entry.kind !== "execute") continue;
+    const command = pathField(entry.rawInput, "command");
+    if (command === undefined) continue;
+    for (const token of commandSkillPaths(command)) {
+      const name = await placedSkillName(token, sources);
+      if (name !== undefined && !found.has(name)) found.set(name, { name });
+    }
+  }
+  return [...found.values()];
+}
+
+/** Path-shaped tokens of a command whose basename is `SKILL.md`, in command order. */
+function commandSkillPaths(command: string): string[] {
+  return command.split(/[\s;|&()<>'"`]+/).filter((token) => token.length > 0 && basename(token) === SKILL_FILE);
+}
+
+/** The skill a workspace path names, when the baseline placed a `SKILL.md` there. */
+async function placedSkillName(target: string, sources: SkillSources): Promise<string | undefined> {
+  const resolved = await resolveReadTarget(sources.workspace.path, target);
+  if (resolved.relativePath === undefined) return undefined;
+  let text: string;
+  try {
+    text = (await readRunFile(sources.baseline, resolved.relativePath)).toString("utf8");
+  } catch {
+    // Not placed by the baseline, unreadable, or not a regular file.
+    return undefined;
+  }
+  const name = frontmatterName(text);
+  if (name !== undefined) return name;
+  const directory = basename(dirname(target));
+  return directory === "" || directory === "." || directory === "/" ? undefined : directory;
+}
+
 async function recognizeRead(
   entry: ToolEntry,
   sources: SkillSources,

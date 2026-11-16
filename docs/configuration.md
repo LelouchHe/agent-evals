@@ -290,7 +290,9 @@ Asserts on what the run's trace shows, through derived events rather than raw en
 | `name`    | Required skill name: a literal for one exact name, or a `/…/` RE2 pattern searched within it (the same literal-or-pattern grammar as [`file`](#file-checker-type-file)). |
 | `times`   | Optional non-negative integer, the exact number of matching consultations. `0` asserts none; omitted means at least one.                                                 |
 
-Strict parameters; an unknown field is a configuration error. A literal `name` matches at most one consultation, so `times` other than `0` or `1` requires a `/…/` pattern. One result: `pass` or `fail`, whose reason names the skills the run consulted, for example `expected deploy-runbook, consulted: none`.
+Strict parameters; an unknown field is a configuration error. A literal `name` matches at most one consultation, so `times` other than `0` or `1` requires a `/…/` pattern. One result: `pass` or `fail`. Its reason always lists the run's consulted skills, so a pass also shows why it held: `found 1 consultation, consulted: deploy-runbook`, or `expected exactly 0 consultations of markdown-writing, consulted: knowledge-base, markdown-writing`.
+
+When an executed command's text names the path of a `SKILL.md` the baseline placed, the reason adds that skill separately, as in `; touched via shell: knowledge-base`. Shell access is **reported, never counted**: it changes neither the status nor `times`, because whether reading a body through a shell is a consultation is ambiguous and parsing shell commands would err in both directions. A `SKILL.md` the agent created during the run is not reported; only the baseline's placed files are.
 
 Only completed tool calls (`type: "tool"`, `status: "completed"`) count, in the two forms harnesses report:
 
@@ -299,7 +301,7 @@ Only completed tool calls (`type: "tool"`, `status: "completed"`) count, in the 
 
 A skill is one consultation however often or in however many chunks it was read. The derivation is the exported, asynchronous `skillConsultations(trace, { workspace, baseline })` from the [package entry](../src/index.ts), so an extension checker can reuse it; see [Extensions](extensions.md#current-limits).
 
-What `trace` cannot prove: shell reads such as `cat SKILL.md` are not parsed, so a positive check can fail although the skill was read, and `times: 0` proves only that no recognized tool call loaded it; a placed skill's `description` stays visible in the harness's roster, so `times: 0` is about loading the body; any completed non-read call with a string `skill` parameter counts, so an unrelated tool with that parameter would be read as a consultation; and copies of a same-named skill are not distinguished, because skill tools report only a name. Ordering assertions and field matching on raw trace entries are not offered.
+What `trace` cannot prove: shell reads such as `cat SKILL.md` are not consultations, so a positive check can fail although the skill body was read, and `times: 0` proves only that no recognized tool call loaded it — the `touched via shell` note is informational and never evidence of a consultation; a placed skill's `description` stays visible in the harness's roster, so `times: 0` is about loading the body; any completed non-read call with a string `skill` parameter counts, so an unrelated tool with that parameter would be read as a consultation; and copies of a same-named skill are not distinguished, because skill tools report only a name. Ordering assertions and field matching on raw trace entries are not offered. "No skill consulted at all" needs no new option: `name: /.*/` with `times: 0` matches every consultation and asserts there are none.
 
 ### Judge Checker (`$type: judge`)
 
