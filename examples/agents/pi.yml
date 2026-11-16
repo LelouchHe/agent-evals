@@ -1,3 +1,4 @@
+# Prepare deps and login with ./examples/agents/pi-setup.sh <dir> (see docs/setup.md).
 command: [pi]
 acpCommand: [pi-acp]
 home:

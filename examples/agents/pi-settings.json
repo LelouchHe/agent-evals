@@ -1,0 +1,6 @@
+{
+  "quietStartup": true,
+  "defaultProjectTrust": "always",
+  "enableInstallTelemetry": false,
+  "retry": { "enabled": false }
+}
