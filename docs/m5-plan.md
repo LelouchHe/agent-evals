@@ -93,13 +93,13 @@ Traces spell workspace paths three ways — relative, `/var/…` and `/private/v
 - **Shell reads are not recognized.** An agent that reads `SKILL.md` through a shell command (`cat .agents/skills/*/SKILL.md`) is not parsed from command text, which would also match `ls` or a failed pipeline. Retained Pi traces do show files read with `cat`, so this happens: a positive check can then fail although the skill was read, and `times: 0` proves only that no recognized tool call loaded the skill.
 - **Description visibility vs body consultation.** A placed skill's `description` stays visible in the harness's skill roster; `times: 0` is about loading the body.
 - **A tool parameter named `skill`.** Rule 1 counts any completed non-read tool call with a string `rawInput.skill`. No retained trace has such an unrelated tool; the risk is accepted.
-- **Sample size.** The Copilot CLI form rests on one retained trace.
+- **Sample size.** The Copilot CLI form rests on one retained trace and one live run.
 
 ## Verified
 
 - **The derivation replays against the 23 retained traces** under `.agent-evals/*/trace.json` in the development checkout (local run records, not part of the repository): the 13 `with-skill` runs whose agent started derive `deploy-runbook` through both forms (Pi reads of `SKILL.md`, Claude Code and Copilot CLI skill tools); one `with-skill` run that ended at authentication and the 9 `without-skill` runs derive none. The replay had no baseline, because retained run roots are removed, so its Pi reads were named from the returned text; the baseline branch is covered by tests that place the same skill in both roots.
 - **`npm run check` passes** (285 tests) and **`npm run test:package` passes** (1 test). The derivation takes the workspace and the baseline as explicit inputs; a test with non-sibling roots shows resolution uses the given workspace, not the baseline's location. Every named case of the [worked example](../examples/cases/deploy-runbook/case.yml) loads, and its `baseline` (`noop`) case runs: the positive `trace` check fails with `consulted: none` while the `mock` `times: 0` restraint check passes.
-- **Live harness verification is still outstanding.** This delivery did not run the example against a real harness; the recognition table remains measured against the retained traces above.
+- **Live harnesses (2026-11-15), one run of each ACP case of the example.** The `trace` check passed in `pi-with-skill`, `claude-with-skill` and `copilot-with-skill` (`found 1 consultation`) and failed in the three `without-skill` cases (`expected deploy-runbook, consulted: none`), agreeing with the outcome checks in every case: the with-skill cases passed all 13 checks, the without-skill cases failed the fix pattern, the acceptance script and the cause judge. One run each is a sample, not a rate.
 
 ## Deferred
 
