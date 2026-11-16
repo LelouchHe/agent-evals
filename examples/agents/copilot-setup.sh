@@ -1,8 +1,8 @@
 #!/bin/sh
 # Prepare deps/ and login/ for examples/agents/copilot.yml.
 # Usage: ./examples/agents/copilot-setup.sh <target-dir>
-# Optional overrides: COPILOT_BIN (copy an existing standalone binary), COPILOT_VERSION (default latest,
-# downloaded from the official @github/copilot-<platform> registry tarball when COPILOT_BIN is unset).
+# Optional overrides: COPILOT_BIN (copy an existing native Mach-O standalone binary),
+# COPILOT_VERSION (default latest, downloaded from @github/copilot-<platform> when COPILOT_BIN is unset).
 set -eu
 
 if [ "$#" -ne 1 ] || [ -z "$1" ]; then
@@ -25,22 +25,39 @@ LOGIN="$ROOT/login"
 mkdir -p "$DEPS/.local/bin" "$DEPS/.copilot"
 mkdir -p -m 700 "$LOGIN"
 
+WORK_TMP=""
+cleanup() {
+  [ -z "$WORK_TMP" ] || rm -rf "$WORK_TMP"
+}
+trap cleanup EXIT
+
 if [ -n "${COPILOT_BIN:-}" ]; then
+  if [ ! -f "$COPILOT_BIN" ]; then
+    echo "COPILOT_BIN does not exist: $COPILOT_BIN" >&2
+    exit 1
+  fi
+  case "$(/usr/bin/file -bL "$COPILOT_BIN")" in
+    *Mach-O*) ;;
+    *)
+      echo "COPILOT_BIN must point to a standalone native Mach-O binary (not an npm JS wrapper): $COPILOT_BIN" >&2
+      echo "Omit COPILOT_BIN to download the standalone platform binary automatically." >&2
+      exit 1
+      ;;
+  esac
   cp "$COPILOT_BIN" "$DEPS/.local/bin/copilot"
 else
   VERSION="${COPILOT_VERSION:-latest}"
   PKG="@github/copilot-${PLATFORM}"
-  TMP="$(mktemp -d)"
-  trap 'rm -rf "$TMP"' EXIT
+  WORK_TMP="$(mktemp -d)"
   TARBALL_URL="$(curl -fsSL "https://registry.npmjs.org/${PKG}/${VERSION}" | node -e '
     const fs = require("node:fs");
     const meta = JSON.parse(fs.readFileSync(0, "utf8"));
     if (!meta.dist || !meta.dist.tarball) process.exit(1);
     process.stdout.write(meta.dist.tarball);
   ')"
-  curl -fsSL "$TARBALL_URL" -o "$TMP/copilot.tgz"
-  tar -xzf "$TMP/copilot.tgz" -C "$TMP"
-  cp "$TMP/package/copilot" "$DEPS/.local/bin/copilot"
+  curl -fsSL "$TARBALL_URL" -o "$WORK_TMP/copilot.tgz"
+  tar -xzf "$WORK_TMP/copilot.tgz" -C "$WORK_TMP"
+  cp "$WORK_TMP/package/copilot" "$DEPS/.local/bin/copilot"
 fi
 chmod 755 "$DEPS/.local/bin/copilot"
 cp "$SCRIPT_DIR/copilot-settings.json" "$DEPS/.copilot/settings.json"

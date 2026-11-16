@@ -28,22 +28,26 @@ LOGIN="$ROOT/login"
 mkdir -p "$DEPS/.local/bin" "$DEPS/.local/share/pkgs" "$DEPS/.pi/agent"
 mkdir -p -m 700 "$LOGIN"
 
+WORK_TMP=""
+cleanup() {
+  [ -z "$WORK_TMP" ] || rm -rf "$WORK_TMP"
+}
+trap cleanup EXIT
+
 if [ ! -x "$DEPS/.local/share/node/bin/node" ]; then
-  TMP="$(mktemp -d)"
-  trap 'rm -rf "$TMP"' EXIT
+  WORK_TMP="$(mktemp -d)"
   ARCHIVE="node-${NODE_VERSION}-${PLATFORM}.tar.gz"
-  curl -fsSL "https://nodejs.org/dist/${NODE_VERSION}/${ARCHIVE}" -o "$TMP/$ARCHIVE"
+  curl -fsSL "https://nodejs.org/dist/${NODE_VERSION}/${ARCHIVE}" -o "$WORK_TMP/$ARCHIVE"
   rm -rf "$DEPS/.local/share/node"
   mkdir -p "$DEPS/.local/share/node"
-  tar -xzf "$TMP/$ARCHIVE" -C "$DEPS/.local/share/node" --strip-components=1
+  tar -xzf "$WORK_TMP/$ARCHIVE" -C "$DEPS/.local/share/node" --strip-components=1
 fi
 
 NODE_BIN="$DEPS/.local/share/node/bin"
 if [ -d "$PI_ACP_SPEC" ] && [ -f "$PI_ACP_SPEC/package.json" ]; then
-  PACK_TMP="${TMP:-$(mktemp -d)}"
-  trap 'rm -rf "$PACK_TMP"' EXIT
-  TGZ="$(cd "$PI_ACP_SPEC" && PATH="$NODE_BIN:$PATH" "$NODE_BIN/npm" pack --silent --pack-destination "$PACK_TMP" | tail -n 1)"
-  PI_ACP_INSTALL="$PACK_TMP/$TGZ"
+  [ -n "$WORK_TMP" ] || WORK_TMP="$(mktemp -d)"
+  TGZ="$(cd "$PI_ACP_SPEC" && PATH="$NODE_BIN:$PATH" "$NODE_BIN/npm" pack --silent --pack-destination "$WORK_TMP" | tail -n 1)"
+  PI_ACP_INSTALL="$WORK_TMP/$TGZ"
 else
   PI_ACP_INSTALL="$PI_ACP_SPEC"
 fi
