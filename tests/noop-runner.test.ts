@@ -7,6 +7,7 @@ import { fileChecker } from "../src/checkers/file/index.ts";
 import { judgeChecker } from "../src/checkers/judge/index.ts";
 import { mockChecker } from "../src/checkers/mock/index.ts";
 import { shellChecker } from "../src/checkers/shell/index.ts";
+import { traceChecker } from "../src/checkers/trace/index.ts";
 import { loadCase } from "../src/engine/authoring.ts";
 import { addChecker, addRunner, createRegistry } from "../src/engine/registry.ts";
 import { runEvaluation } from "../src/engine/run.ts";
@@ -38,6 +39,7 @@ async function runNoop(
   addChecker(registry, fileChecker, "built-in");
   addChecker(registry, mockChecker, "built-in");
   addChecker(registry, shellChecker, "built-in");
+  addChecker(registry, traceChecker, "built-in");
   if (judgeExecutable !== undefined) {
     addChecker(registry, judgeChecker, "built-in");
   }
@@ -120,6 +122,28 @@ test(
       record.checks.map((check) => check.status),
       ["fail", "fail", "pass", "fail", "pass", "fail"],
     );
+  },
+);
+
+test(
+  "the noop baseline's empty trace makes a message assertion an error, not a vacuous pass",
+  {
+    skip: process.platform !== "darwin",
+  },
+  async (t) => {
+    const { record } = await runNoop(t, {
+      checks: [
+        // Restraint over text the agent never produced would pass vacuously if an empty join were text.
+        { $type: "trace", event: "message", notMatches: "failed" },
+        { $type: "trace", event: "message", matches: "failed" },
+      ],
+    });
+    assert.equal(record.status, "error");
+    assert.deepEqual(
+      record.checks.map((check) => check.status),
+      ["error", "error"],
+    );
+    assert.match(record.checks[0]?.reason ?? "", /holds no message text/);
   },
 );
 

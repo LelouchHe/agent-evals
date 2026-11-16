@@ -101,12 +101,25 @@ function statuses(results: readonly CheckResult[]): readonly string[] {
   return results.map((result) => result.status);
 }
 
+/** A completed tool call whose returned text must stay out of the message artifact. */
+function readTool(output: string): ToolEntry {
+  return {
+    type: "tool",
+    toolCallId: "call-read",
+    title: "cat deploy.log",
+    kind: "execute",
+    status: "completed",
+    rawInput: { command: "cat deploy.log" },
+    content: [{ type: "content", content: { type: "text", text: output } }],
+  };
+}
+
 test("the trace checker rejects an unknown event, an extra key and a literal name with times above 1", async () => {
   await assert.rejects(
     () => parse({ event: "tool", name: "x" }),
     (error: unknown) => {
       assert.ok(error instanceof ConfigError);
-      assert.match(error.message, /accepted events: skill/);
+      assert.match(error.message, /accepted events: skill, message/);
       return true;
     },
   );
@@ -114,7 +127,7 @@ test("the trace checker rejects an unknown event, an extra key and a literal nam
     () => parse({ event: "skill", name: "x", offset: 1 }),
     (error: unknown) => {
       assert.ok(error instanceof ConfigError);
-      assert.match(error.message, /accepts only event, name and times/);
+      assert.match(error.message, /accepts only event, name and times for a skill event; unexpected: offset/);
       return true;
     },
   );
@@ -253,5 +266,89 @@ test("the result says when a matched name is only the parent directory", async (
   assert.match(
     results[0]?.reason ?? "",
     /found 1 consultation, consulted: legacy-skill \(named from the parent directory, not frontmatter: legacy-skill\)/,
+  );
+});
+
+test("event: message joins every message entry and leaves thoughts and tool output out", async (t) => {
+  const trace: TraceEntry[] = [
+    { type: "message", text: "Deploy " },
+    { type: "thought", text: "E4127 means the publish was aborted." },
+    { type: "message", text: "aborted: " },
+    readTool("publish aborted with E4127"),
+    { type: "message", text: "rollback started." },
+  ];
+
+  // A literal and a pattern are both searched within the join of every message entry.
+  const joined = await check(t, { event: "message", matches: "aborted: rollback" }, trace);
+  assert.deepEqual(statuses(joined), ["pass"]);
+  assert.equal(joined[0]?.subject, 'message matches "aborted: rollback"');
+  assert.equal(joined[0]?.reason, "pattern found");
+  assert.deepEqual(statuses(await check(t, { event: "message", matches: "/^Deploy aborted:/" }, trace)), ["pass"]);
+
+  // Reasoning and tool output are not text the agent produced for the user.
+  assert.deepEqual(statuses(await check(t, { event: "message", matches: "E4127" }, trace)), ["fail"]);
+  assert.deepEqual(statuses(await check(t, { event: "message", matches: "publish aborted" }, trace)), ["fail"]);
+  assert.deepEqual(statuses(await check(t, { event: "message", notMatches: "/E4127/" }, trace)), ["pass"]);
+
+  // Every declared pattern is one result, matches first, in declaration order.
+  const declared = await check(
+    t,
+    { event: "message", matches: ["Deploy", "/rollback\\s+started/"], notMatches: "prune" },
+    trace,
+  );
+  assert.deepEqual(statuses(declared), ["pass", "pass", "pass"]);
+  assert.deepEqual(
+    declared.map((result) => result.subject),
+    ['message matches "Deploy"', "message matches /rollback\\s+started/", 'message does not match "prune"'],
+  );
+
+  const absent = await check(t, { event: "message", notMatches: "/abort(ed)?/" }, trace);
+  assert.deepEqual(statuses(absent), ["fail"]);
+  assert.equal(absent[0]?.subject, "message does not match /abort(ed)?/");
+  assert.equal(absent[0]?.reason, "pattern found");
+});
+
+test("a trace holding no message text is an error, not a pass or a fail", async (t) => {
+  for (const raw of [
+    { event: "message", matches: "done" },
+    { event: "message", notMatches: "done" },
+  ]) {
+    const results = await check(t, raw, []);
+    assert.deepEqual(statuses(results), ["error"]);
+    assert.match(results[0]?.reason ?? "", /holds no message text/);
+  }
+
+  // Reasoning alone is not text the agent produced, so a restraint check cannot pass here.
+  const thoughtOnly = await check(t, { event: "message", notMatches: "done" }, [{ type: "thought", text: "done" }]);
+  assert.deepEqual(statuses(thoughtOnly), ["error"]);
+
+  const absent = await check(t, { event: "message", notMatches: "done" });
+  assert.deepEqual(statuses(absent), ["error"]);
+  assert.match(absent[0]?.reason ?? "", /records no trace/);
+});
+
+test("each event rejects the other event's parameters and names the field", async () => {
+  const rejected: readonly (readonly [ImplementationParams, RegExp])[] = [
+    [{ event: "skill", name: "deploy-runbook", matches: "x" }, /unexpected: matches/],
+    [{ event: "skill", name: "deploy-runbook", notMatches: "x" }, /unexpected: notMatches/],
+    [{ event: "message", matches: "x", name: "deploy-runbook" }, /unexpected: name/],
+    [{ event: "message", matches: "x", times: 1 }, /unexpected: times/],
+  ];
+  for (const [raw, named] of rejected) {
+    await assert.rejects(
+      () => parse(raw),
+      (error: unknown) => {
+        assert.ok(error instanceof ConfigError);
+        assert.match(error.message, named);
+        return true;
+      },
+    );
+  }
+
+  await assert.rejects(() => parse({ event: "message" }), /needs at least one of matches or notMatches/);
+  await assert.rejects(() => parse({ event: "message", matches: [] }), /must hold at least one pattern/);
+  await assert.rejects(
+    () => parse({ event: "message", matches: "x", offset: 1 }),
+    /accepts only event, matches and notMatches for a message event; unexpected: offset/,
   );
 });

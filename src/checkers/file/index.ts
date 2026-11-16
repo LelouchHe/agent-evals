@@ -1,38 +1,10 @@
 import { z } from "zod";
 import type { CheckResult, Checker, CheckerContext, CheckerDefinition } from "../../engine/registry.ts";
-import { patternSyntaxSchema, runRelativePathSchema } from "../../engine/params.ts";
+import { patternListSchema, runRelativePathSchema } from "../../engine/params.ts";
 import { truncate } from "../../engine/truncate.ts";
 import { searches } from "../../engine/regex.ts";
 import { isMissing, readRunFile, runFileExists, type RunRoot } from "../../engine/workspace.ts";
 import { ConfigError, errorMessage, type PatternSyntax } from "../../engine/config.ts";
-
-const MAX_PATTERNS = 100;
-
-/** One pattern or a non-empty list of them, normalized to a list in declaration order. */
-const patternListSchema = z.unknown().transform((value, context): readonly PatternSyntax[] => {
-  if (Array.isArray(value) && value.length === 0) {
-    context.addIssue({ code: "custom", message: "must hold at least one pattern" });
-    return [];
-  }
-  const entries = Array.isArray(value) ? value : [value];
-  if (entries.length > MAX_PATTERNS) {
-    context.addIssue({ code: "custom", message: `must hold at most ${MAX_PATTERNS} patterns` });
-    return [];
-  }
-  const listed = Array.isArray(value);
-  return entries.flatMap((entry, index) => {
-    const parsed = patternSyntaxSchema.safeParse(entry);
-    if (parsed.success) {
-      return [parsed.data];
-    }
-    // A scalar names the field itself; only a list entry needs its position.
-    const path = listed ? [index] : [];
-    for (const issue of parsed.error.issues) {
-      context.addIssue({ code: "custom", path: [...path, ...issue.path], message: issue.message });
-    }
-    return [];
-  });
-});
 
 /** A workspace path, or `~/…` for a file in the run HOME. `~/` alone names HOME, not a file. */
 const filePathSchema = runRelativePathSchema.superRefine((value, context) => {
