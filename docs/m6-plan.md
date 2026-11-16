@@ -101,7 +101,7 @@ login: # optional: the whole login concept in one place
 | `files`       | Optional `~/` destination → authoring source relative to the agent file, copied into HOME before login and the case overlay. A destination must start with `~/`; `.agentevalsignore` applies. |
 | `login`       | Optional: `command` for the login helper, `dir` the persistent directory (it may be missing before the first login), `files` the HOME-relative composition (non-empty).                       |
 
-`login.files` is the whole composition: only those files are copied into HOME and only those are saved back. A declared file that does not exist in a first-login directory is skipped; a declared file the harness creates and changes is copied back after the sandbox stops.
+`login.files` is the whole composition: only those files are copied into HOME and only those are saved back. A declared file that does not exist in a first-login directory is skipped. During a run or a `config` query, an existing login file the harness changes is copied back after the sandbox stops; a declared file the harness creates for the first time is saved only by the explicit `login` helper after its native command succeeds.
 
 The three examples and their setup scripts use this syntax. Each script prepares software only, under `deps/{bin,share}`, and an empty `login/`; the settings file stays beside the agent file.
 
@@ -111,17 +111,19 @@ The three examples and their setup scripts use this syntax. Each script prepares
 
 All are load-time configuration errors except the two placement-time rules, which fail before the harness starts.
 
-| Pair                                                    | Rule                                                                                                          |
-| ------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
-| Agent `files` vs login (same HOME path)                 | **Error.** Checked when the agent file resolves, before any run resource.                                     |
-| Case `~/` entry vs login file                           | **Error**, always. Checked when every selected case is validated.                                             |
-| Case `~/` entry vs agent **file**                       | Allowed: the case replaces it. This is the "settings are an evaluation variable" case.                        |
-| Case `~/` entry vs agent **directory**                  | Allowed: directories merge, exactly as `files` entries merge over the fixture.                                |
-| Two case `~/` entries producing one file                | **Error** during placement, as two workspace entries producing one file.                                      |
-| File vs directory at one path                           | **Error** during placement, whether the conflict comes from the agent file, the login state or another entry. |
-| `~/` destination that is `.`, absolute or contains `..` | **Error**. `~/` alone names HOME itself, which is a valid directory destination.                              |
+| Pair                                                    | Rule                                                                                                                         |
+| ------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| Agent `files` vs login file                             | **Error**, directly or through a directory source's contents. Checked when the agent file resolves, before any run resource. |
+| Case `~/` entry vs login file                           | **Error**, always, directly or through a directory source's contents. Checked when every selected case is validated.         |
+| Case `~/` entry vs agent **file**                       | Allowed: the case replaces it. This is the "settings are an evaluation variable" case.                                       |
+| Case `~/` entry vs agent **directory**                  | Allowed: directories merge, exactly as `files` entries merge over the fixture.                                               |
+| Two case `~/` entries producing one file                | **Error** during placement, as two workspace entries producing one file.                                                     |
+| File vs directory at one path                           | **Error** during placement, whether the conflict comes from the agent file, the login state or another entry.                |
+| `~/` destination that is `.`, absolute or contains `..` | **Error**. `~/` alone names HOME itself, which is a valid directory destination.                                             |
 
 Application order is agent `files` → login files → the case's `~/` entries. The case runs last so it can replace agent files; login is copied before it, and the validator plus the placement guard are what forbid case/login collisions.
+
+The declared spelling is not the only test. The filesystem decides whether a placement lands on login state, so placement also compares the identity (`dev:ino`) of what already exists at each target with the login files copied into HOME. A differently-cased or otherwise normalised spelling that the filesystem treats as one path is refused before anything is written, and login copy-back never sees changed bytes. On a case-sensitive filesystem the two spellings are different files, so nothing is written through the login file and the persistent directory is untouched.
 
 ## `view` — approved
 
@@ -137,11 +139,12 @@ Application order is agent `files` → login files → the case's `~/` entries. 
 - **`view`.** Placement counts and `--files`, computed by the engine's placement walk.
 - **Docs.** README, configuration, setup, architecture, cases, mocks, extensions and roadmap describe the shipped behaviour; the consistency pass is reported with the delivery.
 
-One implementation detail beyond the design text: a case `~/` entry that a login file would replace is rejected at load from the runner's declared `homeFiles`, not only at placement. Two case entries normalizing to one path and a file-versus-directory conflict are detected while staging, which is also when a workspace `files` collision is detected.
+One implementation detail beyond the design text: a case `~/` entry that would place a login file — directly or through a directory source's contents — is rejected at load from the runner's declared `homeFiles`; agent `files` sources are read when the agent file resolves, so a missing source or a login-file collision there is also found before any selected case runs. Two case entries normalizing to one path and a file-versus-directory conflict are detected while staging, which is also when a workspace `files` collision is detected. Placement additionally refuses any target whose filesystem identity is a login file, which covers spellings the load-time comparison does not normalise.
 
 ## Verified at Delivery
 
-- **Gates.** `npm run check` passes (320 tests, including the new layout, HOME placement, trace, file-check and `view` tests) and `npm run test:package` passes (1 test). Every commit ran the pre-commit lint/format hook.
+- **Gates.** `npm run check` passes (323 tests, including the new layout, HOME placement, trace, file-check and `view` tests) and `npm run test:package` passes (1 test). Every commit ran the pre-commit lint/format hook.
+- **Review follow-up.** A review of the range found that a differently-cased login path could be overwritten and persisted, and that later cases' HOME placement errors were found only when they ran. Placement now compares filesystem identity against the login files in HOME, and the load step reads agent `files` and walks case `~/` trees so a login-file collision or a missing agent source is a configuration error before any selected case runs.
 - **Free evidence, from the built CLI.** `agent-evals config` answered for all three example agent files with software under the new `deps` and the run layout in place. A model-free ACP runner test shows a run whose `PATH` starts with `run-xxxx/deps/bin`, whose `which agent` is a run-root path, whose `home/`, `workspace/` and `tmp/` writes succeed, whose `deps` write and `engine/` read are denied, and whose HOME holds only the agent placement and harness-written state. Placement tests cover the case replacing an agent file, `file` `~/` paths with `changed: false`, a HOME-root placement, `.agentevalsignore` under `~/`, all collision rules, and the `noop` rejection. `view` on the routing document's q10 reports `files ".agents/skills": 72 placed, 17 excluded` and `home "~/mine/space": 1 placed, 0 excluded`; `--files` names the vault source and the deciding ignore files.
 - **Paid runs** (authorized budget): `deploy-runbook` once per harness and routing q10 once.
 

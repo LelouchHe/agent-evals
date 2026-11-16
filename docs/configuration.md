@@ -149,7 +149,9 @@ A source directory declares what is not placed in a `.agentevalsignore` file at 
 
 The engine only copies; it assigns no meaning to a destination and knows no harness paths. A project-level skill is one use: place its directory where the harness discovers it, for example `.agents/skills/` for Pi and Copilot CLI or `.claude/skills/` for Claude Code. A user-level skill or instruction file is the same mechanism under `~/`: `~/.claude/skills/…` for Claude Code, or other paths a harness reads from HOME.
 
-Order inside HOME is agent `files` → login files → the case's `~/` entries. The agent file's `files` may not collide with its own login files; a case may replace an agent-placed file but never a login file. Case/agent collisions are configuration errors before the harness starts; two case entries normalizing to one path and a file-versus-directory conflict are placement errors before the harness runs.
+Order inside HOME is agent `files` → login files → the case's `~/` entries. The agent file's `files` may not collide with its own login files; a case may replace an agent-placed file, and only a collision with login state is an error. Those login collisions are configuration errors before the harness starts, including a directory source whose contents name a login file; agent `files` sources are also read at that point, so a missing source is a configuration error too. Two case entries normalizing to one path and a file-versus-directory conflict are placement errors before the harness runs.
+
+Login state is protected by what the filesystem holds, not only by the declared spelling: placement refuses any target whose file identity is one of the login files copied into HOME, so a differently-cased or otherwise normalised path the filesystem treats as one file cannot be written through. On a case-sensitive filesystem the spellings are different files, and the persistent login directory stays untouched either way.
 
 ## Mocks
 

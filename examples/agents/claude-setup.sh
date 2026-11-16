@@ -9,7 +9,6 @@ if [ "$#" -ne 1 ] || [ -z "$1" ]; then
   exit 1
 fi
 
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 case "$(uname -s)-$(uname -m)" in
   Darwin-arm64) PLATFORM="darwin-arm64" ;;

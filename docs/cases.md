@@ -44,7 +44,7 @@ The workspace is the project the agent is asked to change. `HOME` is the user it
 - **Evidence works the same way.** A `file` check accepts `~/` paths, and `trace` recognizes a `SKILL.md` the case placed in HOME. `changed` compares against what the case placed, so a restraint check over `~/` proves the case's own baseline was respected.
 - **Runners without a HOME reject `~/`.** `noop` and the native `pi` runner fail the case at load time rather than silently ignoring the placement. Use an ACP harness for HOME placement.
 
-A case that needs the harness's own settings changed supplies them through the agent file's `files`, not through the case: that is harness configuration, not user data.
+A case that needs the harness's own settings changed places its own file over the agent-placed one: settings are an evaluation variable, and the case overlay runs last. It may not place over login state. A case that only needs `HOME` to resemble a user's home leaves the agent file's settings alone.
 
 A case that should need the agent can be checked for vacuity: run it with `runner: { $type: noop }` as a named case. Checks that pass there do not depend on what the agent did.
 
