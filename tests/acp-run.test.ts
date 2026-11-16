@@ -4,11 +4,11 @@ import { join } from "node:path";
 import { test, type TestContext } from "node:test";
 import { setTimeout as delay } from "node:timers/promises";
 import { stringify } from "yaml";
-import { fileChecker } from "../src/checkers/file/checker.ts";
+import { fileChecker } from "../src/checkers/file/index.ts";
 import { loadCase } from "../src/engine/authoring.ts";
 import { addChecker, addRunner, createRegistry } from "../src/engine/registry.ts";
 import { runEvaluation } from "../src/engine/run.ts";
-import { acpRunner } from "../src/runners/acp/runner.ts";
+import { acpRunner } from "../src/runners/acp/index.ts";
 import { makeAcpAgent } from "./helpers/acp-agent.ts";
 
 const INPUT = "Write the answer.";

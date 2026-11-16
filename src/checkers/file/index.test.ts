@@ -8,7 +8,7 @@ import type { CheckerContext, CheckResult } from "../../engine/registry.ts";
 import { makeTempDir } from "../../../tests/helpers/fake-pi-control.ts";
 import { implementationContext, unusedCheckSandbox } from "../../../tests/helpers/implementation-context.ts";
 import { openRunRoot } from "../../engine/workspace.ts";
-import { fileChecker } from "./checker.ts";
+import { fileChecker } from "./index.ts";
 
 async function setup(t: Parameters<typeof makeTempDir>[0]) {
   const root = await makeTempDir(t, "ae-file-");

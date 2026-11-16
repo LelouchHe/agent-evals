@@ -8,14 +8,14 @@ import { test } from "node:test";
 import { setTimeout as delay } from "node:timers/promises";
 import { stringify } from "yaml";
 import { z } from "zod";
-import { fileChecker } from "../src/checkers/file/checker.ts";
+import { fileChecker } from "../src/checkers/file/index.ts";
 import { loadCase } from "../src/engine/authoring.ts";
 import { ConfigError, parsePatternScalar, type ShellMock } from "../src/engine/config.ts";
 import { startMockHost, type MockHostOptions } from "../src/engine/mocks.ts";
 import { addChecker, addRunner, createRegistry } from "../src/engine/registry.ts";
 import { runEvaluation } from "../src/engine/run.ts";
-import { acpRunner } from "../src/runners/acp/runner.ts";
-import { piRunner } from "../src/runners/pi/runner.ts";
+import { acpRunner } from "../src/runners/acp/index.ts";
+import { piRunner } from "../src/runners/pi/index.ts";
 import { makeAcpAgent } from "./helpers/acp-agent.ts";
 import { makeTempDir } from "./helpers/fake-pi-control.ts";
 

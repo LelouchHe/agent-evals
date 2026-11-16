@@ -10,7 +10,7 @@ import type { CheckerContext, CheckResult, CheckSandbox, CheckSandboxOutcome } f
 import { openRunRoot } from "../../engine/workspace.ts";
 import { makeTempDir } from "../../../tests/helpers/fake-pi-control.ts";
 import { implementationContext } from "../../../tests/helpers/implementation-context.ts";
-import { shellChecker } from "./checker.ts";
+import { shellChecker } from "./index.ts";
 
 function sandbox(outcome: CheckSandboxOutcome): CheckSandbox {
   return { run: () => Promise.resolve(outcome) };

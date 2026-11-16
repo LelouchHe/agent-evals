@@ -6,7 +6,7 @@ import type { Readable } from "node:stream";
 import { test } from "node:test";
 import { stringify } from "yaml";
 import { z } from "zod";
-import { fileChecker } from "../src/checkers/file/checker.ts";
+import { fileChecker } from "../src/checkers/file/index.ts";
 import { loadCase } from "../src/engine/authoring.ts";
 import type { MockArgument, MockResult, MockRule, ShellMocks } from "../src/engine/config.ts";
 import { startMockHost, type MockHost, type MockHostOptions } from "../src/engine/mocks.ts";

@@ -8,9 +8,9 @@ import { ConfigError } from "../src/engine/config.ts";
 import { createEnvSource } from "../src/engine/env-source.ts";
 import { addChecker, addRunner, createRegistry } from "../src/engine/registry.ts";
 import { runEvaluation } from "../src/engine/run.ts";
-import { fileChecker } from "../src/checkers/file/checker.ts";
-import { judgeChecker } from "../src/checkers/judge/checker.ts";
-import { piRunner } from "../src/runners/pi/runner.ts";
+import { fileChecker } from "../src/checkers/file/index.ts";
+import { judgeChecker } from "../src/checkers/judge/index.ts";
+import { piRunner } from "../src/runners/pi/index.ts";
 import { runCliProcess } from "./helpers/cli-process.ts";
 import { createFakePi, makeTempDir } from "./helpers/fake-pi-control.ts";
 

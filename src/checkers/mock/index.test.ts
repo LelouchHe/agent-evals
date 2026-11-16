@@ -9,7 +9,7 @@ import type { CheckerContext, MockRecord } from "../../engine/registry.ts";
 import { openRunRoot } from "../../engine/workspace.ts";
 import { makeTempDir } from "../../../tests/helpers/fake-pi-control.ts";
 import { unusedCheckSandbox } from "../../../tests/helpers/implementation-context.ts";
-import { mockChecker } from "./checker.ts";
+import { mockChecker } from "./index.ts";
 
 function implementationContext(mockTargets?: readonly string[]) {
   return {

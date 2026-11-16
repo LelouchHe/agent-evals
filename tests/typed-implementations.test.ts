@@ -18,7 +18,7 @@ import {
   type RunnerDefinition,
 } from "../src/engine/registry.ts";
 import { runEvaluation } from "../src/engine/run.ts";
-import { fileChecker } from "../src/checkers/file/checker.ts";
+import { fileChecker } from "../src/checkers/file/index.ts";
 import { makeTempDir } from "./helpers/fake-pi-control.ts";
 
 test("engine preparation passes each parsed implementation shape to its bound instance exactly once", async (t) => {

@@ -1,20 +1,20 @@
 #!/usr/bin/env node
 import { join, resolve } from "node:path";
 import { parseArgs } from "node:util";
-import { fileChecker } from "./checkers/file/checker.ts";
-import { judgeChecker } from "./checkers/judge/checker.ts";
-import { mockChecker } from "./checkers/mock/checker.ts";
-import { shellChecker } from "./checkers/shell/checker.ts";
+import { fileChecker } from "./checkers/file/index.ts";
+import { judgeChecker } from "./checkers/judge/index.ts";
+import { mockChecker } from "./checkers/mock/index.ts";
+import { shellChecker } from "./checkers/shell/index.ts";
 import { loadCase } from "./engine/authoring.ts";
 import { ConfigError, errorMessage } from "./engine/config.ts";
 import { addChecker, addRunner, createRegistry, loadTrustedImplementations } from "./engine/registry.ts";
 import { runEvaluation } from "./engine/run.ts";
 import type { EvaluationRecord } from "./engine/results.ts";
 import { formatResolvedCase } from "./engine/view.ts";
-import { piRunner } from "./runners/pi/runner.ts";
-import { noopRunner } from "./runners/noop/runner.ts";
+import { piRunner } from "./runners/pi/index.ts";
+import { noopRunner } from "./runners/noop/index.ts";
 import { runAgentCommand } from "./runners/acp/commands.ts";
-import { acpRunner } from "./runners/acp/runner.ts";
+import { acpRunner } from "./runners/acp/index.ts";
 
 const USAGE = `Usage: agent-evals <command> <config.yml> [options]
 
