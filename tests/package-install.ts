@@ -62,7 +62,7 @@ test("the packed CLI installs and runs without source or development dependencie
   const bin = join(prefix, "node_modules", ".bin", "agent-evals");
   const require = createRequire(join(installed, "package.json"));
   const installRoot = (await realpath(prefix)) + sep;
-  for (const dependency of ["@agentclientprotocol/sdk", "re2js", "yaml", "zod"]) {
+  for (const dependency of ["@agentclientprotocol/sdk", "ignore", "re2js", "yaml", "zod"]) {
     assert.ok(
       (await realpath(require.resolve(dependency))).startsWith(installRoot),
       `${dependency} escaped the installation`,
@@ -71,6 +71,7 @@ test("the packed CLI installs and runs without source or development dependencie
   assert.deepEqual((await readdir(join(prefix, "node_modules"))).filter((name) => !name.startsWith(".")).sort(), [
     "@agentclientprotocol",
     "agent-evals",
+    "ignore",
     "re2js",
     "yaml",
     "zod",

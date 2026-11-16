@@ -155,7 +155,7 @@ test("pi runner stages declared skills inside isolated config", async (t) => {
     "---\nname: tiny\ndescription: Tiny test skill.\n---\n\nWrite the file.\n",
   );
   await mkdir(join(dirs.root, "skill", "evals"));
-  await writeFile(join(dirs.root, "skill", ".agentevalsignore"), "evals\n");
+  await writeFile(join(dirs.root, "skill", ".agentevalsignore"), "/evals\n");
   await writeFile(join(dirs.root, "skill", "evals", "routing.json"), "[]\n");
 
   await runPrepared({ model: "test/model", executable: fake.executable, skills: ["skill"] }, dirs, 10_000);

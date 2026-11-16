@@ -39,7 +39,7 @@ async function stage(t: Parameters<typeof makeTempDir>[0]) {
 test("a copied directory places its runtime files and keeps its declared non-runtime content out", async (t) => {
   const dirs = await stage(t);
   await write(dirs.authoring, {
-    "skill/.agentevalsignore": "# eval assets\n\nevals\n",
+    "skill/.agentevalsignore": "# eval assets\n\n/evals\n",
     "skill/SKILL.md": "body\n",
     "skill/references/rules.md": "rules\n",
     "skill/evals/agent-evals/routing.yml": "input: leaked\n",
@@ -58,10 +58,10 @@ test("a copied directory places its runtime files and keeps its declared non-run
 test("each directory's patterns apply from that directory, so one roster excludes per skill", async (t) => {
   const dirs = await stage(t);
   await write(dirs.authoring, {
-    "skills/markdown-writing/.agentevalsignore": "evals\n",
+    "skills/markdown-writing/.agentevalsignore": "/evals\n",
     "skills/markdown-writing/SKILL.md": "body\n",
     "skills/markdown-writing/evals/agent-evals/routing.yml": "input: leaked\n",
-    "skills/skill-eval/.agentevalsignore": "tests\n",
+    "skills/skill-eval/.agentevalsignore": "/tests\n",
     "skills/skill-eval/SKILL.md": "body\n",
     "skills/skill-eval/tests/run.py": "assert True\n",
     "skills/task-delegation/SKILL.md": "body\n",
@@ -87,4 +87,23 @@ test("a source named directly is placed even when its parent's ignore file exclu
   await dirs.stage({ cases: "evals" });
 
   assert.deepEqual(await dirs.files(), ["cases/case.yml"]);
+});
+
+test("a deeper ignore file cannot re-include what a higher one excluded", async (t) => {
+  const dirs = await stage(t);
+  await write(dirs.authoring, {
+    "skill/.agentevalsignore": "/evals/agent-evals\n",
+    "skill/SKILL.md": "body\n",
+    "skill/evals/.agentevalsignore": "!agent-evals\n",
+    "skill/evals/agent-evals/routing.yml": "input: leaked\n",
+    "skill/evals/behavior.json": "{}\n",
+  });
+
+  await dirs.stage({ "skills/markdown-writing": "skill" });
+
+  // The exclusion is combined across files, so `!` only re-includes within the file that used it.
+  assert.deepEqual(await dirs.files(), [
+    "skills/markdown-writing/SKILL.md",
+    "skills/markdown-writing/evals/behavior.json",
+  ]);
 });

@@ -363,7 +363,7 @@ test(
   async (t) => {
     const dirs = await setup(t);
     await mkdir(join(dirs.authoring, "tree"));
-    await writeFile(join(dirs.authoring, "tree/.agentevalsignore"), "fixtures\n");
+    await writeFile(join(dirs.authoring, "tree/.agentevalsignore"), "/fixtures\n");
     await writeFile(join(dirs.authoring, "tree/acceptance.txt"), "acceptance\n");
     await mkdir(join(dirs.authoring, "tree/fixtures"));
     await writeFile(join(dirs.authoring, "tree/fixtures/answers.txt"), "the answer\n");

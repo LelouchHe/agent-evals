@@ -207,7 +207,7 @@ test("integration: the fixture copy leaves out what its .agentevalsignore declar
   const { record, tempParent } = await runScenario(t, {
     runnerExecutable: runner.executable,
     fixtureFiles: {
-      ".agentevalsignore": "cases\n\n# the ignore file is metadata, not fixture content\n",
+      ".agentevalsignore": "/cases\n\n# the ignore file is metadata, not fixture content\n",
       "kept.txt": "kept\n",
       "cases/hidden.txt": "never placed\n",
     },

@@ -1,72 +1,62 @@
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
+import ignore, { type Ignore } from "ignore";
 import { ConfigError, errorMessage } from "./config.ts";
 import { isMissing } from "./workspace.ts";
 
 /** The file a source directory uses to declare what is not placed into a run. */
 export const IGNORE_FILE_NAME = ".agentevalsignore";
 
-/** One ignore pattern, as path segments relative to the directory holding the ignore file. */
-export type IgnorePattern = readonly string[];
-
 /**
- * Read one directory's ignore patterns. Patterns are relative to that directory, so the same
- * declarations work whether one skill directory or a whole skills tree is the copy source.
- * Whitespace and blank lines are ignored and a line starting with `#` is a comment.
+ * The ignore files one copy consults, read at most once per directory and kept for that copy so
+ * two entries sharing a subtree share the answers.
  */
-export async function readIgnorePatterns(dir: string): Promise<readonly IgnorePattern[]> {
+export class IgnoreTree {
+  readonly #rules = new Map<string, Promise<Ignore>>();
+
+  read(dir: string): Promise<Ignore> {
+    let rules = this.#rules.get(dir);
+    if (rules === undefined) {
+      rules = readRules(dir);
+      this.#rules.set(dir, rules);
+    }
+    return rules;
+  }
+}
+
+/** Parse one directory's ignore file with the gitignore implementation; no file means no rules. */
+async function readRules(dir: string): Promise<Ignore> {
   const path = join(dir, IGNORE_FILE_NAME);
   let text;
   try {
     text = await readFile(path, "utf8");
   } catch (error) {
     if (isMissing(error)) {
-      return [];
+      return ignore();
     }
     throw new ConfigError(`could not read ${path}: ${errorMessage(error)}`);
   }
-  const patterns: IgnorePattern[] = [];
-  for (const [index, raw] of text.split(/\r?\n/).entries()) {
-    const line = raw.trim();
-    if (line.length > 0 && !line.startsWith("#")) {
-      patterns.push(parsePattern(line, path, index + 1));
-    }
-  }
-  return patterns;
+  return ignore().add(text);
 }
 
 /**
- * Parse one pattern line. The language is deliberately tiny: a relative path whose segments are
- * literal or `*`, where `*` matches exactly one segment. Anything resembling a fuller glob is a
- * configuration error, so an unsupported intent never becomes a silent no-op.
+ * True when the path `segments`, relative to `root`, is not placed: the ignore file itself, or a
+ * path excluded by the rules of `root` or of any directory between it and the path. Each
+ * directory's patterns are matched from that directory, and the answers are combined, so a
+ * deeper file cannot re-include what a higher one excluded.
  */
-function parsePattern(line: string, file: string, lineNumber: number): IgnorePattern {
-  const reject = (reason: string): never => {
-    throw new ConfigError(`${file}:${lineNumber}: pattern "${line}" ${reason}`);
-  };
-  if (line.includes("\0")) reject("contains a NUL byte");
-  if (line.includes("\\")) reject("must separate segments with /");
-  if (line.includes("**")) reject('has no "**"; "*" matches exactly one segment');
-  const trimmed = line.endsWith("/") ? line.slice(0, -1) : line;
-  if (isAbsoluteLike(trimmed)) reject("must be relative to the directory that holds the ignore file");
-  const segments = trimmed.split("/");
-  for (const segment of segments) {
-    if (segment.length === 0) reject("has an empty segment");
-    if (segment === "." || segment === "..") reject(`must not contain "${segment}"`);
-    if (segment !== "*" && segment.includes("*")) reject('uses "*" inside a segment; a segment is "*" or literal');
+export async function isIgnored(tree: IgnoreTree, root: string, segments: readonly string[]): Promise<boolean> {
+  if (segments.length === 0) {
+    return false;
   }
-  return segments;
-}
-
-function isAbsoluteLike(path: string): boolean {
-  return path.startsWith("/") || /^[A-Za-z]:[\\/]/.test(path);
-}
-
-/** True when `relative` (segments from the ignore file's directory) matches one pattern. */
-export function matchesIgnorePattern(patterns: readonly IgnorePattern[], relative: readonly string[]): boolean {
-  return patterns.some(
-    (pattern) =>
-      pattern.length === relative.length &&
-      pattern.every((segment, index) => segment === "*" || segment === relative[index]),
-  );
+  if (segments[segments.length - 1] === IGNORE_FILE_NAME) {
+    return true;
+  }
+  for (let depth = 0; depth < segments.length; depth += 1) {
+    const rules = await tree.read(join(root, ...segments.slice(0, depth)));
+    if (rules.ignores(segments.slice(depth).join("/"))) {
+      return true;
+    }
+  }
+  return false;
 }
