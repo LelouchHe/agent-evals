@@ -97,13 +97,15 @@ test("run exits zero only when every case of the document passed", async (t) => 
 });
 
 test("a configuration error in any selected case runs none of them", async (t) => {
+  // The first case is valid; the second fails only when its implementation parameters are
+  // validated, which must happen for every case before the first one executes.
   const run = await runDocument(t, {
     first: noopCase([{ $type: "file", path: "hello.txt", exists: false }]),
-    second: { runner: { $type: "noop" }, checks: [{ $type: "file", path: "hello.txt" }], surprise: true },
+    second: noopCase([{ $type: "file", path: "hello.txt", matches: { nested: true } }]),
   });
 
   assert.equal(run.code, 2);
-  assert.match(run.stderr, /configuration error: .*surprise/);
+  assert.match(run.stderr, /configuration error: .*matches/);
   // The first case was validated but never executed, so it wrote no result record.
   await assert.rejects(readdir(run.resultsDir), { code: "ENOENT" });
 });
@@ -115,11 +117,13 @@ test("--case still runs exactly the named case of a multi-case document", async 
       first: noopCase([{ $type: "file", path: "hello.txt", exists: false }]),
       second: noopCase([{ $type: "file", path: "hello.txt", exists: true }]),
     },
-    { args: ["--case", "first"] },
+    { args: ["--case", "second"] },
   );
 
-  assert.equal(run.code, 0);
-  assert.match(run.stdout, /^run \S+: pass$/m);
-  assert.match(run.stdout, /^ {2}case: first \(/m);
+  // The named case is the failing one, so a selection that fell back to the first case would
+  // pass and report the wrong name.
+  assert.equal(run.code, 1);
+  assert.match(run.stdout, /^run \S+: fail$/m);
+  assert.match(run.stdout, /^ {2}case: second \(/m);
   assert.equal((await readdir(run.resultsDir)).length, 1);
 });
