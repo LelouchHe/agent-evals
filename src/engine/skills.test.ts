@@ -174,6 +174,52 @@ test("workspace paths resolve against the given workspace, not the baseline's lo
   assert.deepEqual(consultations, [{ name: "deploy-runbook", fromDirectory: false }]);
 });
 
+test("agent-planted symlinks or loops in the live workspace neither hide the baseline name nor throw", async (t) => {
+  const dirs = await runRoots(t);
+  const outside = await makeTempDir(t, "ae-skills-outside-");
+  const relative = ".agents/skills/aw-deploy/SKILL.md";
+  await placeSkill(dirs.workspace, dirs.baseline, relative, "name: deploy-runbook\n");
+  await placeSkill(dirs.workspace, dirs.baseline, ".agents/skills/other/SKILL.md", "name: baseline-other\n");
+
+  // Simulate an agent reading a chunk past frontmatter, then replacing the skill directory in the
+  // live workspace with an escaping symlink and leaving a symlink loop elsewhere.
+  const { rm } = await import("node:fs/promises");
+  await rm(join(dirs.workspace, ".agents/skills/aw-deploy"), { recursive: true });
+  await symlink(outside, join(dirs.workspace, ".agents/skills/aw-deploy"));
+  await symlink(dirs.workspace, join(outside, "ws-alias"));
+  await symlink("loop-b", join(dirs.workspace, "loop-a"));
+  await symlink("loop-a", join(dirs.workspace, "loop-b"));
+
+  const roots = await sources(dirs);
+  const consultations = await skillConsultations(
+    [
+      piRead(join(roots.workspace.path, relative), "# body chunk past frontmatter\n"),
+      piRead(join(roots.workspace.path, "loop-a/SKILL.md"), ""),
+      // An escaping workspace symlink that loops back through an external alias must not map into baseline.
+      piRead(join(roots.workspace.path, ".agents/skills/aw-deploy/ws-alias/.agents/skills/other/SKILL.md"), ""),
+    ],
+    roots,
+  );
+
+  assert.deepEqual(consultations, [
+    { name: "deploy-runbook", fromDirectory: false },
+    { name: "loop-a", fromDirectory: true },
+    { name: "other", fromDirectory: true },
+  ]);
+});
+
+test("whitespace-only skill names and frontmatter names are ignored", async (t) => {
+  const dirs = await runRoots(t);
+  const roots = await sources(dirs);
+
+  const consultations = await skillConsultations(
+    [skillTool("   "), piRead(join(dirs.root, "home/skills/fallback-dir/SKILL.md"), "---\nname: '   '\n---\n")],
+    roots,
+  );
+
+  assert.deepEqual(consultations, [{ name: "fallback-dir", fromDirectory: true }]);
+});
+
 test("a read outside the workspace is named from its text, then from its parent directory", async (t) => {
   const dirs = await runRoots(t);
   const home = join(dirs.root, "home", "skills");

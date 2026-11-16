@@ -1,8 +1,8 @@
 import { realpath } from "node:fs/promises";
-import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { parse } from "yaml";
 import type { TraceEntry } from "./registry.ts";
-import { isMissing, isWithin, readRunFile, type RunRoot } from "./workspace.ts";
+import { readRunFile, type RunRoot } from "./workspace.ts";
 
 /** The file every harness's skill loader reads when it consults a skill's body. */
 const SKILL_FILE = "SKILL.md";
@@ -87,14 +87,8 @@ function readTarget(entry: ToolEntry): string | undefined {
 
 /** The frontmatter name of the same file in the baseline, when the read target is in the workspace. */
 async function baselineName(sources: SkillSources, target: string): Promise<string | undefined> {
-  let path: string;
-  if (isAbsolute(target)) {
-    const canonical = await canonicalPath(target);
-    if (!isWithin(sources.workspace.path, canonical)) return undefined;
-    path = relative(sources.workspace.path, canonical);
-  } else {
-    path = target;
-  }
+  const path = isAbsolute(target) ? await relativeWithinWorkspace(sources.workspace.path, target) : target;
+  if (path === undefined) return undefined;
   try {
     return frontmatterName((await readRunFile(sources.baseline, path)).toString("utf8"));
   } catch {
@@ -105,24 +99,30 @@ async function baselineName(sources: SkillSources, target: string): Promise<stri
 }
 
 /**
- * The canonical form of a path, resolving symlinks so `/var/…` and `/private/var/…` compare
- * equal. A path whose file was deleted during the run still resolves through its nearest
- * existing ancestor.
+ * Strip the outermost workspace root prefix from an absolute trace path (`/var/…` vs
+ * `/private/var/…`, or a symlinked temp root) without following agent-writable symlinks inside
+ * the live workspace. Walking from `/` downward finds the host's workspace root before entering
+ * any workspace child.
  */
-async function canonicalPath(path: string): Promise<string> {
-  const missing: string[] = [];
-  let probe = resolve(path);
-  while (true) {
+async function relativeWithinWorkspace(workspacePath: string, target: string): Promise<string | undefined> {
+  const segments = resolve(target).split("/").filter(Boolean);
+  let probe = "/";
+  for (const [index, segment] of segments.entries()) {
+    probe = join(probe, segment);
+    const rest = segments.slice(index + 1);
+    if (probe === workspacePath) {
+      return rest.length === 0 ? undefined : join(...rest);
+    }
     try {
-      return join(await realpath(probe), ...missing);
-    } catch (error) {
-      if (!isMissing(error)) throw error;
-      const parent = dirname(probe);
-      if (parent === probe) return resolve(path);
-      missing.unshift(basename(probe));
-      probe = parent;
+      if ((await realpath(probe)) === workspacePath) {
+        return rest.length === 0 ? undefined : join(...rest);
+      }
+    } catch {
+      // An unreadable or missing prefix outside the workspace means this path cannot enter it.
+      return undefined;
     }
   }
+  return undefined;
 }
 
 /** The text a call returned, from its content blocks or otherwise its raw output. */
@@ -167,12 +167,13 @@ function frontmatterName(text: string | undefined): string | undefined {
     return undefined;
   }
   if (typeof frontmatter !== "object" || frontmatter === null) return undefined;
-  const name = (frontmatter as Record<string, unknown>).name;
-  return typeof name === "string" && name.length > 0 ? name : undefined;
+  return stringField(frontmatter, "name");
 }
 
 function stringField(value: unknown, key: string): string | undefined {
   if (typeof value !== "object" || value === null) return undefined;
   const field = (value as Record<string, unknown>)[key];
-  return typeof field === "string" && field.length > 0 ? field : undefined;
+  if (typeof field !== "string") return undefined;
+  const trimmed = field.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
 }
