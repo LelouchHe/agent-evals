@@ -58,6 +58,8 @@ my-case/
 
 `fixture` is the base environment. A case's `files` entry places a file or directory at a workspace-relative destination, for example `.agents/skills/deploy-runbook: skill` for Pi's project-level discovery path; the engine copies and assigns no meaning to the destination. Placed files are part of the baseline that `changed: false` compares against, so a case may replace a fixture file rather than duplicate the whole fixture.
 
+Because placement copies, a case that needs a whole skill package must name its runtime files and directories itself: a body that requires `references/` is incomplete when only `SKILL.md` is placed, and placing the skill directory as a tree would expose the `evals/` it may contain. A read-only mount that removes that enumeration is [pending](roadmap.md#open-questions), not available today.
+
 Add a fixture directory only when initial files are needed. Do not populate an intentionally empty workspace with placeholder files or require a setup/check script for every case. Dedicated setup/custom-check assets may be useful authoring resources, but M1 does not provide generic setup-script or arbitrary checker-script YAML fields.
 
 Use deterministic authored data or explicit preparation instead of asking another model to improvise the environment. Extract shared assets only after actual reuse; share definitions and initial inputs, not mutable per-run state. Keep results separate and never rewrite the source fixture during evaluation.
