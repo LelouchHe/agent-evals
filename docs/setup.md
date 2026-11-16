@@ -53,9 +53,15 @@ Lookup commands execute as trusted operator code from the invocation directory, 
 
 ## Prepare ACP Harnesses
 
-The generic [`acp` runner](configuration.md#acp-runner-type-acp) does not touch your everyday `HOME` or global tool installations. Each harness under [`examples/agents/`](../examples/agents/) pairs its agent configuration (`<name>.yml`), evaluation settings (`<name>-settings.json`) and preparation script (`<name>-setup.sh`).
+The generic [`acp` runner](configuration.md#acp-runner-type-acp) does not touch your everyday `HOME` or global tool installations, and **imposes no fixed directory layout, `.local/bin` convention or harness list**. Its only contract ([`AgentConfig`](configuration.md#acp-preparation-helpers)) is:
 
-Run the setup scripts for the harnesses you want to evaluate (choosing any directory outside the repository):
+- **`home.deps`** — any self-contained directory of real subdirectories and regular files (or symlinks to regular files; directory symlinks and special files are rejected), mirrored as read-only file symlinks into the run's temporary `HOME`;
+- **`home.login`** (optional) — any non-overlapping directory of regular files copied into the run's `HOME` (not colliding with `deps`), with modified originals copied back after the sandbox stops;
+- **`home.path`** and **`acpCommand`** — whatever `HOME`-relative command directories and entry-point argv match what you put in `deps` (or in an inline `runner.agent` object).
+
+The files under [`examples/agents/`](../examples/agents/) — `<name>.yml`, `<name>-settings.json` and `<name>-setup.sh` — are **reference examples** that happen to use `deps/` + `login/` and `.local/bin`; any other ACP-compatible harness or layout that satisfies the contract above works identically without changing `agent-evals`.
+
+To use the provided examples as-is, run the setup scripts for the harnesses you want to evaluate (choosing any directory outside the repository):
 
 ```sh
 ./examples/agents/pi-setup.sh ~/agent-evals-home/pi
@@ -63,10 +69,7 @@ Run the setup scripts for the harnesses you want to evaluate (choosing any direc
 ./examples/agents/copilot-setup.sh ~/agent-evals-home/copilot
 ```
 
-Each script populates two sibling subdirectories under its target path and prints the `*_DEPS` / `*_LOGIN` lines for `.env`:
-
-- **`deps/`** — runnable software and evaluation-specific user settings, laid out like `HOME`. Recreated as directories with read-only file symlinks inside each run's temporary `HOME` (directory symlinks and special files are unsupported).
-- **`login/`** — evaluation-owned credentials and state files at `HOME`-relative paths, separate from everyday sessions. Copied into each run's `HOME`, with modified originals copied back after the sandbox stops.
+Each example script populates `deps/` and `login/` under its target path and prints the `*_DEPS` / `*_LOGIN` lines for `.env`:
 
 | Harness                                                           | Setup script & overrides                                                                                                                                                                                | Settings file copied into `deps/`                                                                                                             | Authentication                                                                                                                                                                 |
 | ----------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
