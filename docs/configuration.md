@@ -45,30 +45,7 @@ login:
 
 The ACP implementation declares one strict Zod schema; unknown fields, invalid argv and unsafe HOME-relative paths are errors. Standalone files use the same YAML restrictions and [placeholders](#placeholders) as case parameters, with `${HOME}` and `${TMPDIR}` naming the command's own directories. Directory paths resolve from the agent file; `.env` remains rooted at the invocation directory. The [ACP runner](#acp-runner-type-acp) takes the same object inline or by path.
 
-The process sees only `HOME` (the assembled HOME), `TMPDIR` (the command's temporary directory), `PATH` (`home.path` entries, then `/usr/bin:/bin:/usr/sbin:/sbin`), `TERM` when the invoking terminal sets it, and the declared `environment`. Nothing else is inherited from the operator. A harness that needs a secret or its own temporary-directory variable declares it, for example the [Claude example](../examples/agents/claude.yml):
-
-```yaml
-environment:
-  CLAUDE_CODE_OAUTH_TOKEN: ${env:CLAUDE_OAUTH_TOKEN}
-  CLAUDE_CODE_TMPDIR: ${TMPDIR}
-```
-
-### Claude Code Token
-
-Claude runs on the operator's subscription with a [`claude setup-token`](https://code.claude.com/docs/en/authentication#generate-a-long-lived-token) token, not the `login` helper. The token is valid for one year and never refreshed, so idle periods and concurrent runs do not invalidate it. It requires a Pro, Max, Ultra, Team or Enterprise plan and can only make model requests, so claude.ai connectors stay out of the run. Create it once and keep it in the keychain:
-
-```sh
-# Opens the browser authorization and prints the token; nothing is saved.
-$CLAUDE_DEPS/.local/bin/claude setup-token
-# -w last prompts for the token, keeping it out of shell history; -U replaces an old one.
-security add-generic-password -U -a "$USER" -s claude-oauth-token -w
-```
-
-```dotenv
-CLAUDE_OAUTH_TOKEN="!security find-generic-password -w -s claude-oauth-token"
-```
-
-When it expires, runs fail with an authentication error; generate a new token and store it the same way. The agent can read the token inside the sandbox, as with any run credential. Heavy automated evaluation should use a Console API key instead (`ANTHROPIC_API_KEY`).
+The process sees only `HOME` (the assembled HOME), `TMPDIR` (the command's temporary directory), `PATH` (`home.path` entries, then `/usr/bin:/bin:/usr/sbin:/sbin`), `TERM` when the invoking terminal sets it, and the declared `environment`. Nothing else is inherited from the operator. A harness that needs a secret or its own temporary-directory variable declares it in `environment`; see [Setup](setup.md#prepare-acp-harnesses) for step-by-step Pi, Claude Code and Copilot CLI preparation.
 
 Each command builds a fresh HOME: directories from `deps` are real and their files are read-only links; login files are copied, not linked. Dependencies must be self-contained (directory symlinks and special files are unsupported); only declared software and system directories are readable. The operator's ambient PATH, HOME and credentials are not inherited. Keep login directories evaluation-owned, separate from everyday credentials.
 
@@ -137,7 +114,7 @@ Unknown common fields, invalid shapes and duplicate YAML keys are errors. There 
 
 Anchor declarations, alias nodes and the scalar mapping key `<<` are rejected at every depth, including quoted `<<` keys. Parser warnings, including unknown tags such as `!include`, are errors. Ordinary string values containing `&`, `*`, `<<` or tag-like text remain data; built-in YAML tags that parse without warnings are not categorically banned.
 
-Authoring resources are relative to the YAML file; checker targets are relative to the evaluated workspace. Neither is silently based on the engine's working directory. Credentials are separate runtime inputs from the invocation directory; see [Credentials](../README.md#credentials).
+Authoring resources are relative to the YAML file; checker targets are relative to the evaluated workspace. Neither is silently based on the engine's working directory. Credentials are separate runtime inputs from the invocation directory; see [Setup](setup.md#credentials-and-env).
 
 ### Fixture and Files
 
@@ -174,12 +151,12 @@ cache: ${TMPDIR}/cache # a built-in variable
 note: write $${env:X} # $${ is a literal ${
 ```
 
-- `${env:NAME}` reads `NAME` from the invocation `.env` ([Credentials](../README.md#credentials)). `${NAME}` reads a built-in variable: `HOME` and `TMPDIR` are the run's HOME and temporary directory, the same directories the runner gives its process; a preparation helper uses its own. Other sources and names are errors; nothing falls back to the operator's environment.
+- `${env:NAME}` reads `NAME` from the invocation `.env` ([Setup](setup.md#credentials-and-env)). `${NAME}` reads a built-in variable: `HOME` and `TMPDIR` are the run's HOME and temporary directory, the same directories the runner gives its process; a preparation helper uses its own. Other sources and names are errors; nothing falls back to the operator's environment.
 - Placeholders apply to every string in the selected runner/checker parameters, nested objects and arrays included, and in standalone agent files—not keys, `$type` or Case-level fields. YAML quoting does not change them.
 - The engine chooses the run directories' paths first, substitutes, applies the implementation schema, and only then creates the directories. Substituted text is not scanned again and is not converted to numbers or booleans. Malformed placeholders in the selected case fail at load, also for `view`; a missing `.env` name fails before any run resource exists.
 - `view` and result declarations show placeholders unsubstituted; the declared text itself says which parts are placeholders.
 
-These are value-source rules, not secrecy rules. Implementations decide how values are used and exposed; the engine does not redact based on parameter names or source. File and command behavior is documented in [Credentials](../README.md#credentials).
+These are value-source rules, not secrecy rules. Implementations decide how values are used and exposed; the engine does not redact based on parameter names or source. File and command behavior is documented in [Setup](setup.md#credentials-and-env).
 
 ## Implementation Records
 
@@ -221,7 +198,7 @@ A path-referenced file resolves its own directories from its location and its pl
 Each run assembles the harness home in the run's own HOME exactly as the helpers do, starts `acpCommand` in the workspace under the same sandbox, creates one session, applies `config`, then sends the input as one prompt. `agent-evals config <agent.yml>` lists the offered options. A key matching no option, or a value the agent does not offer, fails the run before prompting; set `model` first because other choices may depend on it. Skills and project settings come from the prepared workspace (`fixture` and `files`), not runner parameters.
 The run completes only when the turn ends with `end_turn`; any other stop reason, an agent exit or a protocol error is an execution error. The runner records a [trace](#inspecting-and-recording); output is the agent's text after its last tool call. Permission requests are approved (`allow_once`, else `allow_always`): the sandbox is the boundary. On completion, timeout or cancellation the whole sandbox is stopped, then changed original login files are copied back. Only the workspace, the run HOME and its temporary directory are writable; deps is read-only, and the baseline, policy and case files are unreadable. With [`mocks`](#mocks), the runner puts the forwarder directory first on the process `PATH` and makes it readable but not writable inside the sandbox.
 
-Example: [`deploy-runbook`](../examples/cases/deploy-runbook/case.yml), whose Pi and Claude cases share one fixture and one [`mocks`](mocks.md) declaration and differ in agent, model and whether `files` places `skill` where that harness discovers it (`.agents/skills/` or `.claude/skills/`).
+Example: [`deploy-runbook`](../examples/cases/deploy-runbook/case.yml), whose Pi, Claude and Copilot cases share one fixture and one [`mocks`](mocks.md) declaration and differ in agent, model and whether `files` places `skill` where that harness discovers it (`.agents/skills/` or `.claude/skills/`).
 
 ### Noop Runner (`$type: noop`)
 

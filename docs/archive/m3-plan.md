@@ -1,6 +1,6 @@
 # M3: Controlled Collaborators
 
-Status: implemented. Mocks and interaction checks moved out of [M2](m2-plan.md) into this milestone so M2 closes cleanly on ACP execution and trace evidence. This milestone covers shell collaborators only; the call checker moved to [M4](m4-plan.md) and MCP collaborators are M7. Delivered: `return`, `run` and `pass` (including the conditional pass marker), ordered per-target rules with argument matching, unmatched-call denial, workspace-script targets, Seatbelt denial of the real binaries a `pass` rule cannot reach, infrastructure faults ending the run as `error`, and `mocks.json`. [Mocks](mocks.md) owns current usage; the decisions below are kept as the design record.
+Status: implemented. Mocks and interaction checks moved out of [M2](m2-plan.md) into this milestone so M2 closes cleanly on ACP execution and trace evidence. This milestone covers shell collaborators only; the call checker moved to [M4](m4-plan.md) and MCP collaborators are M7. Delivered: `return`, `run` and `pass` (including the conditional pass marker), ordered per-target rules with argument matching, unmatched-call denial, workspace-script targets, Seatbelt denial of the real binaries a `pass` rule cannot reach, infrastructure faults ending the run as `error`, and `mocks.json`. [Mocks](../mocks.md) owns current usage; the decisions below are kept as the design record.
 
 ## Scope
 
@@ -8,7 +8,7 @@ Replace or observe shell collaborators at the environment boundary and record ev
 
 1. **Shell collaborators.** Intercept `PATH` programs and workspace scripts through thin forwarders, run mock actions or delegate to the real target, and retain structured interaction records.
 
-Asserting on those records is the [`mock` checker](configuration.md#mock-checker-type-mock) delivered by [M4](m4-plan.md).
+Asserting on those records is the [`mock` checker](../configuration.md#mock-checker-type-mock) delivered by [M4](m4-plan.md).
 
 Not in scope: MCP collaborators, which are milestone M7, with their configuration, input matching and spy behavior still open (see [Open Questions](#open-questions)); harness-internal tools (`Read`, `Edit`, `WebFetch` and similar built-ins), shell builtins (`cd`, `export`), HTTP/network interception, model-provider fault injection, Linux.
 
@@ -64,7 +64,7 @@ Interception relies on command lookup and on nothing else: no hook, injected lib
 
 ### Agreed outer shape
 
-The agreed shape, implemented as written ([current usage](mocks.md)):
+The agreed shape, implemented as written ([current usage](../mocks.md)):
 
 ```yaml
 mocks:
@@ -96,12 +96,12 @@ mocks:
 
 ## Delivered
 
-[Mocks](mocks.md) owns the supported subset, matching grammar, actions, `mocks.json` and limitations; this section records how the delivered pieces fit and what was verified.
+[Mocks](../mocks.md) owns the supported subset, matching grammar, actions, `mocks.json` and limitations; this section records how the delivered pieces fit and what was verified.
 
 - **Engine and runner.** The engine parses `mocks`, compiles the rules, writes the forwarders, runs the host service, matches calls, performs actions, keeps the records and reports faults. The `acp` runner declares `mocks: true`, puts the forwarder directory first on `PATH`, keeps it readable and non-writable, and denies the real binaries of `PATH` targets no rule can pass. The native `pi` runner does not declare mocks, so a case with `mocks` there is a `ConfigError` before any run directory exists.
 - **Lifecycle.** The host starts before the runner (and before the workspace baseline, so workspace forwarders are part of it) and closes after `Runner.stop` resolves, so a call from a process that outlives the turn is still answered and recorded. Run programs are killed with their descendants on timeout, cancellation and teardown.
 - **Socket and fault channels.** The per-run socket lives directly in the temporary directory as `run-<id>.sock`, not beside the run directories: a Unix socket path is limited to about 104 bytes and the run root's own path plus the socket name can exceed it. A forwarder that cannot reach the host writes its target to a run-scratch marker the engine reads at close, which turns a lost call into a run `error`.
-- **Delivered, not planned.** All three actions, ordered rules, the argument grammar, workspace scripts, unmatched-call denial and Seatbelt denial run end to end; the example in [`deploy-runbook`](../examples/cases/deploy-runbook/case.yml) exercises `return`, `run` and `pass` in one case.
+- **Delivered, not planned.** All three actions, ordered rules, the argument grammar, workspace scripts, unmatched-call denial and Seatbelt denial run end to end; the example in [`deploy-runbook`](../../examples/cases/deploy-runbook/case.yml) exercises `return`, `run` and `pass` in one case.
 
 ## Verified Constraints
 

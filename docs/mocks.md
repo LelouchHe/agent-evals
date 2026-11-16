@@ -1,6 +1,6 @@
 # Mocks
 
-A mock is a case-owned substitute for a collaborator at the environment boundary: a case declares it, the run arranges it, and every call that reaches it is recorded. This page owns mock usage — what mocks do, how they relate to checks and the trace, the supported configuration, matching, the three actions, a complete case, `mocks.json`, and current limitations. [M3](m3-plan.md) owns the design decisions; [Configuration Reference](configuration.md) owns the rest of the case format. Recorded calls are asserted by the [`mock` checker](#the-mock-checker); MCP collaborators are M7.
+A mock is a case-owned substitute for a collaborator at the environment boundary: a case declares it, the run arranges it, and every call that reaches it is recorded. This page owns mock usage — what mocks do, how they relate to checks and the trace, the supported configuration, matching, the three actions, a complete case, `mocks.json`, and current limitations. [M3](archive/m3-plan.md) records the historical design decisions; [Configuration Reference](configuration.md) owns the rest of the case format. Recorded calls are asserted by the [`mock` checker](#the-mock-checker); MCP collaborators are M7.
 
 Implemented: shell collaborators — bare `PATH` commands and workspace scripts — with `return`, `run` and `pass`, argument matching and Seatbelt denial, wired by the `acp` runner on macOS.
 

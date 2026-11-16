@@ -1,9 +1,9 @@
 # deps holds Node, @agentclientprotocol/claude-agent-acp and a `claude` link to its
 # bundled binary under .local/bin. Authentication is a `claude setup-token` token
 # (subscription, valid one year, never refreshed), so no credential file is copied in.
-# Steps: docs/configuration.md#claude-code-token.
+# Steps: docs/setup.md#claude-code-claudeyml.
 # Claude Code ignores TMPDIR and otherwise writes to the shared /tmp/claude-<uid>,
-# which the sandbox denies. See docs/m2-plan.md.
+# which the sandbox denies.
 command: [claude]
 acpCommand: [claude-agent-acp]
 environment:

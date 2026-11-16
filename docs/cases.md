@@ -62,7 +62,7 @@ Add a fixture directory only when initial files are needed. Do not populate an i
 
 Use deterministic authored data or explicit preparation instead of asking another model to improvise the environment. Extract shared assets only after actual reuse; share definitions and initial inputs, not mutable per-run state. Keep results separate and never rewrite the source fixture during evaluation.
 
-Expose only the intended task, resources and environment to the agent. Case/check definitions, rubric, reference answers and unrelated operator capabilities should not leak into its workspace. Keep local credentials separate from test data; see [Credentials](../README.md#credentials).
+Expose only the intended task, resources and environment to the agent. Case/check definitions, rubric, reference answers and unrelated operator capabilities should not leak into its workspace. Keep local credentials separate from test data; see [Setup](setup.md#credentials-and-env).
 
 ## Choose Evidence and Checks
 
@@ -70,7 +70,7 @@ Use deterministic checks for exact facts and a judge for qualitative criteria. A
 
 Do not create routing-versus-behavior pipelines. Use the [`trace`](configuration.md#trace-checker-type-trace) checker for skill consultations; tool choices, restraint and result quality remain concerns for checks and evidence as those observations exist: a requested call in the trace does not prove its effect, so restraint is stronger when a mock proves the call never reached the collaborator.
 
-Environment and interaction evidence is stronger than an agent's own account alone. Shell collaborator mocks ([usage](mocks.md), [plan](m3-plan.md)) and their `mock` checker are implemented; broader directions are in [Roadmap](roadmap.md), and none of this is added through ad hoc Case fields.
+Environment and interaction evidence is stronger than an agent's own account alone. Shell collaborator mocks ([usage](mocks.md)) and their `mock` checker are implemented; broader directions are in [Roadmap](roadmap.md), and none of this is added through ad hoc Case fields.
 
 ## Keep Validation Data Honest
 

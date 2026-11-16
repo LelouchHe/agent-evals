@@ -14,7 +14,7 @@ Complete one local evaluation: prepare independent files and harness state, let 
 - One built CLI entry for npm and the installed command, Node `parseArgs` flag parsing, and workers/supervisor/shell assets included in the private tarball. Retained reports default to `.agent-evals/`; extension module directories are repeatable options.
 - Small result records preserve declarations/reference metadata, source/case identity, judgments, diagnostics and cleanup—not expanded config snapshots, resource snapshots or hashes.
 
-[Architecture](architecture.md) owns composition/lifecycle; [Configuration Reference](configuration.md) owns exact formats and parameters; [Roadmap](roadmap.md) owns unimplemented capabilities. Historical intermediate implementation plans and debugging details are recoverable from Git rather than repeated here.
+[Architecture](../architecture.md) owns composition/lifecycle; [Configuration Reference](../configuration.md) owns exact formats and parameters; [Roadmap](../roadmap.md) owns unimplemented capabilities. Historical intermediate implementation plans and debugging details are recoverable from Git rather than repeated here.
 
 ## Acceptance
 
@@ -27,7 +27,7 @@ Complete one local evaluation: prepare independent files and harness state, let 
 - [x] Run both single-file example cases once with approved live models at `8fd2778`.
 - [x] Verify and independently review the invocation-`.env` source, lazy command values, per-run caching, parameter-value lookup and unexpanded configuration records, with direct-command termination and test-child cancellation covered.
 
-`$env` reads only the invocation `.env`, without ambient fallback. It supplies ordinary parameter values, not a framework-level secrecy annotation. The agreed behavior is specified once in [Credentials](../README.md#credentials). Credential lookup commands are trusted operator code, managed as direct commands rather than a process-group workload. Their descendants are operator-owned; evaluated Pi process cleanup remains a separate guarantee.
+`$env` reads only the invocation `.env`, without ambient fallback. It supplies ordinary parameter values, not a framework-level secrecy annotation. The agreed behavior is specified once in [Credentials](../setup.md#credentials-and-env). Credential lookup commands are trusted operator code, managed as direct commands rather than a process-group workload. Their descendants are operator-owned; evaluated Pi process cleanup remains a separate guarantee.
 
 ## Verification
 
@@ -74,4 +74,4 @@ This proves that revision's integration, not skill effectiveness, later credenti
 - Sandboxed DNS works only because the run root sits under `/var/folders`: Node's resolver needs read access to the `/var` symlink, which the policy grants implicitly through that path's metadata. A run root elsewhere loses DNS. Network access is also unrestricted while the run needs the provider.
 - Live networking was tested only with the earlier OpenCode Go example. Current `apiKey` transport requires `provider/model` and a compatible Pi build; provider availability, key validity and business failures are handled by the adapter/harness, not framework schema policy.
 - Dynamic extensions are trusted code. Runtime capability checks do not statically prove an external module's schema/factory consistency.
-- Checkout build concurrency is restricted as documented in [Development](../README.md#development).
+- Checkout build concurrency is restricted as documented in [Development](../architecture.md#development-and-build).

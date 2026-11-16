@@ -2,7 +2,7 @@
 
 Status: delivered. [M3](m3-plan.md) delivers shell collaborator mocks and writes their interaction records. This milestone closes the single-run loop: every evidence source gets a deterministic check, a run records what it cost, and a case can be shown not to pass vacuously.
 
-Implemented as specified below: [`mock`](../src/checkers/mock/index.ts) and [`shell`](../src/checkers/shell/index.ts) checkers, the engine's [check sandbox](../src/engine/check-sandbox.ts), `runner.usage` in `result.json`, and the [`noop`](../src/runners/noop/index.ts) runner. [Configuration](configuration.md) and [Mocks](mocks.md) own the shipped parameter and record details.
+Implemented as specified below: [`mock`](../../src/checkers/mock/index.ts) and [`shell`](../../src/checkers/shell/index.ts) checkers, the engine's [check sandbox](../../src/engine/check-sandbox.ts), `runner.usage` in `result.json`, and the [`noop`](../../src/runners/noop/index.ts) runner. [Configuration](../configuration.md) and [Mocks](../mocks.md) own the shipped parameter and record details.
 
 ## Scope
 
@@ -41,10 +41,10 @@ checks:
     times: 0
 ```
 
-| Field   | Meaning                                                                                                                                                                                                                                                 | Default       |
-| ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------- |
-| `shell` | A list. Position 0 is a declared `mocks.shell` target, written as a literal; `./scripts/x` and `scripts/x` name the same target. The remaining elements are a mock rule's [`args`](mocks.md#matching): a positional prefix and one trailing option map. | Required      |
-| `times` | A non-negative integer: the exact number of matching calls. `0` asserts that no such call was made.                                                                                                                                                     | At least once |
+| Field   | Meaning                                                                                                                                                                                                                                                    | Default       |
+| ------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------- |
+| `shell` | A list. Position 0 is a declared `mocks.shell` target, written as a literal; `./scripts/x` and `scripts/x` name the same target. The remaining elements are a mock rule's [`args`](../mocks.md#matching): a positional prefix and one trailing option map. | Required      |
+| `times` | A non-negative integer: the exact number of matching calls. `0` asserts that no such call was made.                                                                                                                                                        | At least once |
 
 - **One result per check.** `pass` or `fail`; a failure's reason gives the number of matching calls and their arguments, truncated.
 - **It counts calls that reached the mock, not calls that succeeded.** A record is written before a rule is chosen, so a refused or unmatched call counts. `times: 0` means the call was not even attempted through the mock.
@@ -92,7 +92,7 @@ Running a program at check time is an engine capability, not a property of one c
 - **Why reads are open at check time.** The agent's sandbox hides the case files, the baseline and the operator's files so that nothing reaches the agent, and at check time the agent has stopped. What still matters is that the program cannot change the host or the evidence and cannot send anything out, and the write and network limits give that.
 - **Retained output can disclose what was read.** A checker that keeps a program's output, as `shell` does in a failure's reason, lets a hostile workspace print any file the operator can read into `result.json`, which stays on the operator's machine.
 - **`judge` keeps its own sandbox.** It runs no workspace code and needs the network to reach its model, so it does not use the launcher.
-- **To be replaced in M6.** The open-read policy is fixed in code and invisible in the case, and no `$sandbox` key exists, so that M4 leaves no syntax behind. [M6](roadmap.md#open-questions) redesigns sandbox configuration as a whole and replaces this fixed policy with a declared one.
+- **To be replaced in M6.** The open-read policy is fixed in code and invisible in the case, and no `$sandbox` key exists, so that M4 leaves no syntax behind. [M6](../roadmap.md#open-questions) redesigns sandbox configuration as a whole and replaces this fixed policy with a declared one.
 
 ## Usage in the Result
 
@@ -128,7 +128,7 @@ It starts no harness and no sandbox and completes at once with no final text and
 
 ## End-to-End Example
 
-[`deploy-runbook`](../examples/cases/deploy-runbook/case.yml) gains a refused `make` (`pass: false`), a `mock` check with `times: 0` beside the trace judge that asks the same question (so the deterministic and the judged answer to "no fix command was run" can be compared), and a `baseline` case on the `noop` runner.
+[`deploy-runbook`](../../examples/cases/deploy-runbook/case.yml) gains a refused `make` (`pass: false`), a `mock` check with `times: 0` beside the trace judge that asks the same question (so the deterministic and the judged answer to "no fix command was run" can be compared), and a `baseline` case on the `noop` runner.
 
 It also exercises both kinds of `shell` check:
 
@@ -151,7 +151,7 @@ The `shell` sandbox against real toolchains (2026-11-15), through `/usr/bin/sand
 - **The network denial covers loopback and Unix sockets.** With no `network` clause, `listen` on `127.0.0.1:0`, `0.0.0.0:0` and `::1:0` all failed with `EPERM`; so did `connect` to a host process's loopback port, to `1.1.1.1:443`, and to an `AF_UNIX` server, whose own `listen` in the private `TMPDIR` failed with `EPERM` first. Name resolution still works from `/etc/hosts` (`localhost` → `::1`) and fails `ENOTFOUND` for external names.
 - **A loopback exception is not a loopback exception.** Seatbelt parses only `localhost` or `*` as an `ip` filter host and rejects `127.0.0.1` with "host must be * or localhost" (exit 65). Adding `(allow network-inbound (local ip "localhost:*"))` with its `remote` counterpart made loopback listen and connect pass and kept `1.1.1.1:443` at `EPERM`, but also let the sandbox listen on `0.0.0.0:45999`.
 
-So a check suite that binds an ephemeral port or uses a Unix socket for IPC fails at check time, as does anything that activates credentials kept in the operator's `HOME`. Nothing measured contradicts the fixed policy; whether `shell` ever admits loopback is part of the sandbox configuration [M6](roadmap.md#open-questions) designs.
+So a check suite that binds an ephemeral port or uses a Unix socket for IPC fails at check time, as does anything that activates credentials kept in the operator's `HOME`. Nothing measured contradicts the fixed policy; whether `shell` ever admits loopback is part of the sandbox configuration [M6](../roadmap.md#open-questions) designs.
 
 ## Deferred
 
