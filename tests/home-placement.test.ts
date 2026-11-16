@@ -121,40 +121,38 @@ test("a case files entry may place a whole HOME tree, and honours .agentevalsign
 });
 
 test("a case may not replace login state, and an agent file may not collide with it", async (t) => {
-  await runHomeCase(t, async (root) => {
-    const token = await source(root, "token", "replacement\n");
-    const fixture = await makeAcpAgent(t, "success");
-    await writeFile(
-      join(fixture.root, "case.yml"),
-      stringify({
-        input: "task",
-        files: { "~/.auth/token": `${token}/today.md` },
-        checks: [{ $type: "file", path: "x", exists: false }],
-        runner: { $type: "acp", agent: "agent.yml" },
-      }),
-    );
-    await assert.rejects(
-      () => runCase(join(fixture.root, "case.yml"), fixture.root, "login"),
-      /would replace login state at \.auth\/token/,
-    );
+  const fixture = await makeAcpAgent(t, "success");
+  await mkdir(join(fixture.login, ".auth"), { recursive: true });
+  await writeFile(join(fixture.login, ".auth/token"), "original-token");
+  const forged = await source(fixture.root, "token", "replacement\n");
+  const casePath = join(fixture.root, "case.yml");
+  await writeFile(
+    casePath,
+    stringify({
+      input: "task",
+      files: { "~/.auth/token": `${forged}/today.md` },
+      checks: [{ $type: "file", path: "x", exists: false }],
+      runner: { $type: "acp", agent: "agent.yml" },
+    }),
+  );
+  await assert.rejects(() => runCase(casePath, fixture.root, "login"), /collides with login state at \.auth\/token/);
 
-    // The agent file's own files may not collide with its declared login files either.
-    const agentPath = join(fixture.root, "collide.yml");
-    await writeFile(agentPath, stringify({ ...fixture.config, files: { "~/.auth/token": `${token}/today.md` } }));
-    await writeFile(
-      join(fixture.root, "case.yml"),
-      stringify({
-        input: "task",
-        checks: [{ $type: "file", path: "x", exists: false }],
-        runner: { $type: "acp", agent: "collide.yml" },
-      }),
-    );
-    await assert.rejects(
-      () => runCase(join(fixture.root, "case.yml"), fixture.root, "agent-login"),
-      (error: unknown) => error instanceof ConfigError && /collides with login file/.test(error.message),
-    );
-    return { checks: [{ $type: "file", path: "answer.txt", exists: false }] };
-  });
+  // The agent file's own files may not collide with its declared login files either.
+  const agentPath = join(fixture.root, "collide.yml");
+  await writeFile(agentPath, stringify({ ...fixture.config, files: { "~/.auth/token": `${forged}/today.md` } }));
+  await writeFile(
+    casePath,
+    stringify({
+      input: "task",
+      checks: [{ $type: "file", path: "x", exists: false }],
+      runner: { $type: "acp", agent: "collide.yml" },
+    }),
+  );
+  await assert.rejects(
+    () => runCase(casePath, fixture.root, "agent-login"),
+    (error: unknown) => error instanceof ConfigError && /collides with login file/.test(error.message),
+  );
+  assert.equal(await readFile(join(fixture.login, ".auth/token"), "utf8"), "original-token");
 });
 
 test("two case entries and a file-versus-directory conflict fail before the harness runs", async (t) => {

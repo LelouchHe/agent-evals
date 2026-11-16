@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto";
-import { cp, mkdir, realpath, rm, stat } from "node:fs/promises";
+import { cp, lstat, mkdir, realpath, rm, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import {
@@ -35,6 +35,7 @@ import { createEnvSource, type EnvSource } from "./env-source.ts";
 import {
   authoringCopyFilter,
   copyPlacement,
+  fileIdentity,
   homeEntries,
   placeCaseFiles,
   stageEntries,
@@ -45,7 +46,7 @@ import { createCheckSandbox } from "./check-sandbox.ts";
 import { parseImplementationParams } from "./params.ts";
 import { truncate, truncateNullable } from "./truncate.ts";
 import { substituteValues, type ValueSource } from "./values.ts";
-import { openRunRoot, type RunRoot } from "./workspace.ts";
+import { isMissing, openRunRoot, type RunRoot } from "./workspace.ts";
 
 const DEFAULT_TIMEOUT_MS = 300_000;
 const CHECK_ABORT_GRACE_MS = 12_000;
@@ -231,6 +232,17 @@ export async function executeEvaluation(prepared: PreparedEvaluation): Promise<E
     };
     runner = registered.runner;
     const protectedPaths = (await runner.prepareHome?.(context)) ?? [];
+    // Login state is protected by the file the filesystem actually holds at each declared
+    // path, so a differently-cased or otherwise normalised spelling cannot alias it.
+    const protectedIdentities: string[] = [];
+    for (const path of protectedPaths) {
+      try {
+        const info = await lstat(join(homeDir, path), { bigint: true });
+        if (info.isFile()) protectedIdentities.push(fileIdentity(info));
+      } catch (error) {
+        if (!isMissing(error)) throw error;
+      }
+    }
     const homePlacements = homeEntries(request.case.config.files);
     const homeStaging = join(engineDir, "files", "home");
     if (homePlacements.length > 0) {
@@ -239,7 +251,7 @@ export async function executeEvaluation(prepared: PreparedEvaluation): Promise<E
         await copyPlacement(homeStaging, homeDir, {
           label: "files",
           overwrite: true,
-          protect: protectedPaths,
+          protect: { paths: protectedPaths, identities: protectedIdentities },
           signal: abort.signal,
         });
         await cp(homeStaging, baselineHomeDir, { recursive: true, preserveTimestamps: true });
@@ -459,7 +471,7 @@ async function prepareImplementations(
   for (const entry of homeEntries(request.case.config.files)) {
     for (const file of runner.homeFiles ?? []) {
       if (entry.target === file || entry.target.startsWith(`${file}/`)) {
-        throw new ConfigError(`case files destination "${entry.destination}" would replace login state at ${file}`);
+        throw new ConfigError(`case files place ${entry.target}, which collides with login state at ${file}`);
       }
     }
   }

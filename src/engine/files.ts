@@ -94,9 +94,17 @@ export async function stageEntries(
   }
 }
 
+/** Files a placement may never create or replace: by declared path and by file identity. */
+export interface PlacementProtection {
+  /** Target-relative paths, compared as written (login files as declared). */
+  readonly paths?: readonly string[];
+  /** File identities (`dev:ino`), so an alias in any spelling cannot be written through. */
+  readonly identities?: readonly string[];
+}
+
 /**
  * Copy a staged placement tree onto its target. `overwrite` decides file-on-file replacement;
- * `protect` names target-relative files (login state) that no copy may place over.
+ * `protect` names the login state no copy may place over.
  */
 export async function copyPlacement(
   stagingDir: string,
@@ -104,7 +112,7 @@ export async function copyPlacement(
   options: {
     readonly label: string;
     readonly overwrite: boolean;
-    readonly protect?: readonly string[];
+    readonly protect?: PlacementProtection;
     readonly signal?: AbortSignal;
   },
 ): Promise<void> {
@@ -120,18 +128,42 @@ export async function copyPlacement(
   );
 }
 
+/** The identity a filesystem uses for one file, independent of the spelling that reached it. */
+export function fileIdentity(info: { readonly dev: bigint; readonly ino: bigint }): string {
+  return `${info.dev}:${info.ino}`;
+}
+
 /** Target-relative files a placement may never create or replace. */
 class ProtectedPaths {
   readonly #paths: readonly string[];
+  readonly #identities: ReadonlySet<string>;
 
-  constructor(paths: readonly string[]) {
-    this.#paths = paths.map((path) => normalizeRelative(path));
+  constructor(protection: PlacementProtection) {
+    this.#paths = (protection.paths ?? []).map((path) => normalizeRelative(path));
+    this.#identities = new Set(protection.identities ?? []);
   }
 
-  /** A protected file at `destination`, or a path beneath one, which cannot be written. */
-  blocks(destination: string): boolean {
+  /**
+   * A protected file at `destination`, or a path beneath one, which cannot be written. The
+   * declared spelling is not enough: the filesystem decides whether the target is the login
+   * file, so the existing target's identity is compared too. A case-insensitive or otherwise
+   * normalising filesystem reports the login file's identity for another spelling.
+   */
+  async blocks(target: string, destination: string): Promise<boolean> {
     const normalized = normalizeRelative(destination);
-    return this.#paths.some((path) => path === normalized || normalized.startsWith(`${path}/`));
+    if (this.#paths.some((path) => path === normalized || normalized.startsWith(`${path}/`))) {
+      return true;
+    }
+    if (this.#identities.size === 0) {
+      return false;
+    }
+    try {
+      const info = await lstat(target, { bigint: true });
+      return this.#identities.has(fileIdentity(info));
+    } catch {
+      // Nothing exists at the target spelling, so it cannot alias an existing login file.
+      return false;
+    }
   }
 }
 
@@ -260,16 +292,17 @@ interface Traversal {
  * entry-versus-entry overlap. Each directory may declare `.agentevalsignore`,
  * which applies as traversal reaches it, so a directly named source is placed.
  */
-async function copyInto(
+/**
+ * Classify one authoring entry against the ignore rules. `ignored` is decided before a special
+ * file is rejected, so an excluded special file is silently skipped rather than an error.
+ */
+async function classify(
   source: string,
-  target: string,
   destination: string,
   label: string,
-  overwrite: boolean,
   signal: AbortSignal | undefined,
   traversal: Traversal,
-  protect?: ProtectedPaths,
-): Promise<void> {
+): Promise<{ readonly kind: "file" | "directory" | "other" } | { readonly kind: "ignored" }> {
   signal?.throwIfAborted();
   let info;
   try {
@@ -296,15 +329,32 @@ async function copyInto(
   }
 
   signal?.throwIfAborted();
-  // Classifying first is what lets a directory-only pattern match a directory entry, and what
-  // keeps an excluded special file silently skipped rather than an error.
+  // Classifying first is what lets a directory-only pattern match a directory entry.
   if (await isIgnored(traversal.tree, traversal.root, traversal.segments, kind === "directory")) {
+    return { kind: "ignored" };
+  }
+  return { kind };
+}
+
+async function copyInto(
+  source: string,
+  target: string,
+  destination: string,
+  label: string,
+  overwrite: boolean,
+  signal: AbortSignal | undefined,
+  traversal: Traversal,
+  protect?: ProtectedPaths,
+): Promise<void> {
+  const classified = await classify(source, destination, label, signal, traversal);
+  if (classified.kind === "ignored") {
     return;
   }
+  const { kind } = classified;
   if (kind === "other") {
     throw new Error(`${label} source for ${destination} must be a regular file or directory`);
   }
-  if (protect?.blocks(destination) === true) {
+  if (protect !== undefined && (await protect.blocks(target, destination))) {
     throw new Error(`${label} may not replace ${destination}, which is login state`);
   }
   await expectTarget(target, destination, label, kind, overwrite);
