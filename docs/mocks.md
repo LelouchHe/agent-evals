@@ -1,6 +1,6 @@
 # Mocks
 
-A mock is a case-owned substitute for a collaborator at the environment boundary: a case declares it, the run arranges it, and every call that reaches it is recorded. This page owns mock usage — what mocks do, how they relate to checks and the trace, the supported configuration, matching, the three actions, a complete case, `mocks.json`, and current limitations. [M3](m3-plan.md) owns the design decisions; [Configuration Reference](configuration.md) owns the rest of the case format. Recorded calls are asserted by the [`mock` checker](#the-mock-checker); MCP collaborators are M5.
+A mock is a case-owned substitute for a collaborator at the environment boundary: a case declares it, the run arranges it, and every call that reaches it is recorded. This page owns mock usage — what mocks do, how they relate to checks and the trace, the supported configuration, matching, the three actions, a complete case, `mocks.json`, and current limitations. [M3](m3-plan.md) owns the design decisions; [Configuration Reference](configuration.md) owns the rest of the case format. Recorded calls are asserted by the [`mock` checker](#the-mock-checker); MCP collaborators are M7.
 
 Implemented: shell collaborators — bare `PATH` commands and workspace scripts — with `return`, `run` and `pass`, argument matching and Seatbelt denial, wired by the `acp` runner on macOS.
 
@@ -276,6 +276,6 @@ The repository's [`deploy-runbook`](../examples/cases/deploy-runbook/case.yml) e
 - **Only bare names and workspace files.** Shell builtins, harness-internal tools, `PATH` entries added by the agent, and a script executed from outside its declared workspace path are not covered.
 - **Standard input is not forwarded** to `return` or `run`; a mock downstream of a pipe answers without seeing the piped data. `pass` inherits it.
 - **Output is returned after the call completes**, not streamed; the original interleaving of stdout and stderr is lost.
-- **MCP collaborators (M5) are unavailable.**
+- **MCP collaborators (M7) are unavailable.**
 - **Records cannot be read, altered or erased from inside the sandbox**, but any process there can cause one by calling a mocked command, or by writing to the forwarder's socket directly. Records prove that a call was made, not that only the harness made it.
 - **Transport-fault reporting is ordinary, not tamper-proof.** The marker a lost connection leaves in the run scratch directory is in agent-writable space, so a process that deliberately clears it hides the fault from the run status; `trace.json` is there for investigation, though it does not necessarily record every indirect operation.

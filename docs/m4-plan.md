@@ -11,7 +11,7 @@ Implemented as specified below: [`mock`](../src/checkers/mock/checker.ts) and [`
 3. **Usage in the result.** The run's duration, context tokens, cost and total tokens, as far as the harness reports them.
 4. **The `noop` runner.** A runner that does nothing, as the baseline that shows which checks need the agent.
 
-Not in scope: running several cases or repetitions and summarizing them; assertions on usage; multi-turn input; MCP collaborators, which are milestone M5 (their configuration, input matching and spy behavior stay open in [M3's open questions](m3-plan.md#open-questions)); harness-internal tools, shell builtins, HTTP/network interception, model-provider fault injection, Linux.
+Not in scope: running several cases or repetitions and summarizing them; assertions on usage; multi-turn input; MCP collaborators, which are milestone M7 (their configuration, input matching and spy behavior stay open in [M3's open questions](m3-plan.md#open-questions)); harness-internal tools, shell builtins, HTTP/network interception, model-provider fault injection, Linux.
 
 ## Decisions
 
@@ -160,7 +160,7 @@ Added only for a real case:
 - **Count ranges** (`min`, `max`). Agent call counts vary between runs, so bounds are brittle; an exact count stays for calls whose repetition is itself the defect.
 - **Order between calls.** Records are already in arrival order; no assertion uses it yet.
 - **More in a record**: working directory, standard input, environment, or which action answered. Each needs a record change.
-- **A `kind` on `MockRecord`.** Decided with M5's MCP records.
+- **A `kind` on `MockRecord`.** Decided with M7's MCP records.
 - **A scalar shorthand** for `shell: [git]`.
 - The argument grammar's M3 gaps: exact argument lists, repeated and combined options, regex flags.
 - **Network access for `shell`.**
