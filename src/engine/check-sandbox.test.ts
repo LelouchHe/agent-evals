@@ -356,6 +356,28 @@ test(
 );
 
 test(
+  "staged check files honour the source directory's .agentevalsignore",
+  {
+    skip: process.platform !== "darwin",
+  },
+  async (t) => {
+    const dirs = await setup(t);
+    await mkdir(join(dirs.authoring, "tree"));
+    await writeFile(join(dirs.authoring, "tree/.agentevalsignore"), "fixtures\n");
+    await writeFile(join(dirs.authoring, "tree/acceptance.txt"), "acceptance\n");
+    await mkdir(join(dirs.authoring, "tree/fixtures"));
+    await writeFile(join(dirs.authoring, "tree/fixtures/answers.txt"), "the answer\n");
+
+    const outcome = await dirs.run(["/bin/sh", "-c", "ls tests; test ! -e tests/fixtures"], {
+      files: { tests: "tree" },
+    });
+    assert.equal(outcome.kind, "exited", outcome.output);
+    assert.equal(outcome.kind === "exited" ? outcome.exitCode : 1, 0, outcome.output);
+    assert.equal(await readFile(join(dirs.workspace, "tests/acceptance.txt"), "utf8"), "acceptance\n");
+  },
+);
+
+test(
   "a destination leaf symlink is replaced inside the sandbox instead of written through",
   {
     skip: process.platform !== "darwin",

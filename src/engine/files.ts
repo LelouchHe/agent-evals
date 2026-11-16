@@ -1,6 +1,6 @@
 import { copyFile, lstat, mkdir, mkdtemp, readdir, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join, relative, resolve, sep } from "node:path";
 import {
   ConfigError,
   errorMessage,
@@ -10,6 +10,7 @@ import {
   workspaceTargetPath,
   type ResolvedCase,
 } from "./config.ts";
+import { IGNORE_FILE_NAME, matchesIgnorePattern, readIgnorePatterns, type IgnorePattern } from "./ignore.ts";
 import { isMissing } from "./workspace.ts";
 
 /**
@@ -118,10 +119,55 @@ export async function stageFiles(
 }
 
 /**
+ * A `cp` filter that applies `.agentevalsignore` to the fixture copy. Patterns are read per
+ * directory and cached, and the ignore file itself is never placed.
+ */
+export function authoringCopyFilter(source: string): (path: string) => Promise<boolean> {
+  const cache = new Map<string, Promise<readonly IgnorePattern[]>>();
+  const patternsFor = (dir: string): Promise<readonly IgnorePattern[]> => {
+    let patterns = cache.get(dir);
+    if (patterns === undefined) {
+      patterns = readIgnorePatterns(dir);
+      cache.set(dir, patterns);
+    }
+    return patterns;
+  };
+  return async (path) => {
+    const segments = relative(source, path)
+      .split(sep)
+      .filter((segment) => segment.length > 0);
+    if (segments.length === 0) {
+      return true;
+    }
+    if (segments[segments.length - 1] === IGNORE_FILE_NAME) {
+      return false;
+    }
+    // Each ancestor directory's patterns govern the path below it, relative to that directory.
+    for (let depth = 0; depth < segments.length; depth += 1) {
+      const patterns = await patternsFor(join(source, ...segments.slice(0, depth)));
+      if (matchesIgnorePattern(patterns, segments.slice(depth))) {
+        return false;
+      }
+    }
+    return true;
+  };
+}
+
+/**
+ * Patterns in force for one directory, with the depth of the directory that declared them so a
+ * pattern is matched against the path relative to its own ignore file.
+ */
+interface IgnoreContext {
+  readonly baseDepth: number;
+  readonly patterns: readonly IgnorePattern[];
+}
+
+/**
  * Copy one authoring file or directory tree onto `target`. A file landing where
  * a directory exists, or the reverse, is an error rather than a replacement;
  * `overwrite` decides only file-on-file, which splits fixture replacement from
- * entry-versus-entry overlap.
+ * entry-versus-entry overlap. Subdirectories may declare `.agentevalsignore`;
+ * it applies as traversal reaches them, so a directly named source is placed.
  */
 async function copyInto(
   source: string,
@@ -130,6 +176,8 @@ async function copyInto(
   label: string,
   overwrite: boolean,
   signal?: AbortSignal,
+  segments: readonly string[] = [],
+  contexts: readonly IgnoreContext[] = [],
 ): Promise<void> {
   signal?.throwIfAborted();
   let info;
@@ -173,10 +221,28 @@ async function copyInto(
   }
   await mkdir(target, { recursive: true });
   signal?.throwIfAborted();
+  const own = await readIgnorePatterns(source);
+  const active = own.length === 0 ? contexts : [...contexts, { baseDepth: segments.length, patterns: own }];
   const entries = await readdir(source);
   signal?.throwIfAborted();
   for (const name of entries) {
-    await copyInto(join(source, name), join(target, name), join(destination, name), label, overwrite, signal);
+    if (name === IGNORE_FILE_NAME) {
+      continue;
+    }
+    const child = [...segments, name];
+    if (active.some((context) => matchesIgnorePattern(context.patterns, child.slice(context.baseDepth)))) {
+      continue;
+    }
+    await copyInto(
+      join(source, name),
+      join(target, name),
+      join(destination, name),
+      label,
+      overwrite,
+      signal,
+      child,
+      active,
+    );
   }
 }
 

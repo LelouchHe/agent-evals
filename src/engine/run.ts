@@ -31,7 +31,7 @@ import {
   type RunnerStatus,
 } from "./results.ts";
 import { createEnvSource, type EnvSource } from "./env-source.ts";
-import { placeCaseFiles, validateCheckFiles } from "./files.ts";
+import { placeCaseFiles, validateCheckFiles, authoringCopyFilter } from "./files.ts";
 import { startMockHost, type MockHost } from "./mocks.ts";
 import { createCheckSandbox } from "./check-sandbox.ts";
 import { parseImplementationParams } from "./params.ts";
@@ -130,7 +130,11 @@ export async function runEvaluation(request: RunRequest): Promise<EvaluationReco
     const fixture = request.case.config.fixture;
     if (fixture !== undefined) {
       const source = resolveAuthoringAsset(request.case.dir, fixture, "case.fixture");
-      await cp(source, workspaceDir, { recursive: true, preserveTimestamps: true });
+      await cp(source, workspaceDir, {
+        recursive: true,
+        preserveTimestamps: true,
+        filter: authoringCopyFilter(source),
+      });
     }
     await placeCaseFiles(request.case, join(root, "files"), workspaceDir);
     const workspaceRoot = await openRunRoot(workspaceDir);

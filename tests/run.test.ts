@@ -46,6 +46,7 @@ async function writeScenario(t: Parameters<typeof makeTempDir>[0], options: Scen
     const fixtureDir = join(directory, "fixture");
     await mkdir(fixtureDir, { recursive: true });
     for (const [name, content] of Object.entries(options.fixtureFiles)) {
+      await mkdir(dirname(join(fixtureDir, name)), { recursive: true });
       await writeFile(join(fixtureDir, name), content);
     }
   }
@@ -199,6 +200,30 @@ test("integration: files entries replace fixture files and belong to the baselin
     "seed.txt": "override/seed.txt",
     ".agents/skills/demo": "skill",
   });
+});
+
+test("integration: the fixture copy leaves out what its .agentevalsignore declares", async (t) => {
+  const runner = await createFakePi(t, "success");
+  const { record, tempParent } = await runScenario(t, {
+    runnerExecutable: runner.executable,
+    fixtureFiles: {
+      ".agentevalsignore": "cases\n\n# the ignore file is metadata, not fixture content\n",
+      "kept.txt": "kept\n",
+      "cases/hidden.txt": "never placed\n",
+    },
+    checks: [
+      { $type: "file", path: "kept.txt", matches: "/^kept\\n?$/" },
+      { $type: "file", path: "cases/hidden.txt", exists: false },
+      { $type: "file", path: ".agentevalsignore", exists: false },
+    ],
+  });
+
+  assert.equal(record.status, "pass", record.error);
+  assert.deepEqual(
+    record.checks.map((check) => check.status),
+    ["pass", "pass", "pass"],
+  );
+  assert.deepEqual(await readdir(tempParent), []);
 });
 
 test("integration: two files entries producing one path fail the run before the runner starts", async (t) => {
