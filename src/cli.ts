@@ -11,6 +11,7 @@ import { ConfigError, errorMessage } from "./engine/config.ts";
 import { addChecker, addRunner, createRegistry, loadTrustedImplementations } from "./engine/registry.ts";
 import { executeEvaluation, prepareEvaluation, type PreparedEvaluation } from "./engine/run.ts";
 import type { EvaluationRecord } from "./engine/results.ts";
+import { describePlacement } from "./engine/placement.ts";
 import { formatResolvedCase } from "./engine/view.ts";
 import { piRunner } from "./runners/pi/index.ts";
 import { noopRunner } from "./runners/noop/index.ts";
@@ -21,7 +22,7 @@ const USAGE = `Usage: agent-evals <command> <config.yml> [options]
 
 Commands:
   run <config.yml>         Execute the selected case, or every case when --case is omitted
-  view <config.yml>        Show the resolved case and its field origins
+  view <config.yml>        Show the resolved case, its field origins and its placement
   config <agent.yml>       Query ACP configuration values without prompting
   login <agent.yml>        Run the declared native command and save login files
 
@@ -29,6 +30,7 @@ Options:
   --case <name>            Named case to select (required by view for files with cases)
   --results-dir <path>     Where run records are written (default: .agent-evals)
   --extension-dir <path>   Trusted extension root, one implementation per subdirectory (repeatable)
+  --files                  With view: list every placed and excluded path
   --help                   Show this help
 
 Configuration errors exit with code 2 before any run resource is created.
@@ -42,6 +44,7 @@ interface CliOptions {
   readonly caseName?: string;
   readonly resultsDir?: string;
   readonly extensionDirs: readonly string[];
+  readonly showFiles: boolean;
 }
 
 async function main(argv: readonly string[]): Promise<number> {
@@ -68,7 +71,8 @@ async function main(argv: readonly string[]): Promise<number> {
       const resolved = await loadCase(options.configPath, {
         ...(options.caseName === undefined ? {} : { caseName: options.caseName }),
       });
-      process.stdout.write(formatResolvedCase(resolved));
+      const placement = await describePlacement(resolved);
+      process.stdout.write(formatResolvedCase(resolved, { placement, files: options.showFiles }));
       return 0;
     }
     if (options.command === "config" || options.command === "login") {
@@ -170,6 +174,7 @@ function parseArguments(argv: readonly string[]): CliOptions {
         case: { type: "string" },
         "results-dir": { type: "string" },
         "extension-dir": { type: "string", multiple: true },
+        files: { type: "boolean" },
         help: { type: "boolean", short: "h" },
       },
     });
@@ -203,6 +208,9 @@ function parseArguments(argv: readonly string[]): CliOptions {
   if (command === "view" && (values["results-dir"] !== undefined || extensionDirs.length > 0)) {
     throw new ConfigError("view does not accept --results-dir or --extension-dir");
   }
+  if (command !== "view" && values.files === true) {
+    throw new ConfigError("--files applies only to view");
+  }
 
   return {
     command,
@@ -210,6 +218,7 @@ function parseArguments(argv: readonly string[]): CliOptions {
     ...(values.case === undefined ? {} : { caseName: values.case }),
     ...(values["results-dir"] === undefined ? {} : { resultsDir: resolve(values["results-dir"]) }),
     extensionDirs,
+    showFiles: values.files === true,
   };
 }
 
