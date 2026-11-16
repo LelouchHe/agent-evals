@@ -2,7 +2,7 @@
 
 Status: delivered. [M2](m2-plan.md) retains `trace.json` and lets `judge` inspect it; [M4](m4-plan.md) gave mock records and workspace execution their deterministic checkers (`mock` and `shell`). This milestone gives the third observation source — the runner's trace — its deterministic checker (`trace`), starting with skill consultations across harnesses.
 
-Implemented as specified below: the derivation in [`engine/skills.ts`](../src/engine/skills.ts), exported as `skillConsultations(trace, baseline)` from the [package entry](../src/index.ts); the [`trace` checker](../src/checkers/trace/index.ts) registered beside the other built-ins; and the worked-example update. [Configuration](configuration.md#trace-checker-type-trace) owns the shipped parameter and recognition details, and [Extensions](extensions.md#current-limits) owns what an extension can reuse.
+Implemented as specified below: the derivation in [`engine/skills.ts`](../src/engine/skills.ts), exported as `skillConsultations(trace, { workspace, baseline })` from the [package entry](../src/index.ts); the [`trace` checker](../src/checkers/trace/index.ts) registered beside the other built-ins; and the worked-example update. [Configuration](configuration.md#trace-checker-type-trace) owns the shipped parameter and recognition details, and [Extensions](extensions.md#current-limits) owns what an extension can reuse.
 
 ## Scope
 
@@ -22,7 +22,7 @@ Carried from earlier milestones:
 Agreed for M5:
 
 - **The trace is not changed.** `trace.json` stays what the harness reported. Skill consultations are a read-only derivation over it, so a new harness form is a new recognition rule and retained traces stay valid.
-- **The derivation is an exported engine function, not checker-private code.** One pure function takes the trace and the run's baseline and returns the consulted skills. The built-in `trace` checker is one caller; an extension checker, which already receives `trace` and `baseline` in its `CheckerContext`, can be another. Nothing is added to `CheckerContext`.
+- **The derivation is an exported engine function, not checker-private code.** One pure function takes the trace and the run's workspace and baseline and returns the consulted skills. The built-in `trace` checker is one caller; an extension checker, which already receives `trace` and `baseline` in its `CheckerContext`, can be another. Nothing is added to `CheckerContext`.
 - **Skill identity is the skill's `name`, never its directory name.** Skill directories often carry prefixes or layout conventions (for example `.claude/skills/aw-task-delegation/SKILL.md` whose frontmatter declares `name: task-delegation`). Pi (`pi-acp`), Claude Code (`claude-agent-acp`) and GitHub Copilot CLI (`copilot --acp`) all advertise the frontmatter `name`.
 - **A consultation is counted once per skill.** Chunked reads of one `SKILL.md` and repeated loads of one skill are one event.
 - **Copies of a same-named skill are not distinguished.** Skill tools report only a name, so the trace cannot say which copy was loaded. A case that depends on which content took effect checks the outcome with `file` or `shell`.
@@ -98,7 +98,7 @@ Traces spell workspace paths three ways — relative, `/var/…` and `/private/v
 ## Verified
 
 - **The derivation replays against the 23 retained traces** under `.agent-evals/*/trace.json` in the development checkout (local run records, not part of the repository): the 13 `with-skill` runs whose agent started derive `deploy-runbook` through both forms (Pi reads of `SKILL.md`, Claude Code and Copilot CLI skill tools); one `with-skill` run that ended at authentication and the 9 `without-skill` runs derive none. The replay had no baseline, because retained run roots are removed, so its Pi reads were named from the returned text; the baseline branch is covered by tests that place the same skill in both roots.
-- **`npm run check` passes** (284 tests) and **`npm run test:package` passes** (1 test). Every named case of the [worked example](../examples/cases/deploy-runbook/case.yml) loads, and its `baseline` (`noop`) case runs: the positive `trace` check fails with `consulted: none` while the `mock` `times: 0` restraint check passes.
+- **`npm run check` passes** (285 tests) and **`npm run test:package` passes** (1 test). The derivation takes the workspace and the baseline as explicit inputs; a test with non-sibling roots shows resolution uses the given workspace, not the baseline's location. Every named case of the [worked example](../examples/cases/deploy-runbook/case.yml) loads, and its `baseline` (`noop`) case runs: the positive `trace` check fails with `consulted: none` while the `mock` `times: 0` restraint check passes.
 - **Live harness verification is still outstanding.** This delivery did not run the example against a real harness; the recognition table remains measured against the retained traces above.
 
 ## Deferred

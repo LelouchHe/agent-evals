@@ -21,6 +21,11 @@ async function runRoots(t: TestContext) {
 }
 
 /** A `SKILL.md` as the fixture places it: identical in the workspace and the baseline. */
+/** The two run directories the derivation reads. */
+async function sources(dirs: Awaited<ReturnType<typeof runRoots>>) {
+  return { workspace: await openRunRoot(dirs.workspace), baseline: await openRunRoot(dirs.baseline) };
+}
+
 async function placeSkill(workspace: string, baseline: string, path: string, frontmatter: string): Promise<void> {
   const text = `---\n${frontmatter}---\n${SKILL_BODY}`;
   for (const root of [workspace, baseline]) {
@@ -65,7 +70,7 @@ test("both harness forms are recognized and a skill is one consultation however 
   const dirs = await runRoots(t);
   await placeSkill(dirs.workspace, dirs.baseline, ".agents/skills/deploy-runbook/SKILL.md", "name: deploy-runbook\n");
   const skillFile = join(dirs.workspace, ".agents/skills/deploy-runbook/SKILL.md");
-  const baseline = await openRunRoot(dirs.baseline);
+  const roots = await sources(dirs);
 
   const consultations = await skillConsultations(
     [
@@ -73,7 +78,7 @@ test("both harness forms are recognized and a skill is one consultation however 
       piRead(skillFile, `---\nname: deploy-runbook\n---\n${SKILL_BODY}`, { rawInput: { path: skillFile, offset: 1 } }),
       skillTool("release-notes", "Using skill: release-notes"),
     ],
-    baseline,
+    roots,
   );
 
   assert.deepEqual(consultations, [
@@ -85,7 +90,7 @@ test("both harness forms are recognized and a skill is one consultation however 
 test("only completed calls count, and a read must name SKILL.md", async (t) => {
   const dirs = await runRoots(t);
   const skillFile = join(dirs.workspace, ".agents/skills/unused/SKILL.md");
-  const baseline = await openRunRoot(dirs.baseline);
+  const roots = await sources(dirs);
 
   const consultations = await skillConsultations(
     [
@@ -95,7 +100,7 @@ test("only completed calls count, and a read must name SKILL.md", async (t) => {
       piRead(join(dirs.workspace, "deploy.log"), "failed\n"),
       skillTool("used-skill"),
     ],
-    baseline,
+    roots,
   );
 
   assert.deepEqual(consultations, [{ name: "used-skill", fromDirectory: false }]);
@@ -106,7 +111,7 @@ test("a read target comes from locations, rawInput.path or rawInput.file_path", 
   const relative = ".agents/skills/deploy-runbook/SKILL.md";
   await placeSkill(dirs.workspace, dirs.baseline, relative, "name: deploy-runbook\n");
   const returned = `---\nname: deploy-runbook\n---\n${SKILL_BODY}`;
-  const baseline = await openRunRoot(dirs.baseline);
+  const roots = await sources(dirs);
 
   const consultations = await skillConsultations(
     [
@@ -114,7 +119,7 @@ test("a read target comes from locations, rawInput.path or rawInput.file_path", 
       piRead(relative, returned, { locations: [], rawInput: { path: relative } }),
       piRead(relative, returned, { locations: [], rawInput: { file_path: relative } }),
     ],
-    baseline,
+    roots,
   );
 
   assert.deepEqual(consultations, [{ name: "deploy-runbook", fromDirectory: false }]);
@@ -127,7 +132,7 @@ test("a workspace read is named from the baseline in every path spelling, not fr
   const relative = ".agents/skills/aw-deploy/SKILL.md";
   await placeSkill(dirs.workspace, dirs.baseline, relative, "name: deploy-runbook\n");
   const workspace = await openRunRoot(dirs.workspace);
-  const baseline = await openRunRoot(dirs.baseline);
+  const roots = await sources(dirs);
   // An agent that edits the body during the run must not change the name.
   const edited = `---\nname: edited-during-run\n---\n${SKILL_BODY}`;
 
@@ -143,8 +148,28 @@ test("a workspace read is named from the baseline in every path spelling, not fr
 
   const consultations = await skillConsultations(
     spellings.map((path) => piRead(path, edited)),
-    baseline,
+    roots,
   );
+
+  assert.deepEqual(consultations, [{ name: "deploy-runbook", fromDirectory: false }]);
+});
+
+// Nothing about a run root's layout may decide where a trace path is resolved. A workspace and
+// a baseline that are not siblings still name a placed skill from the baseline's frontmatter.
+test("workspace paths resolve against the given workspace, not the baseline's location", async (t) => {
+  const workspaceDir = await makeTempDir(t, "ae-skills-workspace-");
+  const baselineDir = await makeTempDir(t, "ae-skills-baseline-");
+  const relative = ".agents/skills/aw-deploy/SKILL.md";
+  await placeSkill(workspaceDir, baselineDir, relative, "name: deploy-runbook\n");
+  const workspace = await openRunRoot(workspaceDir);
+  const baseline = await openRunRoot(baselineDir);
+  // The body the run returned was edited, so only the baseline frontmatter names the skill.
+  const edited = `---\nname: edited-during-run\n---\n${SKILL_BODY}`;
+
+  const consultations = await skillConsultations([piRead(join(workspace.path, relative), edited)], {
+    workspace,
+    baseline,
+  });
 
   assert.deepEqual(consultations, [{ name: "deploy-runbook", fromDirectory: false }]);
 });
@@ -153,7 +178,7 @@ test("a read outside the workspace is named from its text, then from its parent 
   const dirs = await runRoots(t);
   const home = join(dirs.root, "home", "skills");
   await mkdir(join(home, "legacy-skill"), { recursive: true });
-  const baseline = await openRunRoot(dirs.baseline);
+  const roots = await sources(dirs);
 
   const consultations = await skillConsultations(
     [
@@ -165,7 +190,7 @@ test("a read outside the workspace is named from its text, then from its parent 
       },
       piRead(join(home, "legacy-skill/SKILL.md"), "# No frontmatter here\n"),
     ],
-    baseline,
+    roots,
   );
 
   assert.deepEqual(consultations, [
@@ -178,12 +203,9 @@ test("a workspace read falls back to the returned text when the baseline gives n
   const dirs = await runRoots(t);
   const relative = ".agents/skills/plain/SKILL.md";
   await placeSkill(dirs.workspace, dirs.baseline, relative, "description: no name\n");
-  const baseline = await openRunRoot(dirs.baseline);
+  const roots = await sources(dirs);
 
-  const consultations = await skillConsultations(
-    [piRead(relative, `---\nname: text-name\n---\n${SKILL_BODY}`)],
-    baseline,
-  );
+  const consultations = await skillConsultations([piRead(relative, `---\nname: text-name\n---\n${SKILL_BODY}`)], roots);
 
   assert.deepEqual(consultations, [{ name: "text-name", fromDirectory: false }]);
 });

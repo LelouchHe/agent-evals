@@ -24,4 +24,4 @@ export type {
 } from "./engine/registry.ts";
 export type { ValueSource } from "./engine/values.ts";
 export type { RunRoot } from "./engine/workspace.ts";
-export { skillConsultations, type SkillConsultation } from "./engine/skills.ts";
+export { skillConsultations, type SkillConsultation, type SkillSources } from "./engine/skills.ts";

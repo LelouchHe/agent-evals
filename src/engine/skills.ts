@@ -11,7 +11,7 @@ const FRONTMATTER = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/;
 
 type ToolEntry = Extract<TraceEntry, { type: "tool" }>;
 
-/** One skill a run consulted, as far as its trace and baseline show. */
+/** One skill a run consulted, as far as its trace and workspace show. */
 export interface SkillConsultation {
   /** The skill's frontmatter `name`, or the parent directory's when no source gives a frontmatter name. */
   readonly name: string;
@@ -19,8 +19,16 @@ export interface SkillConsultation {
   readonly fromDirectory: boolean;
 }
 
+/** The run directories the derivation reads: the workspace a trace names, and its initial snapshot. */
+export interface SkillSources {
+  /** The workspace as the agent left it; absolute trace paths are resolved against it. */
+  readonly workspace: RunRoot;
+  /** The workspace's initial snapshot, where a placed skill's frontmatter is read. */
+  readonly baseline: RunRoot;
+}
+
 /**
- * The skills one run consulted, derived from its trace and the run's baseline.
+ * The skills one run consulted, derived from its trace and the run's workspace and baseline.
  *
  * ACP has no skill update, so this reads the two forms harnesses report: a completed
  * non-read tool call carrying `rawInput.skill` (Claude Code, GitHub Copilot CLI), and a
@@ -33,15 +41,12 @@ export interface SkillConsultation {
  */
 export async function skillConsultations(
   trace: readonly TraceEntry[],
-  baseline: RunRoot,
+  sources: SkillSources,
 ): Promise<readonly SkillConsultation[]> {
-  // The engine snapshots the baseline beside the workspace it copied, so the baseline
-  // identifies the workspace a trace path is resolved against.
-  const workspace = await canonicalPath(join(dirname(baseline.path), "workspace"));
   const consultations = new Map<string, SkillConsultation>();
   for (const entry of trace) {
     if (entry.type !== "tool" || entry.status !== "completed") continue;
-    const consultation = await recognize(entry, baseline, workspace);
+    const consultation = await recognize(entry, sources);
     if (consultation !== undefined && !consultations.has(consultation.name)) {
       consultations.set(consultation.name, consultation);
     }
@@ -49,11 +54,7 @@ export async function skillConsultations(
   return [...consultations.values()];
 }
 
-async function recognize(
-  entry: ToolEntry,
-  baseline: RunRoot,
-  workspace: string,
-): Promise<SkillConsultation | undefined> {
+async function recognize(entry: ToolEntry, sources: SkillSources): Promise<SkillConsultation | undefined> {
   // A dedicated skill tool reports the name directly.
   if (entry.kind !== "read") {
     const name = stringField(entry.rawInput, "skill");
@@ -64,7 +65,7 @@ async function recognize(
   const target = readTarget(entry);
   if (target === undefined) return undefined;
 
-  const fromBaseline = await baselineName(baseline, workspace, target);
+  const fromBaseline = await baselineName(sources, target);
   if (fromBaseline !== undefined) return { name: fromBaseline, fromDirectory: false };
 
   const fromOutput = frontmatterName(returnedText(entry));
@@ -85,17 +86,17 @@ function readTarget(entry: ToolEntry): string | undefined {
 }
 
 /** The frontmatter name of the same file in the baseline, when the read target is in the workspace. */
-async function baselineName(baseline: RunRoot, workspace: string, target: string): Promise<string | undefined> {
+async function baselineName(sources: SkillSources, target: string): Promise<string | undefined> {
   let path: string;
   if (isAbsolute(target)) {
     const canonical = await canonicalPath(target);
-    if (!isWithin(workspace, canonical)) return undefined;
-    path = relative(workspace, canonical);
+    if (!isWithin(sources.workspace.path, canonical)) return undefined;
+    path = relative(sources.workspace.path, canonical);
   } else {
     path = target;
   }
   try {
-    return frontmatterName((await readRunFile(baseline, path)).toString("utf8"));
+    return frontmatterName((await readRunFile(sources.baseline, path)).toString("utf8"));
   } catch {
     // A path outside the snapshot, unreadable, or not a regular file names nothing here;
     // the returned text and the parent directory remain.
