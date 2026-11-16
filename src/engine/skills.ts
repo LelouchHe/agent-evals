@@ -43,37 +43,62 @@ export async function skillConsultations(
   trace: readonly TraceEntry[],
   sources: SkillSources,
 ): Promise<readonly SkillConsultation[]> {
-  const consultations = new Map<string, SkillConsultation>();
+  const events: ({ readonly kind: "tool"; readonly name: string } | { readonly kind: "read"; readonly key: string })[] =
+    [];
+  const readsByTarget = new Map<string, SkillConsultation>();
   for (const entry of trace) {
     if (entry.type !== "tool" || entry.status !== "completed") continue;
-    const consultation = await recognize(entry, sources);
-    if (consultation !== undefined && !consultations.has(consultation.name)) {
+    if (entry.kind !== "read") {
+      const name = trimmedField(entry.rawInput, "skill");
+      if (name !== undefined) events.push({ kind: "tool", name });
+      continue;
+    }
+    const read = await recognizeRead(entry, sources);
+    if (read === undefined) continue;
+    const existing = readsByTarget.get(read.key);
+    if (existing === undefined) {
+      readsByTarget.set(read.key, read.consultation);
+      events.push({ kind: "read", key: read.key });
+    } else if (existing.fromDirectory && !read.consultation.fromDirectory) {
+      // A chunk carrying frontmatter upgrades an earlier chunk's directory fallback on the same file.
+      readsByTarget.set(read.key, read.consultation);
+    }
+  }
+
+  const consultations = new Map<string, SkillConsultation>();
+  for (const event of events) {
+    const consultation: SkillConsultation =
+      event.kind === "tool" ? { name: event.name, fromDirectory: false } : readsByTarget.get(event.key)!;
+    const existing = consultations.get(consultation.name);
+    if (existing === undefined || (existing.fromDirectory && !consultation.fromDirectory)) {
       consultations.set(consultation.name, consultation);
     }
   }
   return [...consultations.values()];
 }
 
-async function recognize(entry: ToolEntry, sources: SkillSources): Promise<SkillConsultation | undefined> {
-  // A dedicated skill tool reports the name directly.
-  if (entry.kind !== "read") {
-    const name = stringField(entry.rawInput, "skill");
-    return name === undefined ? undefined : { name, fromDirectory: false };
-  }
-
+async function recognizeRead(
+  entry: ToolEntry,
+  sources: SkillSources,
+): Promise<{ readonly key: string; readonly consultation: SkillConsultation } | undefined> {
   // A skill loader that reads the body has to name the SKILL.md it read.
   const target = readTarget(entry);
   if (target === undefined) return undefined;
 
-  const fromBaseline = await baselineName(sources, target);
-  if (fromBaseline !== undefined) return { name: fromBaseline, fromDirectory: false };
+  const resolved = await resolveReadTarget(sources.workspace.path, target);
+  if (resolved.relativePath !== undefined) {
+    const fromBaseline = await baselineName(sources.baseline, resolved.relativePath);
+    if (fromBaseline !== undefined) {
+      return { key: resolved.key, consultation: { name: fromBaseline, fromDirectory: false } };
+    }
+  }
 
   const fromOutput = frontmatterName(returnedText(entry));
-  if (fromOutput !== undefined) return { name: fromOutput, fromDirectory: false };
+  if (fromOutput !== undefined) return { key: resolved.key, consultation: { name: fromOutput, fromDirectory: false } };
 
   const directory = basename(dirname(target));
   if (directory === "" || directory === "." || directory === "/") return undefined;
-  return { name: directory, fromDirectory: true };
+  return { key: resolved.key, consultation: { name: directory, fromDirectory: true } };
 }
 
 /** The path a completed read targeted, when it names a skill file. */
@@ -81,20 +106,57 @@ function readTarget(entry: ToolEntry): string | undefined {
   const locations = Array.isArray(entry.locations) ? entry.locations : [];
   const location = locations[0] as { readonly path?: unknown } | undefined;
   const path =
-    stringField(location, "path") ?? stringField(entry.rawInput, "path") ?? stringField(entry.rawInput, "file_path");
-  return path !== undefined && basename(path) === SKILL_FILE ? path : undefined;
+    pathField(location, "path") ?? pathField(entry.rawInput, "path") ?? pathField(entry.rawInput, "file_path");
+  if (path === undefined || path.endsWith("/") || path.endsWith("\\")) return undefined;
+  return basename(path) === SKILL_FILE ? path : undefined;
 }
 
-/** The frontmatter name of the same file in the baseline, when the read target is in the workspace. */
-async function baselineName(sources: SkillSources, target: string): Promise<string | undefined> {
-  const path = isAbsolute(target) ? await relativeWithinWorkspace(sources.workspace.path, target) : target;
-  if (path === undefined) return undefined;
+/** The frontmatter name of the same file in the baseline. */
+async function baselineName(baseline: RunRoot, path: string): Promise<string | undefined> {
   try {
-    return frontmatterName((await readRunFile(sources.baseline, path)).toString("utf8"));
+    return frontmatterName((await readRunFile(baseline, path)).toString("utf8"));
   } catch {
     // A path outside the snapshot, unreadable, or not a regular file names nothing here;
     // the returned text and the parent directory remain.
     return undefined;
+  }
+}
+
+/**
+ * Resolve a read target to a stable per-file identity key and, when inside the workspace, its
+ * workspace-relative path. Never follows agent-writable symlinks inside the live workspace.
+ */
+async function resolveReadTarget(
+  workspacePath: string,
+  target: string,
+): Promise<{ readonly key: string; readonly relativePath?: string }> {
+  if (!isAbsolute(target)) {
+    const normalized = resolve(workspacePath, target);
+    const relativePath = await relativeWithinWorkspace(workspacePath, normalized);
+    return relativePath === undefined
+      ? { key: `outside:${normalized}` }
+      : { key: `workspace:${relativePath}`, relativePath };
+  }
+  const relativePath = await relativeWithinWorkspace(workspacePath, target);
+  if (relativePath !== undefined) {
+    return { key: `workspace:${relativePath}`, relativePath };
+  }
+  return { key: `outside:${await canonicalExternalPath(target)}` };
+}
+
+/** Canonicalize existing ancestors of an external path so `/var/…` and `/private/var/…` match. */
+async function canonicalExternalPath(target: string): Promise<string> {
+  const missing: string[] = [];
+  let probe = resolve(target);
+  while (true) {
+    try {
+      return join(await realpath(probe), ...missing);
+    } catch {
+      const parent = dirname(probe);
+      if (parent === probe) return resolve(target);
+      missing.unshift(basename(probe));
+      probe = parent;
+    }
   }
 }
 
@@ -167,10 +229,17 @@ function frontmatterName(text: string | undefined): string | undefined {
     return undefined;
   }
   if (typeof frontmatter !== "object" || frontmatter === null) return undefined;
-  return stringField(frontmatter, "name");
+  return trimmedField(frontmatter, "name");
 }
 
-function stringField(value: unknown, key: string): string | undefined {
+/** Read a path field verbatim without trimming legal leading or trailing filename spaces. */
+function pathField(value: unknown, key: string): string | undefined {
+  if (typeof value !== "object" || value === null) return undefined;
+  const field = (value as Record<string, unknown>)[key];
+  return typeof field === "string" && field.trim().length > 0 ? field : undefined;
+}
+
+function trimmedField(value: unknown, key: string): string | undefined {
   if (typeof value !== "object" || value === null) return undefined;
   const field = (value as Record<string, unknown>)[key];
   if (typeof field !== "string") return undefined;

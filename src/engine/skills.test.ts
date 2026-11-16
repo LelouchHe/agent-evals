@@ -208,12 +208,18 @@ test("agent-planted symlinks or loops in the live workspace neither hide the bas
   ]);
 });
 
-test("whitespace-only skill names and frontmatter names are ignored", async (t) => {
+test("whitespace-only skill names and frontmatter names are ignored, and paths are not trimmed", async (t) => {
   const dirs = await runRoots(t);
+  await placeSkill(dirs.workspace, dirs.baseline, ".agents/skills/aw-deploy/SKILL.md", "name: deploy-runbook\n");
   const roots = await sources(dirs);
 
   const consultations = await skillConsultations(
-    [skillTool("   "), piRead(join(dirs.root, "home/skills/fallback-dir/SKILL.md"), "---\nname: '   '\n---\n")],
+    [
+      skillTool("   "),
+      piRead(join(dirs.root, "home/skills/fallback-dir/SKILL.md"), "---\nname: '   '\n---\n"),
+      // A distinct filename with a trailing space is not SKILL.md and must not consult baseline.
+      piRead(".agents/skills/aw-deploy/SKILL.md ", "# decoy\n"),
+    ],
     roots,
   );
 
@@ -223,18 +229,23 @@ test("whitespace-only skill names and frontmatter names are ignored", async (t) 
 test("a read outside the workspace is named from its text, then from its parent directory", async (t) => {
   const dirs = await runRoots(t);
   const home = join(dirs.root, "home", "skills");
+  await mkdir(join(home, "named-dir"), { recursive: true });
   await mkdir(join(home, "legacy-skill"), { recursive: true });
   const roots = await sources(dirs);
 
   const consultations = await skillConsultations(
     [
+      // Chunked reads of one external skill: chunks without frontmatter must not add a second
+      // directory-fallback consultation alongside the frontmatter name.
+      piRead(join(home, "named-dir/SKILL.md"), "# Later chunk first\n"),
       {
-        ...piRead(join(home, "legacy-skill/SKILL.md"), `---\nname: harness-skill\n---\n${SKILL_BODY}`),
+        ...piRead(join(home, "named-dir/SKILL.md"), `---\nname: harness-skill\n---\n${SKILL_BODY}`),
         // The returned text may also arrive only as a string.
         content: [],
         rawOutput: `---\nname: harness-skill\n---\n${SKILL_BODY}`,
       },
-      piRead(join(home, "legacy-skill/SKILL.md"), "# No frontmatter here\n"),
+      piRead(join(home, "named-dir/SKILL.md"), "# Trailing chunk without frontmatter\n"),
+      piRead(join(home, "legacy-skill/SKILL.md"), "# No frontmatter in any chunk\n"),
     ],
     roots,
   );
