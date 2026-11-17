@@ -14,7 +14,7 @@ Not in scope: multi-turn authoring beyond what ACP gives for free, Linux. Moved 
 
 ## Delivered Preparation Slice
 
-[PR #2](https://github.com/LelouchHe/agent-evals/pull/2), merged as `858d8e2` on 2026-11-13, delivered the standalone `config` and `login` helpers, their shared Zod configuration, isolated HOME assembly and supervised process cleanup. [Configuration Reference](../configuration.md#acp-preparation-helpers) owns the current command contract.
+[PR #2](https://github.com/LelouchHe/agent-evals/pull/2), merged as `858d8e2` on 2026-11-13, delivered the standalone `config` and `login` helpers, their shared Zod configuration, isolated HOME assembly and supervised process cleanup. [Configuration Reference](../configuration.md#agent-files) owns the current command contract.
 
 - **Verification:** 157 model-free tests passed with no failures or skips; the external production-only package installation verified dependency isolation and installed helper execution. Independent reviews and closure checks completed.
 - **Live Pi checks:** the checked-in agent configuration returned actual ACP options. A separate temporary configuration using `command: [/usr/bin/env, PI_OFFLINE=1, pi]` opened Pi's native `/login` menu and exited normally. No new authentication or model prompt was performed, credential contents were unchanged and no runtime directory remained. This does not verify the default interactive startup path; neither the repository example nor the toolkit has a default offline mode.
@@ -44,7 +44,7 @@ runner:
     thought_level: high
 ```
 
-The standalone format, shared with the [preparation helpers](../configuration.md#acp-preparation-helpers):
+The standalone format, shared with the [preparation helpers](../configuration.md#agent-files):
 
 ```yaml
 # agents/pi.yml
@@ -139,7 +139,7 @@ Directories are real, so the harness can create files beside the linked ones. De
 
 ### Commands
 
-`agent-evals config <agent.yml>` and `agent-evals login <agent.yml>` take a standalone [ACP startup configuration](#runner-configuration), not a case. They are optional preparation tools, not a harness-registration workflow. npm and the installed CLI use the same command implementation; see [the format and behavior reference](../configuration.md#acp-preparation-helpers).
+`agent-evals config <agent.yml>` and `agent-evals login <agent.yml>` take a standalone [ACP startup configuration](#runner-configuration), not a case. They are optional preparation tools, not a harness-registration workflow. npm and the installed CLI use the same command implementation; see [the format and behavior reference](../configuration.md#agent-files).
 
 - **Configuration query.** Starts the declared ACP command in the same sandbox and runs only `initialize` and `session/new`. Reports the agent's config option IDs/categories, descriptions, current values and available values with their labels, plus declared auth methods. A caller need not already know or supply valid session config values to discover them. No prompt is sent and no model call is made.
 - **Login.** Runs the declared native `command` interactively in the same sandbox with a temporary `HOME` built the same way, then saves the top-level `login` file list into `home.login` after successful completion. The result is stored login data, not printed tokens. Because the sandbox can write nothing outside run directories and cannot reach the operator's login keychain, a harness that logs in successfully has to store its credentials in `HOME` (for example Copilot CLI with `"storeTokenPlaintext": true`). ACP auth methods alone are not sufficient: no tested harness provides a portable ACP-only login flow.

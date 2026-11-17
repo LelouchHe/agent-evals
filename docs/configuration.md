@@ -8,8 +8,9 @@ The run/view commands resolve one YAML file into one executable case. ACP prepar
 agent-evals config agent.yml
 agent-evals login agent.yml
 agent-evals view case.yml [--case name]
-agent-evals run case.yml [--case name] [--results-dir path] \
+agent-evals run case.yml [--case name] [--reps n] [--results-dir path] \
   [--extension-dir path]
+agent-evals report results-dir...
 ```
 
 The development form is `npm run eval -- <command>`; both entry points execute the same built CLI. Flags are parsed by Node's `util.parseArgs`: `--name=value`, separate option values, `--` before dash-prefixed positionals, and `--help`/`-h` are supported. Use `--case=-name` for a dash-prefixed case name.

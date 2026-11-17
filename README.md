@@ -2,15 +2,55 @@
 
 A toolkit for evaluating AI agent systems on the real CLI and harness layer.
 
+Requirements: macOS with `sandbox-exec` and Node.js 24+. The package is not published to npm: clone it and build, per [Quick Start](#quick-start). Version 0.1.0 is the first public state — the toolkit, not a finished instrument; [Roadmap](docs/roadmap.md) lists what is still open.
+
 ## Why Agent Evals
 
-- **Evaluate the whole agent system, not a bare model API.** Real outcomes depend on the model _plus_ its harness, skill routing, instruction hierarchy and tool loop. One generic [ACP runner](docs/configuration.md#acp-runner-type-acp) drives unmodified [Pi](examples/agents/pi.yml), [Claude Code](examples/agents/claude.yml) and [GitHub Copilot CLI](examples/agents/copilot.yml) configurations side by side (alongside the native `pi` runner), so changing a skill, instruction, flag or harness is a controlled experiment.
-- **Host-native OS sandboxing, not Linux containers.** Each run executes directly on the host platform under macOS Seatbelt with one run-root layout: `deps` (caller software, referenced in place), a layered `HOME` (agent-file settings, copied login state, then the case's `~/` user data), the prepared workspace, a temporary directory, mock forwarders and engine-private state the agent cannot read. Real host toolchains and platform behavior stay intact, while operator dotfiles, login keychains, rubrics and check-time acceptance tests remain unreachable to the agent.
-- **Three orthogonal evidence sources, deterministic first.** Instead of handing a raw chat log to an LLM judge and hoping for a score, assertions match each evidence source: workspace side effects (`file` and sandboxed `shell` checks, including hidden check-time tests), host-recorded boundary calls (`mocks.shell` + `mock` checks that intercept or spy on commands outside the sandbox), and run traces (`trace` for cross-harness skill consultations and the text the agent produced, paired with `judge` only where qualitative judgment is needed) — plus a `noop` baseline runner that catches vacuous checks.
+- **Evaluate the whole agent system, not a bare model API.** Outcomes depend on the model _plus_ its harness, skills, instructions and tool loop. One generic [ACP runner](docs/configuration.md#acp-runner-type-acp) drives unmodified [Pi](examples/agents/pi.yml), [Claude Code](examples/agents/claude.yml) and [GitHub Copilot CLI](examples/agents/copilot.yml) side by side, so changing a skill, instruction, flag or harness is a controlled experiment.
+- **Host-native OS sandboxing, not Linux containers.** Each run executes on the host under macOS Seatbelt in its own run root with a private `HOME` and workspace ([layout](docs/setup.md#how-isolated-harness-homes-work)). Host toolchains and platform behavior stay real, while operator dotfiles, login keychains, rubrics and check-time acceptance tests stay unreachable to the agent.
+- **Three evidence sources, deterministic first.** Checks read workspace side effects (`file`, sandboxed `shell`), host-recorded calls to [mocked commands](docs/mocks.md) (`mock`) and the run's trace (`trace`), with an LLM `judge` only where qualitative judgment is needed. A `noop` baseline runner catches checks that pass without an agent.
 
-Requirements: Node.js 24+ and macOS with `sandbox-exec` (the check sandbox is Seatbelt policy). The package is not published to npm: clone it and build, per [Quick Start](#quick-start). Version 0.1.0 is the first public state — the toolkit, not a finished instrument; [Roadmap](docs/roadmap.md) lists what is still open.
+## What a Case Looks Like
 
-Checker and runner [extensions](https://github.com/LelouchHe/agent-evals-extensions) live in their own repository, so a package can be measured with checkers the toolkit does not build in. The skill packages this toolkit was written for are private and are not part of this repository; the worked example in [`examples/cases/`](examples/cases) is self-contained.
+A case is one YAML file: a task, a prepared environment, and the checks that judge what the run left behind. Abridged from the [worked example](examples/cases/deploy-runbook/case.yml):
+
+```yaml
+input: Our deploy failed. Read deploy.log, confirm the release state with `deployctl status`, then write the cause and the commands to fix it into diagnosis.md.
+fixture: fixture # copied into the workspace
+mocks:
+  shell:
+    deployctl: # answered and recorded on the host, never run
+      return:
+        stdout: "state: failed at publish\n"
+    make: # the fix must not be run: refused and recorded
+      pass: false
+checks:
+  - $type: file
+    path: diagnosis.md
+    matches: "make rotate-signing-cert"
+  - $type: mock
+    shell: [make]
+    times: 0
+  - $type: trace # did the agent consult the skill?
+    event: skill
+    name: deploy-runbook
+cases:
+  pi-with-skill:
+    runner:
+      $type: acp
+      agent: ../../agents/pi.yml
+    files:
+      .agents/skills/deploy-runbook: skill # the variable under test
+  pi-without-skill:
+    runner:
+      $type: acp
+      agent: ../../agents/pi.yml
+  baseline:
+    runner:
+      $type: noop
+```
+
+Checker and runner [extensions](https://github.com/LelouchHe/agent-evals-extensions) live in their own repository and load with `--extension-dir` ([contract](docs/extensions.md)).
 
 ## Quick Start
 

@@ -15,7 +15,7 @@ To install the private package into a separate prefix (for example to run concur
 
 ```sh
 npm pack --pack-destination /tmp
-npm install --prefix /tmp/agent-evals-install /tmp/agent-evals-0.0.0.tgz
+npm install --prefix /tmp/agent-evals-install /tmp/agent-evals-0.1.0.tgz
 /tmp/agent-evals-install/node_modules/.bin/agent-evals --help
 ```
 
@@ -110,15 +110,6 @@ Reference it in `.env` as `CLAUDE_OAUTH_TOKEN="!security find-generic-password -
 #### GitHub Copilot CLI (`copilot.yml`)
 
 `copilot-setup.sh` downloads the standalone native Mach-O binary from `@github/copilot-<platform>` by default. If you already have the standalone native binary installed (for example via Homebrew Cask at `/opt/homebrew/bin/copilot` — **not** an `npm install -g @github/copilot` JS wrapper, which requires Node and its `node_modules` tree), you can pass `COPILOT_BIN=/path/to/copilot` to copy it instead; the script verifies that `COPILOT_BIN` is a Mach-O executable.
-
-### Migrating From the Prepared-HOME Layout
-
-Agent files previously declared `home.deps`, `home.login` and `home.path`, and the settings file lived inside `deps/`. That syntax is not kept, and nothing migrates it for you:
-
-1. Re-run the setup script into a new target directory (or the same one after moving the old tree aside). It prepares `deps/{bin,share}` with software only.
-2. Replace the agent file's `home:` block with `deps:`, an optional `path:` (the examples use the default `bin`) and a `files:` map for the harness settings. Move `command` and the login file list under `login:`.
-3. Point `*_DEPS` at the new `deps/`. Keep `*_LOGIN`; existing login directories work unchanged. Any `settings.json` left inside an old `deps/` is now simply unread software data.
-4. Run `agent-evals config <agent.yml>` for each harness. A missing `deps` is a configuration error; a stale agent file fails on the unknown `home` key.
 
 ## Verify Readiness
 

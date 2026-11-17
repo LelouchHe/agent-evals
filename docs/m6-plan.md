@@ -2,13 +2,13 @@
 
 Status: in progress — partly delivered. The run layout described here shipped; the rest of the roadmap's sandbox configuration item is [still to do](#remaining-in-m6), so this record stays outside the archive until M6 is complete. [M2](archive/m2-plan.md) built the isolated `HOME`, generic ACP runner and the `config`/`login` helpers; this milestone splits that `HOME` into a home, software, temporary space and engine-private state, and gives a case a way to supply user data.
 
-The design below is what shipped. The interface section is the syntax the user approved; the placement and `view` shapes are as approved; the premise evidence is kept from the design stage, including the probe that used the old example `deps` layout (`deps/.local/bin`) — the examples now use the default `deps/bin`.
+The design below is what shipped. The interface section is the syntax approved before implementation, as are the placement and `view` shapes; the premise evidence is kept from the design stage, including the probe that used the old example `deps` layout (`deps/.local/bin`) — the examples now use the default `deps/bin`.
 
-Every statement is labelled **decided** (agreed scope, implemented as stated), **approved** (the interface the user approved before implementation) or **verified** (measured on this machine during design or delivery).
+Every statement is labelled **decided** (agreed scope, implemented as stated), **approved** (the interface agreed before implementation) or **verified** (measured during design or delivery).
 
 ## Why
 
-A real sweep (12 routing cases × 3 runs, results in `/tmp/mw-routing-roster/`) showed what one run's layout cost before this milestone. Two failures were layout failures:
+A real sweep (12 routing cases × 3 runs) showed what one run's layout cost before this milestone. Two failures were layout failures:
 
 - **The run `HOME` was a mirror of the harness software.** `deps` was mirrored into `HOME` file by file as read-only symlinks: 20,967 files for Pi, 13,539 for Claude Code, 3 for Copilot CLI (measured: `find <deps> -type f | wc -l`). The agent's `PATH` entries were under `$HOME` (`$HOME/.local/bin` for the examples), so `which pi` answered a `HOME` path. There was no user data at all, and thousands of paths a user would never have were present.
 - **A case could not put anything in `HOME`.** The routing case `q10` targets `~/vault`; it had to rewrite the prompt to point inside the workspace. In `q11` the agent ran `ls ~/vault` in all three runs and correctly found nothing, because the sweep had nothing to put there.
@@ -105,7 +105,7 @@ login: # optional: the whole login concept in one place
 
 The three examples and their setup scripts use this syntax. Each script prepares software only, under `deps/{bin,share}`, and an empty `login/`; the settings file stays beside the agent file.
 
-**Migration is required.** A prepared directory from before this milestone keeps its software but is not a settings source any more; re-run the setup script and move the settings into the agent file's `files` as [Setup](setup.md#migrating-from-the-prepared-home-layout) describes.
+**Migration is required.** A prepared directory from before this milestone keeps its software but is not a settings source any more; re-run the setup script and move the settings into the agent file's `files`, following the layout in [Setup](setup.md#how-isolated-harness-homes-work).
 
 ## Collision Rules — approved
 
