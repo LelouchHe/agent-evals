@@ -8,7 +8,9 @@ A toolkit for evaluating AI agent systems on the real CLI and harness layer.
 - **Host-native OS sandboxing, not Linux containers.** Each run executes directly on the host platform under macOS Seatbelt with one run-root layout: `deps` (caller software, referenced in place), a layered `HOME` (agent-file settings, copied login state, then the case's `~/` user data), the prepared workspace, a temporary directory, mock forwarders and engine-private state the agent cannot read. Real host toolchains and platform behavior stay intact, while operator dotfiles, login keychains, rubrics and check-time acceptance tests remain unreachable to the agent.
 - **Three orthogonal evidence sources, deterministic first.** Instead of handing a raw chat log to an LLM judge and hoping for a score, assertions match each evidence source: workspace side effects (`file` and sandboxed `shell` checks, including hidden check-time tests), host-recorded boundary calls (`mocks.shell` + `mock` checks that intercept or spy on commands outside the sandbox), and run traces (`trace` for cross-harness skill consultations and the text the agent produced, paired with `judge` only where qualitative judgment is needed) — plus a `noop` baseline runner that catches vacuous checks.
 
-Requirements: Node.js 24+ and macOS with `sandbox-exec`. Private and unpublished; visibility and publication require explicit approval.
+Requirements: Node.js 24+ and macOS with `sandbox-exec` (the check sandbox is Seatbelt policy). The package is not published to npm: clone it and build, per [Quick Start](#quick-start). Version 0.1.0 is the first public state — the toolkit, not a finished instrument; [Roadmap](docs/roadmap.md) lists what is still open.
+
+Checker and runner [extensions](https://github.com/LelouchHe/agent-evals-extensions) live in their own repository, so a package can be measured with checkers the toolkit does not build in. The skill packages this toolkit was written for are private and are not part of this repository; the worked example in [`examples/cases/`](examples/cases) is self-contained.
 
 ## Quick Start
 

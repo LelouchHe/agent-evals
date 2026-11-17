@@ -1,6 +1,6 @@
 {
   "name": "agent-evals",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "private": true,
   "type": "module",
   "description": "A toolkit for evaluating AI agent systems.",
@@ -53,5 +53,22 @@
     "prettier": "3.9.10",
     "typescript": "5.9.3",
     "typescript-eslint": "8.72.2"
-  }
+  },
+  "author": "Lelouch He",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/LelouchHe/agent-evals.git"
+  },
+  "homepage": "https://github.com/LelouchHe/agent-evals#readme",
+  "bugs": {
+    "url": "https://github.com/LelouchHe/agent-evals/issues"
+  },
+  "keywords": [
+    "evaluation",
+    "ai-agents",
+    "harness",
+    "acp",
+    "sandbox",
+    "testing"
+  ]
 }
