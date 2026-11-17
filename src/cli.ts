@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { readdir, readFile, stat } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { parseArgs } from "node:util";
 import { fileChecker } from "./checkers/file/index.ts";
@@ -10,6 +11,7 @@ import { loadCase, loadCases } from "./engine/authoring.ts";
 import { ConfigError, errorMessage } from "./engine/config.ts";
 import { addChecker, addRunner, createRegistry, loadTrustedImplementations } from "./engine/registry.ts";
 import { executeEvaluation, prepareEvaluation, type PreparedEvaluation } from "./engine/run.ts";
+import { formatReport } from "./engine/report.ts";
 import type { EvaluationRecord } from "./engine/results.ts";
 import { describePlacement } from "./engine/placement.ts";
 import { formatResolvedCase } from "./engine/view.ts";
@@ -23,11 +25,13 @@ const USAGE = `Usage: agent-evals <command> <config.yml> [options]
 Commands:
   run <config.yml>         Execute the selected case, or every case when --case is omitted
   view <config.yml>        Show the resolved case, its field origins and its placement
+  report <results-dir>...  Print a session report from retained run records
   config <agent.yml>       Query ACP configuration values without prompting
   login <agent.yml>        Run the declared native command and save login files
 
 Options:
   --case <name>            Named case to select (required by view for files with cases)
+  --reps <n>               Repeat each selected case n times, serially (default: 1)
   --results-dir <path>     Where run records are written (default: .agent-evals)
   --extension-dir <path>   Trusted extension root, one implementation per subdirectory (repeatable)
   --files                  With view: list every placed and excluded path
@@ -36,7 +40,7 @@ Options:
 Configuration errors exit with code 2 before any run resource is created.
 `;
 
-type Command = "run" | "view" | "config" | "login";
+type Command = "run" | "view" | "report" | "config" | "login";
 
 interface CliOptions {
   readonly command: Command;
@@ -45,6 +49,9 @@ interface CliOptions {
   readonly resultsDir?: string;
   readonly extensionDirs: readonly string[];
   readonly showFiles: boolean;
+  readonly reps: number;
+  /** Additional paths for `report`; the first one is `configPath`. */
+  readonly extraPaths: readonly string[];
 }
 
 async function main(argv: readonly string[]): Promise<number> {
@@ -73,6 +80,10 @@ async function main(argv: readonly string[]): Promise<number> {
       });
       const placement = await describePlacement(resolved);
       process.stdout.write(formatResolvedCase(resolved, { placement, files: options.showFiles }));
+      return 0;
+    }
+    if (options.command === "report") {
+      process.stdout.write(formatReport(await readRecords(options.configPath, ...options.extraPaths)));
       return 0;
     }
     if (options.command === "config" || options.command === "login") {
@@ -131,14 +142,17 @@ async function runCommand(options: CliOptions): Promise<number> {
     await loadTrustedImplementations(registry, { extensionDirs: options.extensionDirs });
     const resultsDir = options.resultsDir ?? resolve(".agent-evals");
     const prepared: PreparedEvaluation[] = [];
-    for (const entry of cases) {
-      prepared.push(await prepareEvaluation({ case: entry, registry, resultsDir, signal: abort.signal }));
+    for (let rep = 0; rep < options.reps; rep += 1) {
+      for (const entry of cases) {
+        prepared.push(await prepareEvaluation({ case: entry, registry, resultsDir, signal: abort.signal }));
+      }
     }
 
-    // A named selection keeps the single-run output; so does an ordinary document.
-    if (options.caseName !== undefined || !cases.some((entry) => entry.name !== undefined)) {
+    // One repetition of one case keeps the single-run output; so does an ordinary document.
+    if (options.reps === 1 && (options.caseName !== undefined || !cases.some((entry) => entry.name !== undefined))) {
       const record = await executeEvaluation(prepared[0]!);
       printRecord(record, resultsDir);
+      process.stdout.write(`\n${formatReport([record])}`);
       return exitCode(record);
     }
 
@@ -148,14 +162,20 @@ async function runCommand(options: CliOptions): Promise<number> {
       if (abort.signal.aborted) break;
       records.push(await executeEvaluation(entry));
     }
-    for (const record of records) {
-      printCaseLine(record, resultsDir);
+    const casesPerRep = cases.length;
+    for (const [index, record] of records.entries()) {
+      const repLabel = options.reps === 1 ? "" : `rep ${Math.floor(index / casesPerRep) + 1}/${options.reps} `;
+      printCaseLine(record, resultsDir, repLabel);
     }
-    const notRun = prepared.length - records.length;
-    if (notRun > 0) {
-      process.stdout.write(`cancelled: ${notRun} case${notRun === 1 ? "" : "s"} not run\n`);
+    const notRunCases = prepared.length - records.length;
+    if (notRunCases > 0) {
+      process.stdout.write(`cancelled: ${notRunCases} run${notRunCases === 1 ? "" : "s"} not run\n`);
+      // The retained runs still get their report; the exit code carries the shortfall.
+      if (records.length > 0) process.stdout.write(`\n${formatReport(records)}`);
       return 2;
     }
+    // Every invocation ends with a session report, one run or many; nothing is written to disk.
+    process.stdout.write(`\n${formatReport(records)}`);
     return aggregateExit(records);
   } finally {
     process.off("SIGINT", onSignal);
@@ -175,6 +195,7 @@ function parseArguments(argv: readonly string[]): CliOptions {
         "results-dir": { type: "string" },
         "extension-dir": { type: "string", multiple: true },
         files: { type: "boolean" },
+        reps: { type: "string" },
         help: { type: "boolean", short: "h" },
       },
     });
@@ -188,29 +209,47 @@ function parseArguments(argv: readonly string[]): CliOptions {
   }
 
   const [command, rawConfigPath, ...unexpected] = positionals;
-  if (command !== "run" && command !== "view" && command !== "config" && command !== "login") {
+  if (command !== "run" && command !== "view" && command !== "report" && command !== "config" && command !== "login") {
     throw new ConfigError(command === undefined ? "a command is required" : `unknown command: ${command}`);
   }
   if (rawConfigPath === undefined) {
-    throw new ConfigError("a configuration file is required");
+    throw new ConfigError(
+      command === "report" ? "a results directory is required" : "a configuration file is required",
+    );
   }
-  if (unexpected.length > 0) {
+  if (command !== "report" && unexpected.length > 0) {
     throw new ConfigError(`unexpected argument: ${unexpected[0]}`);
   }
 
   if (
     (command === "config" || command === "login") &&
-    (values.case !== undefined || values["results-dir"] !== undefined || values["extension-dir"] !== undefined)
+    (values.case !== undefined ||
+      values["results-dir"] !== undefined ||
+      values["extension-dir"] !== undefined ||
+      values.reps !== undefined)
   ) {
     throw new ConfigError(`${command} accepts only an agent configuration file, not case or run options`);
   }
   const extensionDirs = (values["extension-dir"] ?? []).map((directory) => resolve(directory));
-  if (command === "view" && (values["results-dir"] !== undefined || extensionDirs.length > 0)) {
-    throw new ConfigError("view does not accept --results-dir or --extension-dir");
+  if (
+    command === "view" &&
+    (values["results-dir"] !== undefined || extensionDirs.length > 0 || values.reps !== undefined)
+  ) {
+    throw new ConfigError("view does not accept --results-dir, --extension-dir or --reps");
   }
   if (command !== "view" && values.files === true) {
     throw new ConfigError("--files applies only to view");
   }
+  if (
+    command === "report" &&
+    (values.case !== undefined ||
+      values["results-dir"] !== undefined ||
+      values["extension-dir"] !== undefined ||
+      values.reps !== undefined)
+  ) {
+    throw new ConfigError("report accepts only results directories");
+  }
+  const reps = values.reps === undefined ? 1 : expectReps(values.reps);
 
   return {
     command,
@@ -219,7 +258,73 @@ function parseArguments(argv: readonly string[]): CliOptions {
     ...(values["results-dir"] === undefined ? {} : { resultsDir: resolve(values["results-dir"]) }),
     extensionDirs,
     showFiles: values.files === true,
+    reps,
+    extraPaths: unexpected.map((path) => resolve(path)),
   };
+}
+
+/** A repetition count is a positive integer written in decimal that a loop can count to. */
+function expectReps(value: string): number {
+  const count = Number(value);
+  if (!/^[0-9]+$/.test(value) || !Number.isSafeInteger(count) || count < 1) {
+    throw new ConfigError(`--reps must be a positive integer, got ${JSON.stringify(value)}`);
+  }
+  return count;
+}
+
+/**
+ * Read every retained run record under the given paths. A path may be a results directory (walked
+ * recursively), a single run directory or a `result.json` file.
+ */
+async function readRecords(...paths: readonly string[]): Promise<EvaluationRecord[]> {
+  const files: string[] = [];
+  for (const path of paths) {
+    for (const file of await findResultFiles(path)) files.push(file);
+  }
+  if (files.length === 0) {
+    throw new ConfigError(`no result.json found under ${paths.join(", ")}`);
+  }
+  const records: EvaluationRecord[] = [];
+  const seen = new Set<string>();
+  for (const file of files) {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(await readFile(file, "utf8"));
+    } catch (error) {
+      throw new ConfigError(`cannot read ${file}: ${errorMessage(error)}`);
+    }
+    if (typeof parsed !== "object" || parsed === null || !Array.isArray((parsed as { checks?: unknown }).checks)) {
+      throw new ConfigError(`${file} is not an agent-evals result record`);
+    }
+    const record = parsed as EvaluationRecord;
+    // Overlapping arguments can name one record twice; a record is one run however it is reached.
+    if (seen.has(record.runId)) continue;
+    seen.add(record.runId);
+    records.push(record);
+  }
+  return records;
+}
+
+async function findResultFiles(path: string): Promise<string[]> {
+  let info;
+  try {
+    info = await stat(path);
+  } catch (error) {
+    throw new ConfigError(`cannot read ${path}: ${errorMessage(error)}`);
+  }
+  if (info.isFile()) {
+    return [path];
+  }
+  const found: string[] = [];
+  for (const entry of await readdir(path, { withFileTypes: true })) {
+    const child = join(path, entry.name);
+    if (entry.isDirectory()) {
+      for (const file of await findResultFiles(child)) found.push(file);
+    } else if (entry.name === "result.json") {
+      found.push(child);
+    }
+  }
+  return found.sort();
 }
 
 function printRecord(record: EvaluationRecord, resultsDir: string): void {
@@ -250,9 +355,9 @@ function exitCode(record: EvaluationRecord): number {
 }
 
 /** One summary line per executed case: name, status and the retained result record. */
-function printCaseLine(record: EvaluationRecord, resultsDir: string): void {
+function printCaseLine(record: EvaluationRecord, resultsDir: string, prefix = ""): void {
   const name = record.case.name ?? record.case.path;
-  process.stdout.write(`${name}: ${record.status} ${join(resultsDir, record.runId, "result.json")}\n`);
+  process.stdout.write(`${prefix}${name}: ${record.status} ${join(resultsDir, record.runId, "result.json")}\n`);
 }
 
 /** Zero only when every case passed, 1 for failed checks, 2 for anything that could not be judged. */

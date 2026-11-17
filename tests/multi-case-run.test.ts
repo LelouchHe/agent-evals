@@ -41,10 +41,15 @@ interface CaseLine {
   readonly result: string;
 }
 
+/**
+ * The per-case lines a multi-case run prints, stopping before the session report that follows them.
+ * The report itself is covered by `report.test.ts`; here it is output to skip, not to assert.
+ */
 function caseLines(stdout: string): CaseLine[] {
-  return stdout
-    .trimEnd()
+  const [head = ""] = stdout.split("\n\n");
+  return head
     .split("\n")
+    .filter((line) => line !== "")
     .map((line) => {
       const match = /^(\S+): (pass|fail|error|timeout|cancelled) (.+)$/.exec(line);
       assert.ok(match !== null, `unexpected output line: ${line}`);
