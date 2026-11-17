@@ -1,0 +1,182 @@
+import assert from "node:assert/strict";
+import { test } from "node:test";
+import { formatReport } from "./report.ts";
+import type { EvaluationRecord, RunStatus } from "./results.ts";
+
+interface RunSpec {
+  readonly name?: string;
+  readonly status: RunStatus;
+  readonly checks: readonly (readonly [string, "pass" | "fail" | "error", string?])[];
+  readonly agent?: string;
+  readonly durationMs?: number;
+  readonly tokens?: number;
+  readonly cost?: number;
+  readonly path?: string;
+  readonly model?: string;
+}
+
+function record(index: number, spec: RunSpec): EvaluationRecord {
+  const tokens = spec.tokens === undefined ? undefined : { totalTokens: spec.tokens, inputTokens: 0, outputTokens: 0 };
+  const cost = spec.cost === undefined ? undefined : { amount: spec.cost, currency: "USD" };
+  return {
+    schemaVersion: 1,
+    runId: `2026-01-01T00-00-0${index}-000Z-record00`,
+    startedAt: "2026-01-01T00:00:00.000Z",
+    finishedAt: `2026-01-01T00:00:0${index}.000Z`,
+    case: { path: spec.path ?? "/cases/example.yml", ...(spec.name === undefined ? {} : { name: spec.name }) },
+    resolvedConfig: {
+      input: "task",
+      checks: [],
+      runner: {
+        $type: "acp",
+        agent: spec.agent ?? "/agents/pi.yml",
+        config: { model: spec.model ?? "vendor/model-1" },
+      },
+    } as unknown as EvaluationRecord["resolvedConfig"],
+    status: spec.status,
+    runner: {
+      type: "acp",
+      status: "completed",
+      durationMs: spec.durationMs ?? 0,
+      finalText: null,
+      ...(tokens === undefined ? {} : { usage: { tokens, ...(cost === undefined ? {} : { cost }) } }),
+    },
+    checks: spec.checks.map(([subject, status, reason]) => ({
+      checker: "trace",
+      subject,
+      status,
+      reason: reason ?? "observed",
+    })),
+    diagnostics: [],
+    cleanup: { status: "removed" },
+  };
+}
+
+test("a session reports one line per case, its failing assertions, and totals", () => {
+  const report = formatReport([
+    record(1, {
+      name: "stable",
+      status: "pass",
+      durationMs: 1_500,
+      tokens: 2_000,
+      cost: 0.001,
+      checks: [["a", "pass"]],
+    }),
+    record(2, {
+      name: "stable",
+      status: "pass",
+      durationMs: 1_500,
+      tokens: 2_000,
+      cost: 0.001,
+      checks: [["a", "pass"]],
+    }),
+    record(3, {
+      name: "flaky",
+      status: "fail",
+      durationMs: 3_000,
+      tokens: 4_000,
+      cost: 0.002,
+      checks: [
+        ["a", "fail", "expected none, consulted: skill"],
+        ["b", "pass"],
+      ],
+    }),
+    record(4, {
+      name: "flaky",
+      status: "pass",
+      durationMs: 3_000,
+      tokens: 4_000,
+      cost: 0.002,
+      checks: [
+        ["a", "pass"],
+        ["b", "pass"],
+      ],
+    }),
+    record(5, { name: "broken", status: "error", checks: [["a", "error", "the run produced no assistant text"]] }),
+  ]);
+
+  assert.match(report, /^\/cases\/example\.yml$/mu);
+  assert.match(report, /^runner acp · harness pi · model vendor\/model-1 · reps mixed · cases 3$/mu);
+  // A case line carries the verdict, the repetition count, time, tokens and cost.
+  assert.match(report, /^PASS +stable +2 runs +3\.0s +4\.0k tok +\$0\.0020$/mu);
+  // Mixed repetitions inside one case are FLAKY, not PASS or FAIL.
+  assert.match(report, /^FLAKY +flaky +2 runs +6\.0s +8\.0k tok +\$0\.0040$/mu);
+  assert.match(report, /^ {8}✗ a {2}1\/2 fail — expected none, consulted: skill$/mu);
+  // A check that passed in every run gets no line of its own.
+  assert.doesNotMatch(report, /✗ b/u);
+  assert.match(report, /^ERROR +broken +1 run +0ms +— +—$/mu);
+  assert.match(report, /^ {8}✗ a {2}1\/1 error — the run produced no assistant text$/mu);
+  // The erroring run reported no usage, so the figures are marked as subtotals of four runs.
+  assert.match(report, /^5 runs · 3 passed · 1 fail · 1 error · 9\.0s · 12\.0k tok \(4\/5\) · \$0\.0060 \(4\/5\)$/mu);
+});
+
+test("a case whose runs all fail says FAIL, and one all-pass case says PASS", () => {
+  const report = formatReport([
+    record(1, { name: "all-fail", status: "fail", checks: [["a", "fail"]] }),
+    record(2, { name: "all-fail", status: "fail", checks: [["a", "fail"]] }),
+    record(3, { name: "all-pass", status: "pass", checks: [["a", "pass"]] }),
+  ]);
+  assert.match(report, /^FAIL +all-fail/mu);
+  assert.match(report, /^PASS +all-pass/mu);
+  assert.doesNotMatch(report, /all-pass[\s\S]*✗/u);
+});
+
+test("several documents keep separate sessions and add one total", () => {
+  const report = formatReport([
+    record(1, { name: "one", status: "pass", checks: [["a", "pass"]], path: "/cases/one.yml" }),
+    record(2, { name: "two", status: "fail", checks: [["a", "fail"]], path: "/cases/two.yml" }),
+  ]);
+  assert.match(report, /^\/cases\/one\.yml$/mu);
+  assert.match(report, /^\/cases\/two\.yml$/mu);
+  assert.match(report, /· reps 1 · cases 1$/mu);
+  assert.match(report, /^total 2 runs · 1 passed · 1 fail · 0ms · — · —$/mu);
+});
+
+test("an ordinary document labels its case without inventing a name", () => {
+  const report = formatReport([record(1, { status: "pass", checks: [["a", "pass"]] })]);
+  assert.match(report, /^PASS +\(ordinary\)/mu);
+});
+
+test("no records is reported as such, not as an empty session", () => {
+  assert.equal(formatReport([]), "no run records found\n");
+});
+
+test("a figure that only some runs reported is marked as a subtotal", () => {
+  const report = formatReport([
+    record(1, { name: "case", status: "pass", tokens: 100, cost: 1, checks: [["a", "pass"]] }),
+    record(2, { name: "case", status: "pass", checks: [["a", "pass"]] }),
+  ]);
+  assert.match(report, /^PASS +case +2 runs +0ms +100 tok \(1\/2\) +\$1\.0000 \(1\/2\)$/mu);
+  assert.match(report, /100 tok \(1\/2\) · \$1\.0000 \(1\/2\)$/mu);
+});
+
+test("a document that mixes harnesses names each of them instead of the first", () => {
+  const report = formatReport([
+    record(1, { name: "one", status: "pass", agent: "/agents/pi.yml", model: "vendor/a", checks: [["a", "pass"]] }),
+    record(2, { name: "two", status: "pass", agent: "/agents/claude.yml", model: "vendor/b", checks: [["a", "pass"]] }),
+  ]);
+  assert.match(report, /^runner acp · harness pi, claude · model vendor\/a, vendor\/b · reps 1 · cases 2$/mu);
+});
+
+test("two checks with one subject stay two declarations, not one doubled assertion", () => {
+  const report = formatReport([
+    record(1, {
+      name: "twice",
+      status: "fail",
+      checks: [
+        ["skill absent", "fail", "consulted: absent"],
+        ["skill absent", "pass"],
+      ],
+    }),
+  ]);
+  assert.match(report, /^ {8}✗ skill absent {2}1\/1 fail — consulted: absent$/mu);
+  assert.doesNotMatch(report, /1\/2 fail/u);
+});
+
+test("a run that recorded no check counts as not judged rather than leaving the denominator", () => {
+  const report = formatReport([
+    record(1, { name: "case", status: "fail", checks: [["a", "fail", "observed"]] }),
+    record(2, { name: "case", status: "error", checks: [] }),
+  ]);
+  assert.match(report, /^ {8}✗ a {2}1\/2 fail, 1\/2 not judged — observed$/mu);
+});
