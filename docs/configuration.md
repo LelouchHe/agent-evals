@@ -79,9 +79,10 @@ An ordinary document directly declares the complete case:
 input: Create hello.txt with exactly the content "Hello, world!".
 timeoutMs: 120000
 runner:
-  $type: pi
-  model: opencode-go/deepseek-v4.1-flash
-  apiKey: ${env:OPENCODE_API_KEY}
+  $type: acp
+  agent: ../../agents/pi.yml
+  config:
+    model: opencode-go/deepseek-v4.1-flash
 checks:
   - $type: file
     path: hello.txt
@@ -89,22 +90,14 @@ checks:
     matches: '/^Hello, world!\n?$/'
 ```
 
-For several cases, common top-level fields sit beside `cases`; each entry supplies the fields absent from the common part. For example, replace the `runner` above with:
+For several cases, common top-level fields sit beside `cases`; each entry supplies the fields absent from the common part. For example, keep the `runner` above and compare the same task with and without a project skill:
 
 ```yaml
 cases:
   with-skill:
-    runner:
-      $type: pi
-      model: opencode-go/deepseek-v4.1-flash
-      apiKey: ${env:OPENCODE_API_KEY}
-      skills: [skill]
-  without-skill:
-    runner:
-      $type: pi
-      model: opencode-go/deepseek-v4.1-flash
-      apiKey: ${env:OPENCODE_API_KEY}
-      skills: []
+    files:
+      .agents/skills/skill: skill
+  without-skill: {}
 ```
 
 Select a name explicitly, even with one entry. `view` requires it for any `cases` document. `run` instead executes every entry in declaration order when `--case` is omitted, and only the named one when it is given. `cases` must be a non-empty mapping of non-empty string names to mappings. Missing/unknown selection is an error; an ordinary document rejects a case name. The common part is never executed as an extra unnamed case.
