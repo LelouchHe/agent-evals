@@ -6,6 +6,7 @@
 acpCommand: [copilot, --acp, --context, long_context]
 deps: ${env:COPILOT_DEPS}
 environment:
+  COPILOT_GITHUB_TOKEN: ${env:COPILOT_GITHUB_TOKEN}
   COPILOT_ALLOW_ALL: "true"
   COPILOT_AUTO_UPDATE: "false"
   COPILOT_DISABLE_LOGIN_SHELL_ENV: "1"
@@ -13,7 +14,3 @@ environment:
   COPILOT_TELEMETRY_DISABLED: "true"
 files:
   ~/.copilot/settings.json: copilot-settings.json
-login:
-  command: [copilot, login]
-  dir: ${env:COPILOT_LOGIN}
-  files: [.copilot/config.json]

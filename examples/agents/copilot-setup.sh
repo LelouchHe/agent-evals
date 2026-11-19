@@ -1,5 +1,5 @@
 #!/bin/sh
-# Prepare deps/ and login/ for examples/agents/copilot.yml.
+# Prepare deps/ for examples/agents/copilot.yml.
 # Usage: ./examples/agents/copilot-setup.sh <target-dir>
 # Optional overrides: COPILOT_BIN (copy an existing native Mach-O standalone binary),
 # COPILOT_VERSION (default latest, downloaded from @github/copilot-<platform> when COPILOT_BIN is unset).
@@ -20,9 +20,7 @@ esac
 mkdir -p "$1"
 ROOT="$(cd "$1" && pwd)"
 DEPS="$ROOT/deps"
-LOGIN="$ROOT/login"
 mkdir -p "$DEPS/bin"
-mkdir -p -m 700 "$LOGIN"
 
 WORK_TMP=""
 cleanup() {
@@ -64,9 +62,7 @@ cat <<EOF
 
 Prepared GitHub Copilot CLI harness directories:
   COPILOT_DEPS=$DEPS
-  COPILOT_LOGIN=$LOGIN
 
-Next: add those two lines to .env, then run:
-  npm run eval -- login examples/agents/copilot.yml
+Next: add that line and COPILOT_GITHUB_TOKEN to .env (see docs/setup.md), then run:
   npm run eval -- config examples/agents/copilot.yml
 EOF

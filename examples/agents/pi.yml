@@ -1,11 +1,11 @@
-# Prepare deps with ./examples/agents/pi-setup.sh <dir> and run the login helper
-# once (see docs/setup.md). deps holds software only; the settings file sits
-# beside this file and is copied into the run HOME.
+# Prepare deps with ./examples/agents/pi-setup.sh <dir> (see docs/setup.md).
+# deps holds software only; the settings file sits beside this file and is
+# copied into the run HOME.
 acpCommand: [pi-acp]
 deps: ${env:PI_DEPS}
+# The engine resolves the key outside the sandbox (for example from Keychain via
+# .env) and passes it in the environment, so no key file is stored.
+environment:
+  OPENCODE_API_KEY: ${env:OPENCODE_API_KEY}
 files:
   ~/.pi/agent/settings.json: pi-settings.json
-login:
-  command: [pi]
-  dir: ${env:PI_LOGIN}
-  files: [.pi/agent/auth.json]

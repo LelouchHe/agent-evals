@@ -39,12 +39,11 @@ OPENCODE_API_KEY=replace-with-your-local-key
 OPENCODE_API_KEY="!security find-generic-password -w -s opencode-api-key"
 
 PI_DEPS=/absolute/path/to/agent-evals-home/pi/deps
-PI_LOGIN=/absolute/path/to/agent-evals-home/pi/login
 CLAUDE_DEPS=/absolute/path/to/agent-evals-home/claude/deps
 CLAUDE_LOGIN=/absolute/path/to/agent-evals-home/claude/login
 CLAUDE_OAUTH_TOKEN="!security find-generic-password -w -s claude-oauth-token"
 COPILOT_DEPS=/absolute/path/to/agent-evals-home/copilot/deps
-COPILOT_LOGIN=/absolute/path/to/agent-evals-home/copilot/login
+COPILOT_GITHUB_TOKEN="!security find-generic-password -w -s copilot-github-token"
 ```
 
 Lookup commands execute as trusted operator code from the invocation directory, with the operator environment. Node `execFile` applies a five-second timeout, a 64 KiB output limit and direct-process cancellation; descendants are operator-owned. Failures report entry names and exit status without printing raw command output, and are not retried.
@@ -65,6 +64,15 @@ Inside the sandbox, `PATH` contains only the declared `path` entries under the r
 
 Nothing in `agent-evals` fixes directory names: any layout with regular files under `deps`, regular files in the login directory, and matching `path` and `acpCommand` works, either in a standalone `.yml` file or inline under `runner.agent`.
 
+### Credentials: Environment First, Login State Only When Required
+
+The sandbox blocks the login keychain, so a harness cannot look up its own secret. There are two ways to give it one:
+
+- **Environment (preferred).** A `.env` lookup runs on the host, outside the sandbox, and the agent file's `environment` passes the value to the harness process. Nothing is written under the caller's directories, and the secret can stay in Keychain. All three reference examples authenticate this way.
+- **Login state (`login`).** Use it only when the harness cannot take its credential from the environment: typically an OAuth login whose access token the harness exchanges, refreshes and writes back itself (for example Pi's OAuth providers such as GitHub Copilot), so the refreshed file must be copied back after each run. It also fits non-secret state that should outlive a run; the Claude example keeps Claude Code's `.claude.json` there. The persistent copy is a plain file on disk, which is why the login directory is private and kept apart from everyday sessions.
+
+An environment variable is still visible to whatever the harness lets the evaluated agent run. As observed in November 2026, Claude Code and Copilot CLI remove their credential variable before running tool commands, while Pi passes its environment through to `bash`, so an evaluated Pi agent can read `OPENCODE_API_KEY`. Neither method hides a credential from a harness that exposes it; scope evaluation keys accordingly.
+
 ### Reference Examples
 
 [`examples/agents/`](../examples/agents/) provides ready-to-use configurations (`<name>.yml`), settings templates (`<name>-settings.json`) and setup scripts (`<name>-setup.sh`) for Pi, Claude Code and GitHub Copilot CLI:
@@ -75,13 +83,13 @@ Nothing in `agent-evals` fixes directory names: any layout with regular files un
 ./examples/agents/copilot-setup.sh ~/agent-evals-home/copilot
 ```
 
-Each example script prepares only software, under `deps/` (`deps/bin` plus `deps/share`), and an empty `login/`; it prints the `*_DEPS` / `*_LOGIN` lines for `.env`. The harness settings stay beside the agent file and are placed by its `files`:
+Each example script prepares only software, under `deps/` (`deps/bin` plus `deps/share`), and prints the lines for `.env`; the Claude script also prepares `login/` for Claude Code's state file. Credentials come from `.env`, resolved outside the sandbox. The harness settings stay beside the agent file and are placed by its `files`:
 
-| Harness                                                           | Setup script & overrides                                                                                                                                                                                | Settings placed by `files`                                                                                                                      | Authentication                                                                                                                                                                 |
-| ----------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| **Pi** ([`pi.yml`](../examples/agents/pi.yml))                    | [`pi-setup.sh`](../examples/agents/pi-setup.sh) installs official Node 24, `@earendil-works/pi-coding-agent` and official `pi-acp` (`NODE_VERSION`, `PI_ACP_SPEC`).                                     | [`pi-settings.json`](../examples/agents/pi-settings.json) → `~/.pi/agent/settings.json` (`defaultProjectTrust: "always"`, no telemetry/retries) | `npm run eval -- login examples/agents/pi.yml` saves `.pi/agent/auth.json` into `PI_LOGIN`.                                                                                    |
-| **Claude Code** ([`claude.yml`](../examples/agents/claude.yml))   | [`claude-setup.sh`](../examples/agents/claude-setup.sh) installs official Node 24 and `@agentclientprotocol/claude-agent-acp`, linking its bundled `claude` binary (`NODE_VERSION`, `CLAUDE_ACP_SPEC`). | [`claude-settings.json`](../examples/agents/claude-settings.json) → `~/.claude/settings.json` (disables account skill sync and connectors)      | One-year [`claude setup-token`](#claude-code-claudeyml) stored in Keychain as `CLAUDE_OAUTH_TOKEN`.                                                                            |
-| **Copilot CLI** ([`copilot.yml`](../examples/agents/copilot.yml)) | [`copilot-setup.sh`](../examples/agents/copilot-setup.sh) downloads the standalone `@github/copilot-<platform>` binary or copies `COPILOT_BIN` (`COPILOT_VERSION`, `COPILOT_BIN`).                      | [`copilot-settings.json`](../examples/agents/copilot-settings.json) → `~/.copilot/settings.json` (`storeTokenPlaintext: true`, sandbox off)     | `npm run eval -- login examples/agents/copilot.yml` (or copy `copilotTokens`, `authTokens`, `lastLoggedInUser` and `loggedInUsers` into `COPILOT_LOGIN/.copilot/config.json`). |
+| Harness                                                           | Setup script & overrides                                                                                                                                                                                | Settings placed by `files`                                                                                                                      | Authentication                                                                                                                         |
+| ----------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
+| **Pi** ([`pi.yml`](../examples/agents/pi.yml))                    | [`pi-setup.sh`](../examples/agents/pi-setup.sh) installs official Node 24, `@earendil-works/pi-coding-agent` and official `pi-acp` (`NODE_VERSION`, `PI_ACP_SPEC`).                                     | [`pi-settings.json`](../examples/agents/pi-settings.json) → `~/.pi/agent/settings.json` (`defaultProjectTrust: "always"`, no telemetry/retries) | `OPENCODE_API_KEY` from `.env`, for example a Keychain lookup.                                                                         |
+| **Claude Code** ([`claude.yml`](../examples/agents/claude.yml))   | [`claude-setup.sh`](../examples/agents/claude-setup.sh) installs official Node 24 and `@agentclientprotocol/claude-agent-acp`, linking its bundled `claude` binary (`NODE_VERSION`, `CLAUDE_ACP_SPEC`). | [`claude-settings.json`](../examples/agents/claude-settings.json) → `~/.claude/settings.json` (disables account skill sync and connectors)      | One-year [`claude setup-token`](#claude-code-claudeyml) stored in Keychain as `CLAUDE_OAUTH_TOKEN`.                                    |
+| **Copilot CLI** ([`copilot.yml`](../examples/agents/copilot.yml)) | [`copilot-setup.sh`](../examples/agents/copilot-setup.sh) downloads the standalone `@github/copilot-<platform>` binary or copies `COPILOT_BIN` (`COPILOT_VERSION`, `COPILOT_BIN`).                      | [`copilot-settings.json`](../examples/agents/copilot-settings.json) → `~/.copilot/settings.json` (sandbox off)                                  | A fine-grained PAT with the "Copilot Requests" permission, or a Copilot CLI OAuth token, stored in Keychain as `COPILOT_GITHUB_TOKEN`. |
 
 #### Pi (`pi.yml`)
 
@@ -89,7 +97,6 @@ Each example script prepares only software, under `deps/` (`deps/bin` plus `deps
 
 ```sh
 PI_ACP_SPEC=/path/to/pi-acp ./examples/agents/pi-setup.sh ~/agent-evals-home/pi
-npm run eval -- login examples/agents/pi.yml
 ```
 
 If interactive `pi` startup needs `fd` or `rg`, place them in `$PI_DEPS/bin` as well: a prepared tool is software. Pi's own downloads land in the run `HOME` and disappear with the run.
@@ -110,6 +117,15 @@ Reference it in `.env` as `CLAUDE_OAUTH_TOKEN="!security find-generic-password -
 #### GitHub Copilot CLI (`copilot.yml`)
 
 `copilot-setup.sh` downloads the standalone native Mach-O binary from `@github/copilot-<platform>` by default. If you already have the standalone native binary installed (for example via Homebrew Cask at `/opt/homebrew/bin/copilot` — **not** an `npm install -g @github/copilot` JS wrapper, which requires Node and its `node_modules` tree), you can pass `COPILOT_BIN=/path/to/copilot` to copy it instead; the script verifies that `COPILOT_BIN` is a Mach-O executable.
+
+Copilot authenticates from `COPILOT_GITHUB_TOKEN`, which takes precedence over stored credentials; with the token in the environment it persists no credential in the run `HOME`. Use a fine-grained PAT with the "Copilot Requests" permission or an OAuth token from the Copilot CLI app, and store it in Keychain:
+
+```sh
+# -w last prompts without echoing into shell history:
+security add-generic-password -U -a "$USER" -s copilot-github-token -w
+```
+
+Reference it in `.env` as `COPILOT_GITHUB_TOKEN="!security find-generic-password -w -s copilot-github-token"`.
 
 ## Verify Readiness
 

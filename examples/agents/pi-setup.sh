@@ -1,5 +1,5 @@
 #!/bin/sh
-# Prepare deps/ and login/ for examples/agents/pi.yml.
+# Prepare deps/ for examples/agents/pi.yml.
 # Usage: ./examples/agents/pi-setup.sh <target-dir>
 # Optional overrides: NODE_VERSION (default v24.22.3), PI_ACP_SPEC (default pi-acp; set to a
 # packed .tgz or checkout directory to install a local pi-acp fork).
@@ -23,9 +23,7 @@ PI_ACP_SPEC="${PI_ACP_SPEC:-pi-acp}"
 mkdir -p "$1"
 ROOT="$(cd "$1" && pwd)"
 DEPS="$ROOT/deps"
-LOGIN="$ROOT/login"
 mkdir -p "$DEPS/bin" "$DEPS/share/pkgs"
-mkdir -p -m 700 "$LOGIN"
 
 WORK_TMP=""
 cleanup() {
@@ -64,9 +62,7 @@ cat <<EOF
 
 Prepared Pi harness directories:
   PI_DEPS=$DEPS
-  PI_LOGIN=$LOGIN
 
-Next: add those two lines to .env, then run:
-  npm run eval -- login examples/agents/pi.yml
+Next: add that line and OPENCODE_API_KEY to .env (see docs/setup.md), then run:
   npm run eval -- config examples/agents/pi.yml
 EOF

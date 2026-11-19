@@ -27,22 +27,20 @@ An agent file describes one caller-prepared harness. `config` and `login` load i
 acpCommand: [pi-acp]
 deps: ${env:PI_DEPS}
 path: [bin]
+environment:
+  OPENCODE_API_KEY: ${env:OPENCODE_API_KEY}
 files:
   ~/.pi/agent/settings.json: pi-settings.json
-login:
-  command: [pi]
-  dir: ${env:PI_LOGIN}
-  files: [.pi/agent/auth.json]
 ```
 
-| Field         | Rule                                                                                                                                                                   |
-| ------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `acpCommand`  | Required non-empty argv for the ACP entry point.                                                                                                                       |
-| `environment` | Optional mapping of extra variables for both commands. Names other than `HOME`, `TMPDIR`, `PATH` and `TERM`.                                                           |
-| `deps`        | Required caller-prepared software directory. It is linked into the run as `deps`; the engine never copies or mirrors it.                                               |
-| `path`        | Optional `deps`-relative command directories; default `[bin]`. `PATH` is each entry under `run-xxxx/deps/`, then `/usr/bin:/bin:/usr/sbin:/sbin`.                      |
-| `files`       | Optional mapping from a `~/` destination to an authoring source relative to the agent file. Copied into the run HOME before login state and the case's `~/` entries.   |
-| `login`       | Optional. `command` is the native argv the login helper runs, `dir` the persistent login directory (it may not exist before the first login), `files` its composition. |
+| Field         | Rule                                                                                                                                                                                                                                                                                                                  |
+| ------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `acpCommand`  | Required non-empty argv for the ACP entry point.                                                                                                                                                                                                                                                                      |
+| `environment` | Optional mapping of extra variables for both commands. Names other than `HOME`, `TMPDIR`, `PATH` and `TERM`.                                                                                                                                                                                                          |
+| `deps`        | Required caller-prepared software directory. It is linked into the run as `deps`; the engine never copies or mirrors it.                                                                                                                                                                                              |
+| `path`        | Optional `deps`-relative command directories; default `[bin]`. `PATH` is each entry under `run-xxxx/deps/`, then `/usr/bin:/bin:/usr/sbin:/sbin`.                                                                                                                                                                     |
+| `files`       | Optional mapping from a `~/` destination to an authoring source relative to the agent file. Copied into the run HOME before login state and the case's `~/` entries.                                                                                                                                                  |
+| `login`       | Optional. `command` is the native argv the login helper runs, `dir` the persistent login directory (it may not exist before the first login), `files` its composition. Prefer `environment` for credentials; see [when login state is needed](setup.md#credentials-environment-first-login-state-only-when-required). |
 
 The ACP implementation declares one strict Zod schema; unknown fields, invalid argv, a `files` destination that does not start with `~/`, and unsafe relative paths are errors. Standalone files use the same YAML restrictions and [placeholders](#placeholders) as case parameters, with `${HOME}` and `${TMPDIR}` naming the command's own directories. Directory paths resolve from the agent file; `.env` remains rooted at the invocation directory.
 
