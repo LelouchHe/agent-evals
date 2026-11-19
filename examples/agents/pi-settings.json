@@ -2,5 +2,6 @@
   "quietStartup": true,
   "defaultProjectTrust": "always",
   "enableInstallTelemetry": false,
-  "retry": { "enabled": false }
+  "retry": { "enabled": false },
+  "shellCommandPrefix": "unset OPENCODE_API_KEY"
 }
