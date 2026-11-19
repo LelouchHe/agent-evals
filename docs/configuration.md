@@ -24,14 +24,21 @@ The trusted-directory option is repeatable and applies only to `run`; it names e
 An agent file describes one caller-prepared harness. `config` and `login` load it standalone; the [ACP runner](#acp-runner-type-acp) takes the same object inline or by path, so the same file configures queries and runs.
 
 ```yaml
-acpCommand: [pi-acp]
-deps: ${env:PI_DEPS}
+acpCommand: [claude-agent-acp]
+deps: ${env:CLAUDE_DEPS}
 path: [bin]
 environment:
-  OPENCODE_API_KEY: ${env:OPENCODE_API_KEY}
+  CLAUDE_CODE_OAUTH_TOKEN: ${env:CLAUDE_OAUTH_TOKEN}
+  CLAUDE_CODE_TMPDIR: ${TMPDIR}
 files:
-  ~/.pi/agent/settings.json: pi-settings.json
+  ~/.claude/settings.json: claude-settings.json
+login:
+  command: [claude]
+  dir: ${env:CLAUDE_LOGIN}
+  files: [.claude.json]
 ```
+
+This is the [Claude example](../examples/agents/claude.yml) with `path` spelled out: the credential comes from `.env` through `environment`, and `login` keeps Claude Code's state file between runs. The [Pi](../examples/agents/pi.yml) and [Copilot](../examples/agents/copilot.yml) examples need no `login`; see [when login state is needed](setup.md#credentials-environment-first-login-state-only-when-required).
 
 | Field         | Rule                                                                                                                                                                                                                                                                                                                  |
 | ------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
