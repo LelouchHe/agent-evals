@@ -24,25 +24,30 @@ The trusted-directory option is repeatable and applies only to `run`; it names e
 An agent file describes one caller-prepared harness. `config` and `login` load it standalone; the [ACP runner](#acp-runner-type-acp) takes the same object inline or by path, so the same file configures queries and runs.
 
 ```yaml
-acpCommand: [pi-acp]
-deps: ${env:PI_DEPS}
+acpCommand: [claude-agent-acp]
+deps: ${env:CLAUDE_DEPS}
 path: [bin]
+environment:
+  CLAUDE_CODE_OAUTH_TOKEN: ${env:CLAUDE_OAUTH_TOKEN}
+  CLAUDE_CODE_TMPDIR: ${TMPDIR}
 files:
-  ~/.pi/agent/settings.json: pi-settings.json
+  ~/.claude/settings.json: claude-settings.json
 login:
-  command: [pi]
-  dir: ${env:PI_LOGIN}
-  files: [.pi/agent/auth.json]
+  command: [claude]
+  dir: ${env:CLAUDE_LOGIN}
+  files: [.claude.json]
 ```
 
-| Field         | Rule                                                                                                                                                                   |
-| ------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `acpCommand`  | Required non-empty argv for the ACP entry point.                                                                                                                       |
-| `environment` | Optional mapping of extra variables for both commands. Names other than `HOME`, `TMPDIR`, `PATH` and `TERM`.                                                           |
-| `deps`        | Required caller-prepared software directory. It is linked into the run as `deps`; the engine never copies or mirrors it.                                               |
-| `path`        | Optional `deps`-relative command directories; default `[bin]`. `PATH` is each entry under `run-xxxx/deps/`, then `/usr/bin:/bin:/usr/sbin:/sbin`.                      |
-| `files`       | Optional mapping from a `~/` destination to an authoring source relative to the agent file. Copied into the run HOME before login state and the case's `~/` entries.   |
-| `login`       | Optional. `command` is the native argv the login helper runs, `dir` the persistent login directory (it may not exist before the first login), `files` its composition. |
+This is the [Claude example](../examples/agents/claude.yml) with `path` spelled out: the credential comes from `.env` through `environment`, and `login` keeps Claude Code's state file between runs. The [Pi](../examples/agents/pi.yml) and [Copilot](../examples/agents/copilot.yml) examples need no `login`; see [when login state is needed](setup.md#credentials-environment-first-login-state-only-when-required).
+
+| Field         | Rule                                                                                                                                                                                                                                                                                                                  |
+| ------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `acpCommand`  | Required non-empty argv for the ACP entry point.                                                                                                                                                                                                                                                                      |
+| `environment` | Optional mapping of extra variables for both commands. Names other than `HOME`, `TMPDIR`, `PATH` and `TERM`.                                                                                                                                                                                                          |
+| `deps`        | Required caller-prepared software directory. It is linked into the run as `deps`; the engine never copies or mirrors it.                                                                                                                                                                                              |
+| `path`        | Optional `deps`-relative command directories; default `[bin]`. `PATH` is each entry under `run-xxxx/deps/`, then `/usr/bin:/bin:/usr/sbin:/sbin`.                                                                                                                                                                     |
+| `files`       | Optional mapping from a `~/` destination to an authoring source relative to the agent file. Copied into the run HOME before login state and the case's `~/` entries.                                                                                                                                                  |
+| `login`       | Optional. `command` is the native argv the login helper runs, `dir` the persistent login directory (it may not exist before the first login), `files` its composition. Prefer `environment` for credentials; see [when login state is needed](setup.md#credentials-environment-first-login-state-only-when-required). |
 
 The ACP implementation declares one strict Zod schema; unknown fields, invalid argv, a `files` destination that does not start with `~/`, and unsafe relative paths are errors. Standalone files use the same YAML restrictions and [placeholders](#placeholders) as case parameters, with `${HOME}` and `${TMPDIR}` naming the command's own directories. Directory paths resolve from the agent file; `.env` remains rooted at the invocation directory.
 
@@ -74,9 +79,10 @@ An ordinary document directly declares the complete case:
 input: Create hello.txt with exactly the content "Hello, world!".
 timeoutMs: 120000
 runner:
-  $type: pi
-  model: opencode-go/deepseek-v4.1-flash
-  apiKey: ${env:OPENCODE_API_KEY}
+  $type: acp
+  agent: ../../agents/pi.yml
+  config:
+    model: opencode-go/deepseek-v4.1-flash
 checks:
   - $type: file
     path: hello.txt
@@ -84,22 +90,14 @@ checks:
     matches: '/^Hello, world!\n?$/'
 ```
 
-For several cases, common top-level fields sit beside `cases`; each entry supplies the fields absent from the common part. For example, replace the `runner` above with:
+For several cases, common top-level fields sit beside `cases`; each entry supplies the fields absent from the common part. For example, keep the `runner` above and compare the same task with and without a project skill:
 
 ```yaml
 cases:
   with-skill:
-    runner:
-      $type: pi
-      model: opencode-go/deepseek-v4.1-flash
-      apiKey: ${env:OPENCODE_API_KEY}
-      skills: [skill]
-  without-skill:
-    runner:
-      $type: pi
-      model: opencode-go/deepseek-v4.1-flash
-      apiKey: ${env:OPENCODE_API_KEY}
-      skills: []
+    files:
+      .agents/skills/skill: skill
+  without-skill: {}
 ```
 
 Select a name explicitly, even with one entry. `view` requires it for any `cases` document. `run` instead executes every entry in declaration order when `--case` is omitted, and only the named one when it is given. `cases` must be a non-empty mapping of non-empty string names to mappings. Missing/unknown selection is an error; an ordinary document rejects a case name. The common part is never executed as an extra unnamed case.
