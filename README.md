@@ -2,7 +2,7 @@
 
 A toolkit for evaluating AI agent systems on the real CLI and harness layer.
 
-Requirements: macOS with `sandbox-exec` and Node.js 24+. The CLI is published as `@lelouchhe/agent-evals`; a run additionally needs an invocation `.env` and prepared harness directories, per [Setup](https://github.com/LelouchHe/agent-evals/blob/main/docs/setup.md). Version 0.1.0 is the first public state — the toolkit, not a finished instrument; [Roadmap](https://github.com/LelouchHe/agent-evals/blob/main/docs/roadmap.md) lists what is still open.
+Requirements: macOS with `sandbox-exec` and Node.js 24+. The package declares `os: darwin`, so npm refuses to install it on another platform; the CLI is published as `@lelouchhe/agent-evals`, and a run additionally needs an invocation `.env` and prepared harness directories, per [Setup](https://github.com/LelouchHe/agent-evals/blob/main/docs/setup.md). Version 0.1.0 is the first public state — the toolkit, not a finished instrument; [Roadmap](https://github.com/LelouchHe/agent-evals/blob/main/docs/roadmap.md) lists what is still open.
 
 ## Why Agent Evals
 

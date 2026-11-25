@@ -43,10 +43,14 @@ async function filesEndingWith(directory: string, suffix: string): Promise<strin
 
 test("package metadata and built runtime assets point at the sole CLI implementation", async () => {
   const pkg = JSON.parse(await readFile(join(root, "package.json"), "utf8")) as {
+    name?: string;
+    os?: readonly string[];
     bin?: Record<string, string>;
     files?: readonly string[];
     scripts?: Record<string, string>;
   };
+  assert.equal(pkg.name, "@lelouchhe/agent-evals");
+  assert.deepEqual(pkg.os, ["darwin"]);
   assert.equal(pkg.bin?.["agent-evals"], "dist/cli.js");
   assert.equal(pkg.scripts?.eval, "node dist/cli.js");
   assert.deepEqual(pkg.files, ["dist", ".env.example"]);
