@@ -58,7 +58,7 @@ test("the packed CLI installs and runs without source or development dependencie
     ["install", "--prefix", prefix, "--omit=dev", "--no-audit", "--no-fund", join(root, pack.filename)],
     cwd,
   );
-  const installed = join(prefix, "node_modules", "agent-evals");
+  const installed = join(prefix, "node_modules", "@lelouchhe", "agent-evals");
   const bin = join(prefix, "node_modules", ".bin", "agent-evals");
   const require = createRequire(join(installed, "package.json"));
   const installRoot = (await realpath(prefix)) + sep;
@@ -70,7 +70,7 @@ test("the packed CLI installs and runs without source or development dependencie
   }
   assert.deepEqual((await readdir(join(prefix, "node_modules"))).filter((name) => !name.startsWith(".")).sort(), [
     "@agentclientprotocol",
-    "agent-evals",
+    "@lelouchhe",
     "ignore",
     "re2js",
     "yaml",
@@ -171,14 +171,14 @@ test("the packed CLI installs and runs without source or development dependencie
   assert.deepEqual(await readdir(runtime), []);
 
   // An external checker may use only the packaged entry. It is placed inside the installation so
-  // `agent-evals` and `zod` resolve from that prefix, exactly as a third-party package would.
+  // the package and `zod` resolve from that prefix, exactly as a third-party package would.
   const extensions = join(prefix, "extensions");
   const extension = join(extensions, "parity");
   await mkdir(extension, { recursive: true });
   await writeFile(
     join(extension, "index.mjs"),
     `import { z } from "zod";
-import { readRunFile, readRunTree, runPathExists, searches } from "agent-evals";
+import { readRunFile, readRunTree, runPathExists, searches } from "@lelouchhe/agent-evals";
 
 export const checker = {
   type: "parity",

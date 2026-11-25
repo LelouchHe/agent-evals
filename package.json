@@ -1,5 +1,5 @@
 {
-  "name": "agent-evals",
+  "name": "@lelouchhe/agent-evals",
   "version": "0.1.0",
   "type": "module",
   "description": "A toolkit for evaluating AI agent systems.",
@@ -69,5 +69,8 @@
     "acp",
     "sandbox",
     "testing"
-  ]
+  ],
+  "publishConfig": {
+    "access": "public"
+  }
 }
