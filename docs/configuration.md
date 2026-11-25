@@ -136,7 +136,7 @@ Authoring resources are relative to the YAML file; checker targets are relative 
 
 `fixture` is the base environment: a workspace directory. `files` is the per-case variation layered on top. Each key is a destination and each value an authoring file or directory read from the case YAML's directory — the same base as `fixture`, not the fixture directory and not the invocation directory.
 
-A destination without `~/` is relative to the prepared workspace root: `.` is the root, never absolute and never containing `..`. A destination starting with `~/` places into the run HOME instead: `~/notes/today.md` is a file, `~/notes` a directory, and `~/` the HOME root itself. The fixture populates the workspace first; workspace entries overlay it, HOME entries overlay the agent file's `files` and login state, and the case's `~/` entries come last. A runner without a HOME — `noop` and the native `pi` runner — rejects a case that places or checks anything under `~/` before any run resource exists.
+A destination without `~/` is relative to the prepared workspace root: `.` is the root, never absolute and never containing `..`. A destination starting with `~/` places into the run HOME instead: `~/notes/today.md` is a file, `~/notes` a directory, and `~/` the HOME root itself. The fixture populates the workspace first; workspace entries overlay it, HOME entries overlay the agent file's `files` and login state, and the case's `~/` entries come last. The native `pi` runner has no HOME, so it rejects a case that places or checks anything under `~/` before any run resource exists.
 
 - An entry may replace a file that came from `fixture`, from the agent file, or from the fixture's HOME equivalent.
 - Entries may not overwrite each other: two entries producing the same file path are an error, including a `~/` root that the HOME baseline then records. Directory entries merge.
@@ -228,9 +228,9 @@ Example: [`deploy-runbook`](../examples/cases/deploy-runbook/case.yml), whose Pi
 
 ### Noop Runner (`$type: noop`)
 
-A parameterless baseline runner. It starts no harness and no sandbox and completes at once with `finalText: null`, no diagnostics, an empty trace (`trace.json` is `[]`), and no usage. It declares mock support, so a case with `mocks` loads; the forwarders are written and nothing calls them, so `mocks.json` is `[]`.
+A parameterless baseline runner. It starts no harness and no sandbox and completes at once with `finalText: null`, no diagnostics, an empty trace (`trace.json` is `[]`), and no usage. It declares mock support, so a case with `mocks` loads; the forwarders are written and nothing calls them, so `mocks.json` is `[]`. It declares HOME support, so a case's `~/` entries are placed and snapshotted and a `~/` check sees the environment it would have seen with no agent.
 
-Run a case under it to see which checks need the agent: `file` `matches` or `notMatches`, a `mock` or `trace` `skill` check with its default count, or a `shell` command over a broken fixture fail, while restraint checks (`times: 0`, `changed: false` on a file that already exists) pass by construction. A `trace` `message` check is an `error` here, because the agent produced no text. It has no HOME, so a case that places or checks a `~/` path is a configuration error rather than a vacuous pass. Select it per named case; `run` has no baseline flag.
+Run a case under it to see which checks need the agent: `file` `matches` or `notMatches`, a `mock` or `trace` `skill` check with its default count, or a `shell` command over a broken fixture fail, while restraint checks (`times: 0`, `changed: false` on a file that already exists) pass by construction. A `trace` `message` check is an `error` here, because the agent produced no text. It prepares the case's `~/` entries and their baseline like any other run, so a `~/` restraint is proved vacuous or not. Select it per named case; `run` has no baseline flag.
 
 ### File Checker (`$type: file`)
 
