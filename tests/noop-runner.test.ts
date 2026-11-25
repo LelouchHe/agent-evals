@@ -12,6 +12,7 @@ import { loadCase } from "../src/engine/authoring.ts";
 import { addChecker, addRunner, createRegistry } from "../src/engine/registry.ts";
 import { runEvaluation } from "../src/engine/run.ts";
 import { noopRunner } from "../src/runners/noop/index.ts";
+import { piRunner } from "../src/runners/pi/index.ts";
 import { createFakePi, makeTempDir } from "./helpers/fake-pi-control.ts";
 
 async function runNoop(
@@ -41,6 +42,8 @@ async function runNoop(
   addChecker(registry, shellChecker, "built-in");
   addChecker(registry, traceChecker, "built-in");
   if (judgeExecutable !== undefined) {
+    // The baseline harness has no model, so the judge names the Pi runner instead.
+    addRunner(registry, piRunner, "built-in");
     addChecker(registry, judgeChecker, "built-in");
   }
   const resultsDir = await makeTempDir(t, "ae-noop-results-");
@@ -73,12 +76,12 @@ test(
           { $type: "file", path: "deploy.log", changed: false },
           { $type: "mock", shell: ["tool"], times: 0 },
           // An empty trace is still a trace, so this is judged rather than erroring.
+          // The baseline harness has no model, so the judge names the runner that does.
           {
             $type: "judge",
-            model: "test/judge-model",
+            runner: { $type: "pi", model: "test/judge-model", executable: judge.executable },
             trace: true,
             rubric: ["Nothing happened."],
-            executable: judge.executable,
           },
         ],
       },

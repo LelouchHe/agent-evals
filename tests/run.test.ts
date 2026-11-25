@@ -5,8 +5,9 @@ import { dirname, join } from "node:path";
 import { test } from "node:test";
 import { stringify } from "yaml";
 import { loadCase } from "../src/engine/authoring.ts";
+import { createEnvSource } from "../src/engine/env-source.ts";
 import { ConfigError } from "../src/engine/config.ts";
-import { addChecker, addRunner, createRegistry } from "../src/engine/registry.ts";
+import { addChecker, addRunner, createRegistry, type RunnerDefinition } from "../src/engine/registry.ts";
 import { runEvaluation } from "../src/engine/run.ts";
 import type { EvaluationRecord } from "../src/engine/results.ts";
 import { fileChecker } from "../src/checkers/file/index.ts";
@@ -35,11 +36,14 @@ async function writeScenario(t: Parameters<typeof makeTempDir>[0], options: Scen
     { $type: "file", path: "hello.txt", exists: true, matches: "/^Hello, world!\\n?$/" },
     {
       $type: "judge",
-      model: "test/judge-model",
-      thinking: "low",
+      runner: {
+        $type: "pi",
+        model: "test/judge-model",
+        thinking: "low",
+        executable: options.judgeExecutable,
+      },
       file: "hello.txt",
       rubric: ["hello.txt exists and contains Hello, world!."],
-      executable: options.judgeExecutable,
     },
   ];
   if (options.fixtureFiles !== undefined) {
@@ -84,6 +88,181 @@ async function writeScenario(t: Parameters<typeof makeTempDir>[0], options: Scen
 test("runtime baseline is Node.js 24 or newer", () => {
   const major = Number(process.versions.node.split(".")[0] ?? "0");
   assert.ok(major >= 24, `expected Node.js >=24, running ${process.versions.node}`);
+});
+
+test("integration: a judge without its own runner declaration runs the case's runner", async (t) => {
+  const prompts: string[] = [];
+  const stub: RunnerDefinition<{ readonly model: string }> = {
+    type: "stub",
+    params: z.strictObject({ model: z.string() }),
+    create: (params) => ({
+      run: async (context) => {
+        prompts.push(context.input);
+        return {
+          finalText: JSON.stringify({ criteria: [{ pass: true, reason: `model ${params.model}` }] }),
+          diagnostics: [],
+        };
+      },
+      stop: async () => {},
+    }),
+  };
+  const registry = createRegistry();
+  addRunner(registry, stub, "test");
+  addChecker(registry, judgeChecker, "built-in");
+
+  const directory = await makeTempDir(t, "ae-judge-inherit-");
+  const casePath = join(directory, "case.yml");
+  await writeFile(
+    casePath,
+    stringify({
+      input: "Do the task.",
+      checks: [{ $type: "judge", file: "report.md", rubric: ["The report names the cause."] }],
+      runner: { $type: "stub", model: "stub/model" },
+    }),
+  );
+  const resultsDir = await makeTempDir(t, "ae-judge-inherit-results-");
+  const tempParent = await makeTempDir(t, "ae-judge-inherit-runs-");
+  const record = await runEvaluation({
+    case: await loadCase(casePath),
+    registry,
+    resultsDir,
+    tempParent,
+  });
+
+  assert.equal(record.status, "pass", record.error);
+  assert.equal(record.runner.type, "stub");
+  assert.equal(prompts.length, 2);
+  assert.equal(prompts[0], "Do the task.");
+  assert.match(prompts[1] ?? "", /Rubric statements/);
+  assert.equal(record.checks[0]?.reason, "model stub/model");
+  assert.deepEqual(await readdir(tempParent), []);
+});
+
+test("a judge's declared runner resolves its placeholders once, without expanding the result again", async (t) => {
+  const seen: string[] = [];
+  const stub: RunnerDefinition<{ readonly apiKey: string }> = {
+    type: "stub",
+    params: z.strictObject({ apiKey: z.string() }),
+    create: (params) => ({
+      run: async () => {
+        seen.push(params.apiKey);
+        return { finalText: '{"criteria":[{"pass":true,"reason":"ok"}]}', diagnostics: [] };
+      },
+      stop: async () => {},
+    }),
+  };
+  const registry = createRegistry();
+  addRunner(registry, stub, "test");
+  addChecker(registry, judgeChecker, "built-in");
+
+  const directory = await makeTempDir(t, "ae-judge-substitute-");
+  // The value looks like a placeholder itself; substitution never scans its own output again.
+  await writeFile(join(directory, ".env"), 'JUDGE_KEY="${TMPDIR}"\n');
+  const casePath = join(directory, "case.yml");
+  await writeFile(
+    casePath,
+    stringify({
+      input: "Do the task.",
+      checks: [
+        {
+          $type: "judge",
+          runner: { $type: "stub", apiKey: "${env:JUDGE_KEY}" },
+          file: "report.md",
+          rubric: ["The report names the cause."],
+        },
+      ],
+      runner: { $type: "stub", apiKey: "case-key" },
+    }),
+  );
+  const record = await runEvaluation({
+    case: await loadCase(casePath),
+    registry,
+    resultsDir: await makeTempDir(t, "ae-judge-substitute-results-"),
+    tempParent: await makeTempDir(t, "ae-judge-substitute-runs-"),
+    envSource: createEnvSource(directory),
+  });
+
+  assert.equal(record.status, "pass", record.error);
+  assert.deepEqual(seen, ["case-key", "${TMPDIR}"]);
+});
+
+test("an inherited runner gets its own copy of the case declaration", async (t) => {
+  const seen: unknown[] = [];
+  const stub: RunnerDefinition<{ readonly state: { readonly n: number } }> = {
+    type: "stub",
+    // `z.custom` keeps the value it is given, so a shared declaration would be visible here.
+    params: z.strictObject({ state: z.custom<{ readonly n: number }>((value) => typeof value === "object") }),
+    create: (params) => {
+      const state = params.state as { n: number };
+      seen.push(state.n);
+      state.n += 1;
+      return {
+        run: async () => ({ finalText: '{"criteria":[{"pass":true,"reason":"ok"}]}', diagnostics: [] }),
+        stop: async () => {},
+      };
+    },
+  };
+  const registry = createRegistry();
+  addRunner(registry, stub, "test");
+  addChecker(registry, judgeChecker, "built-in");
+
+  const casePath = join(await makeTempDir(t, "ae-judge-copy-"), "case.yml");
+  await writeFile(
+    casePath,
+    stringify({
+      input: "Do the task.",
+      checks: [{ $type: "judge", file: "report.md", rubric: ["x"] }],
+      runner: { $type: "stub", state: { n: 0 } },
+    }),
+  );
+  const record = await runEvaluation({
+    case: await loadCase(casePath),
+    registry,
+    resultsDir: await makeTempDir(t, "ae-judge-copy-results-"),
+    tempParent: await makeTempDir(t, "ae-judge-copy-runs-"),
+  });
+
+  assert.equal(record.status, "pass", record.error);
+  assert.deepEqual(seen, [0, 0]);
+});
+
+test("a runner a checker declares is reported as that check's error, not the case runner's", async (t) => {
+  const stub: RunnerDefinition<{ readonly apiKey: string }> = {
+    type: "stub",
+    params: z.strictObject({ apiKey: z.string() }),
+    create: () => ({
+      run: async () => ({ finalText: null, diagnostics: [] }),
+      stop: async () => {},
+    }),
+  };
+  const registry = createRegistry();
+  addRunner(registry, stub, "test");
+  addChecker(registry, judgeChecker, "built-in");
+
+  const casePath = join(await makeTempDir(t, "ae-judge-attribution-"), "case.yml");
+  await writeFile(
+    casePath,
+    stringify({
+      input: "Do the task.",
+      checks: [
+        { $type: "judge", file: "report.md", rubric: ["x"] },
+        { $type: "judge", runner: { $type: "stub", apiKey: 42 }, file: "report.md", rubric: ["x"] },
+      ],
+      runner: { $type: "stub", apiKey: "case-key" },
+    }),
+  );
+
+  const resultsDir = await makeTempDir(t, "ae-judge-attribution-results-");
+  const tempParent = await makeTempDir(t, "ae-judge-attribution-runs-");
+  const loaded = await loadCase(casePath);
+  await assert.rejects(
+    () => runEvaluation({ case: loaded, registry, resultsDir, tempParent }),
+    (error: unknown) =>
+      error instanceof ConfigError &&
+      /checks\[1\] \(checker "judge"\): runner "stub" parameter apiKey/.test(error.message),
+  );
+  assert.deepEqual(await readdir(resultsDir), []);
+  assert.deepEqual(await readdir(tempParent), []);
 });
 
 function testRegistry() {
@@ -257,10 +436,9 @@ test("integration: a replaced workspace root is rejected instead of reading outs
       { $type: "file", path: "hello.txt", changed: false },
       {
         $type: "judge",
-        model: "test/judge-model",
+        runner: { $type: "pi", model: "test/judge-model", executable: judge.executable },
         file: "hello.txt",
         rubric: ["hello.txt exists"],
-        executable: judge.executable,
       },
     ],
   });
@@ -548,10 +726,9 @@ test("integration: FIFO judge evidence fails promptly and the CLI exits", { time
     checks: [
       {
         $type: "judge",
-        model: "test/judge-model",
+        runner: { $type: "pi", model: "test/judge-model", executable: judge.executable },
         file: "hello.txt",
         rubric: ["hello.txt exists"],
-        executable: judge.executable,
       },
     ],
   });

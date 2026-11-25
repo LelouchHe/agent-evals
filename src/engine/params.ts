@@ -67,6 +67,11 @@ function patternIssue(value: unknown, parsed: Extract<PatternScalarResult, { kin
   return "must be a non-empty string, number or /…/ RE2 pattern";
 }
 
+/** A declared string that must carry content once surrounding whitespace is ignored. */
+export const nonEmptyTrimmedString = z
+  .string()
+  .refine((value) => value.trim().length > 0, { message: "must be a non-empty string" });
+
 /** Shared schema rule for check targets relative to the evaluated workspace. */
 export const runRelativePathSchema = z
   .string()

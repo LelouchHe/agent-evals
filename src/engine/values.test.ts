@@ -24,6 +24,7 @@ test("placeholders substitute anywhere in nested strings, once, leaving keys and
     url: "https://${env:HOST}/${env:HOST}?tmp=${TMPDIR}",
     literal: "$${env:TOKEN} and $${HOME} cost $5",
     nested: { list: ["${HOME}/.config", 3, true, null] },
+    record: { $type: "${HOME}", value: "${HOME}" },
     "${env:KEY}": "key stays",
   });
   const result = await substituteValues(params, "runner", source({ TOKEN: "${HOME}", HOST: "example.com" }, lookups));
@@ -33,6 +34,8 @@ test("placeholders substitute anywhere in nested strings, once, leaving keys and
     url: "https://example.com/example.com?tmp=/run/tmp",
     literal: "${env:TOKEN} and ${HOME} cost $5",
     nested: { list: ["/run/home/.config", 3, true, null] },
+    // `$type` names an implementation, so it is a registry key rather than a placeholder.
+    record: { $type: "${HOME}", value: "/run/home" },
     "${env:KEY}": "key stays",
     ["__proto__"]: "data",
   });
@@ -101,4 +104,19 @@ test("lookups happen only for real placeholders and only after every string is v
     substituteValues({ v: "${env:MISSING}" }, "runner", source({}, lookups)),
     /environment value MISSING is not defined/,
   );
+});
+
+test("a $type selector stays literal, while ordinary data under that name is still substituted", async () => {
+  // A selector is a registry key: a placeholder there would name an implementation that cannot
+  // exist, so the text is left exactly as written.
+  const literal = (await substituteValues({ $type: "stub${", key: "${HOME}" }, "checker", source({}))) as {
+    $type: string;
+  };
+  assert.equal(literal.$type, "stub${");
+
+  // Anything else under the name `$type` is data, and data is substituted like anywhere else.
+  const nested = (await substituteValues({ $type: { text: "${HOME}" } }, "checker", source({}))) as {
+    $type: { text: string };
+  };
+  assert.equal(nested.$type.text, "/run/home");
 });

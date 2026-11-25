@@ -8,6 +8,7 @@ import {
   errorMessage,
   resolveAuthoringAsset,
   type ImplementationParams,
+  type ImplementationRecord,
   type ResolvedCase,
 } from "./config.ts";
 import {
@@ -17,6 +18,8 @@ import {
   type Checker,
   type ImplementationContext,
   type MockRecord,
+  type PreparedRunner,
+  type RegisteredCheckerDefinition,
   type Registry,
   type Runner,
   type RunnerContext,
@@ -457,6 +460,21 @@ async function prepareImplementations(
   if (!runnerSupportsHome && homeEntries(request.case.config.files).length > 0) {
     throw new ConfigError(`runner "${runnerDefinition.type}" does not support case files under "~"`);
   }
+  // The case runner's placeholders resolve once; a checker-declared runner arrives resolved with
+  // the checker parameters it was written in, so neither declaration is walked twice.
+  const caseRunnerParams = await substituteValues(paramsOf(request.case.config.runner), "runner", values);
+  const createRunner = async (record?: ImplementationRecord): Promise<PreparedRunner> => {
+    const declaration = record ?? request.case.config.runner;
+    const definition = requireRunner(request.registry, declaration.$type);
+    const params = await parseImplementationParams(
+      definition.params,
+      // Each instance gets its own copy: a schema may keep a value it was given, and the case
+      // runner's parameters are also the inherited judge's.
+      structuredClone(record === undefined ? caseRunnerParams : paramsOf(record)),
+      `runner "${definition.type}"`,
+    );
+    return { type: definition.type, runner: await definition.create(params, context) };
+  };
   const context: ImplementationContext = {
     authoringDir: request.case.dir,
     values,
@@ -464,13 +482,9 @@ async function prepareImplementations(
     ...(mockTargets === undefined ? {} : { mockTargets }),
     runnerSupportsHome,
     validateCheckPlatform: async () => assertSeatbeltAvailable(),
+    createRunner,
   };
-  const runnerParams = await parseImplementationParams(
-    runnerDefinition.params,
-    await substituteValues(paramsOf(request.case.config.runner), "runner", values),
-    `runner "${runnerDefinition.type}"`,
-  );
-  const runner = await runnerDefinition.create(runnerParams, context);
+  const { runner } = await createRunner();
   await validateCaseHomePlacement(request.case, runner.homeFiles ?? [], signal);
 
   const checks: { type: string; checker: Checker }[] = [];
@@ -481,10 +495,30 @@ async function prepareImplementations(
       await substituteValues(paramsOf(record), `checks[${index}]`, values),
       `checker "${definition.type}"`,
     );
-    checks.push({ type: definition.type, checker: await definition.create(params, context) });
+    checks.push({ type: definition.type, checker: await createChecker(definition, params, index, context) });
   }
 
   return { runnerType: runnerDefinition.type, runner, checks };
+}
+
+/**
+ * Create one checker and name the declaration in its failure: a checker may create a runner of its
+ * own, so the nested error has to say which check asked for it.
+ */
+async function createChecker(
+  definition: RegisteredCheckerDefinition,
+  params: unknown,
+  index: number,
+  context: ImplementationContext,
+): Promise<Checker> {
+  try {
+    return await definition.create(params, context);
+  } catch (error) {
+    if (error instanceof ConfigError) {
+      throw new ConfigError(`checks[${index}] (checker "${definition.type}"): ${error.message}`, { cause: error });
+    }
+    throw error;
+  }
 }
 
 /**

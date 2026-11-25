@@ -54,7 +54,7 @@ export function checkPlaceholders(value: unknown, where: string): void {
 
 /**
  * Substitute every placeholder in every string of a parameter value. Substituted
- * text is not scanned again; keys and non-string values are unchanged.
+ * text is not scanned again; keys, `$type` and non-string values are unchanged.
  */
 export async function substituteValues<T>(value: T, where: string, source: ValueSource): Promise<T> {
   // Collect every .env name first: lookups are asynchronous, replacement is not.
@@ -80,7 +80,9 @@ function walk(value: unknown, where: string, onString: (text: string, at: string
     const copy: Record<string, unknown> = {};
     for (const [key, item] of Object.entries(value)) {
       Object.defineProperty(copy, key, {
-        value: walk(item, `${where}.${key}`, onString),
+        // A `$type` selector names an implementation, so it is a registry key rather than data;
+        // a non-string value under that name is ordinary data and is walked like any other.
+        value: key === "$type" && typeof item === "string" ? item : walk(item, `${where}.${key}`, onString),
         enumerable: true,
         writable: true,
         configurable: true,

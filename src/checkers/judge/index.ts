@@ -1,30 +1,42 @@
-import { mkdir, mkdtemp, rm } from "node:fs/promises";
-import { join } from "node:path";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { dirname, join, posix } from "node:path";
 import { z } from "zod";
-import { errorMessage } from "../../engine/config.ts";
-import { runRelativePathSchema } from "../../engine/params.ts";
+import { errorMessage, type ImplementationRecord } from "../../engine/config.ts";
+import { nonEmptyTrimmedString, runRelativePathSchema } from "../../engine/params.ts";
 import { truncate } from "../../engine/truncate.ts";
-import type { CheckResult, Checker, CheckerContext, CheckerDefinition } from "../../engine/registry.ts";
+import type {
+  CheckResult,
+  Checker,
+  CheckerContext,
+  CheckerDefinition,
+  PreparedRunner,
+  Runner,
+  RunnerContext,
+  RunnerOutcome,
+} from "../../engine/registry.ts";
 import { isMissing, readRunFile } from "../../engine/workspace.ts";
-import { invokePi, resolvePiExecutable, type PiSessionError } from "../../runners/pi/session.ts";
-import { nonEmptyTrimmedString, thinkingSchema } from "../../runners/pi/params.ts";
-import { buildJudgePrompt } from "./prompt.ts";
+import { buildJudgePrompt, type JudgeEvidence } from "./prompt.ts";
 import { renderTrace } from "./trace.ts";
+
+/** Where the judge's workspace holds the run's rendered trace. */
+const TRACE_PATH = "trace.md";
 
 const judgeParamsSchema = z
   .strictObject({
-    model: nonEmptyTrimmedString,
-    thinking: thinkingSchema.default("medium"),
+    /** A runner declaration: any runner's own parameters, and the type it names. */
+    runner: z.record(z.string(), z.unknown()).transform(runnerDeclaration).optional(),
     rubric: z.array(nonEmptyTrimmedString).min(1, "must contain at least one statement"),
     /** A workspace file given as evidence. */
     file: runRelativePathSchema.optional(),
     /** Give the run's trace as evidence; the runner must record one. */
     trace: z.literal(true).optional(),
-    executable: nonEmptyTrimmedString.default("pi"),
-    apiKey: nonEmptyTrimmedString.optional(),
   })
   .refine((params) => params.file !== undefined || params.trace !== undefined, {
     message: "needs file, trace or both as evidence",
+  })
+  .refine((params) => params.file === undefined || params.trace === undefined || !shadowsTrace(params.file), {
+    message: `file cannot be ${TRACE_PATH}, or under it, when the trace is evidence too`,
+    path: ["file"],
   });
 
 type JudgeParams = z.output<typeof judgeParamsSchema>;
@@ -45,22 +57,26 @@ export class JudgeError extends Error {
   }
 }
 
-/** Independent Pi invocation that evaluates the task and file or trace evidence against a rubric. */
+/**
+ * Model judgment of the task against file or trace evidence: the checker stages that evidence in
+ * its own workspace and runs the declared runner there. Everything about how the model is
+ * reached — harness, model, credentials, tools, sandbox — belongs to that runner.
+ */
 export const judgeChecker: CheckerDefinition<JudgeParams> = {
   type: "judge",
   params: judgeParamsSchema,
   async create(params, context) {
-    await resolvePiExecutable(params.executable);
-    await context.validateCheckPlatform();
-    return new JudgeChecker(params);
+    return new JudgeChecker(params, await context.createRunner(params.runner));
   },
 };
 
 class JudgeChecker implements Checker {
   readonly #params: JudgeParams;
+  readonly #judge: PreparedRunner;
 
-  constructor(params: JudgeParams) {
+  constructor(params: JudgeParams, judge: PreparedRunner) {
     this.#params = params;
+    this.#judge = judge;
   }
 
   readonly check = async (context: CheckerContext): Promise<readonly CheckResult[]> => {
@@ -68,38 +84,11 @@ class JudgeChecker implements Checker {
     if (parsed.trace && context.trace === undefined) {
       throw new JudgeError("trace evidence requested, but this runner records no trace");
     }
-    const file = parsed.file === undefined ? undefined : await readEvidence(context, parsed.file);
-
     const judgeDir = await mkdtemp(join(context.runRootDir, "judge-"));
     try {
-      const workspaceDir = join(judgeDir, "workspace");
-      await mkdir(workspaceDir, { recursive: true, mode: 0o700 });
-      const result = await invokePi(
-        {
-          executable: parsed.executable,
-          runRootDir: judgeDir,
-          model: parsed.model,
-          thinking: parsed.thinking,
-          dirs: {
-            workspaceDir,
-            homeDir: join(judgeDir, "home"),
-            configDir: join(judgeDir, "config"),
-            scratchDir: join(judgeDir, "scratch"),
-          },
-          skills: [],
-          tools: null,
-          ...(parsed.apiKey === undefined ? {} : { apiKey: parsed.apiKey }),
-          allowNetwork: true,
-        },
-        buildJudgePrompt({
-          task: context.input,
-          ...(file === undefined ? {} : { file }),
-          ...(parsed.trace ? { trace: renderTrace(context.trace!) } : {}),
-          rubric: parsed.rubric,
-        }),
-        { timeoutMs: context.timeoutMs, signal: context.signal },
-      );
-      return parseVerdict(result.finalText, parsed.rubric, result.diagnostics);
+      const runnerContext = await prepareRun(parsed, context, judgeDir);
+      const { finalText, diagnostics } = await runJudge(this.#judge.runner, runnerContext);
+      return parseVerdict(finalText, parsed.rubric, diagnostics);
     } catch (error) {
       if (error instanceof JudgeError) {
         throw error;
@@ -115,17 +104,130 @@ class JudgeChecker implements Checker {
   };
 }
 
-/** A workspace file's text, or null content when it does not exist. */
-async function readEvidence(
-  context: CheckerContext,
-  path: string,
-): Promise<{ readonly path: string; readonly content: string | null }> {
-  try {
-    return { path, content: (await readRunFile(context.workspace, path)).toString("utf8") };
-  } catch (error) {
-    if (isMissing(error)) return { path, content: null };
-    throw new JudgeError(`could not read judge evidence ${path}: ${errorMessage(error)}`);
+/**
+ * Run the judge's runner once and stop it whatever happens. The abort handler stops it alongside
+ * the pending run, as the engine's own path does; a stop that fails after a verdict is part of the
+ * result, because a runner that did not tear down cleanly did not judge cleanly either.
+ */
+async function runJudge(runner: Runner, context: RunnerContext): Promise<RunnerOutcome> {
+  if (context.signal.aborted) {
+    throw new JudgeError("judge was cancelled before its runner started");
   }
+  let outcome: RunnerOutcome | undefined;
+  let failure: unknown;
+  let failed = false;
+  const fail = (error: unknown): void => {
+    failure = error;
+    failed = true;
+  };
+  const stopOnAbort = (): void => {
+    void runner.stop().catch(() => {});
+  };
+  context.signal.addEventListener("abort", stopOnAbort, { once: true });
+  try {
+    await runner.prepareHome?.(context);
+    // The only stop a runner may need is the one the abort handler already sent, so a run that
+    // starts after cancellation would have nothing left to end it.
+    if (context.signal.aborted) {
+      throw new JudgeError("judge was cancelled before its runner started");
+    }
+    outcome = await runner.run(context);
+  } catch (error) {
+    fail(error);
+  } finally {
+    context.signal.removeEventListener("abort", stopOnAbort);
+    try {
+      await runner.stop();
+    } catch (error) {
+      if (!failed) {
+        fail(new JudgeError(`judge teardown failed: ${errorMessage(error)}`));
+      }
+    }
+  }
+  if (failed) {
+    throw failure;
+  }
+  // Reaching here means `run` returned, so the outcome is the one it returned.
+  return outcome as RunnerOutcome;
+}
+
+/** The judge's private run root: empty directories plus the evidence it staged. */
+async function prepareRun(params: JudgeParams, context: CheckerContext, judgeDir: string): Promise<RunnerContext> {
+  const dirs = {
+    workspaceDir: join(judgeDir, "workspace"),
+    homeDir: join(judgeDir, "home"),
+    configDir: join(judgeDir, "config"),
+    tmpDir: join(judgeDir, "tmp"),
+    engineDir: join(judgeDir, "engine"),
+  };
+  await Promise.all(Object.values(dirs).map((directory) => mkdir(directory, { recursive: true, mode: 0o700 })));
+  const evidence = await stageEvidence(params, context, dirs.workspaceDir);
+  return {
+    ...dirs,
+    runRootDir: judgeDir,
+    input: buildJudgePrompt({ task: context.input, evidence, rubric: params.rubric }),
+    timeoutMs: context.timeoutMs,
+    signal: context.signal,
+  };
+}
+
+/**
+ * Copy the requested evidence out of the run and into the judge's workspace. The evaluated
+ * workspace is read once, through the same regular-file evidence access every checker uses, so a
+ * run can never hand the judge a path it replaced.
+ */
+async function stageEvidence(
+  params: JudgeParams,
+  context: CheckerContext,
+  workspaceDir: string,
+): Promise<readonly JudgeEvidence[]> {
+  const evidence: JudgeEvidence[] = [];
+  if (params.file !== undefined) {
+    const path = params.file;
+    let content: Buffer | null = null;
+    try {
+      content = await readRunFile(context.workspace, path);
+    } catch (error) {
+      if (!isMissing(error)) {
+        throw new JudgeError(`could not read judge evidence ${path}: ${errorMessage(error)}`);
+      }
+    }
+    if (content !== null) {
+      const target = join(workspaceDir, stagedPath(path));
+      await mkdir(dirname(target), { recursive: true, mode: 0o700 });
+      await writeFile(target, content, { mode: 0o600 });
+    }
+    evidence.push({ path: stagedPath(path), kind: "file", present: content !== null });
+  }
+  if (params.trace) {
+    await writeFile(join(workspaceDir, TRACE_PATH), `${renderTrace(context.trace!)}\n`, { mode: 0o600 });
+    evidence.push({ path: TRACE_PATH, kind: "trace", present: true });
+  }
+  return evidence;
+}
+
+/** True when a declared evidence path would land on the trace's own destination. */
+function shadowsTrace(path: string): boolean {
+  const staged = stagedPath(path).toLowerCase();
+  return staged === TRACE_PATH || staged.startsWith(`${TRACE_PATH}/`);
+}
+
+/**
+ * The run-relative path as the judge's workspace will hold it: POSIX segments, no `.` segments and
+ * no trailing separator, which is also the path the prompt advertises. A backslash is filename
+ * data on this platform, so it is left alone.
+ */
+function stagedPath(path: string): string {
+  return posix.normalize(path).replace(/\/+$/u, "");
+}
+
+function runnerDeclaration(record: Record<string, unknown>, context: z.RefinementCtx): ImplementationRecord {
+  const type = record.$type;
+  if (typeof type !== "string" || type.trim().length === 0) {
+    context.addIssue({ code: "custom", message: 'must name the runner "$type"' });
+    return z.NEVER;
+  }
+  return record as ImplementationRecord;
 }
 
 function parseVerdict(text: string | null, rubric: readonly string[], diagnostics: readonly string[]): CheckResult[] {
@@ -178,13 +280,17 @@ function extractJson(text: string): string {
 }
 
 function formatInvocationError(error: unknown): string {
-  const diagnostic = isPiSessionError(error) ? error.diagnostics[0] : undefined;
+  const diagnostic = diagnosticsOf(error)[0];
   const base = `judge invocation failed: ${errorMessage(error)}`;
   return diagnostic === undefined ? base : truncate(`${base} (${diagnostic})`, 800);
 }
 
-function isPiSessionError(error: unknown): error is PiSessionError {
-  return typeof error === "object" && error !== null && "diagnostics" in error;
+function diagnosticsOf(error: unknown): readonly string[] {
+  if (typeof error !== "object" || error === null || !("diagnostics" in error)) {
+    return [];
+  }
+  const diagnostics = (error as { diagnostics?: unknown }).diagnostics;
+  return Array.isArray(diagnostics) ? diagnostics.filter((entry) => typeof entry === "string") : [];
 }
 
 function withDiagnostics(message: string, diagnostics: readonly string[]): string {

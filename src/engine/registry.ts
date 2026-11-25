@@ -3,6 +3,7 @@ import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import type { ZodType } from "zod";
 import { ConfigError, errorMessage } from "./config.ts";
+import type { ImplementationRecord } from "./config.ts";
 import type { ValueSource } from "./values.ts";
 import type { RunRoot } from "./workspace.ts";
 
@@ -115,6 +116,12 @@ export interface Runner {
   readonly usage?: () => RunnerUsage | undefined;
 }
 
+/** A runner instance created from a declaration, named by the type that produced it. */
+export interface PreparedRunner {
+  readonly type: string;
+  readonly runner: Runner;
+}
+
 export interface ImplementationContext {
   readonly authoringDir: string;
   /** The run's placeholder sources, for parameters an implementation loads itself. */
@@ -127,6 +134,13 @@ export interface ImplementationContext {
   readonly runnerSupportsHome: boolean;
   /** Fail at load time when the engine's check sandbox cannot run on this host. */
   readonly validateCheckPlatform: () => Promise<void>;
+  /**
+   * Create a runner instance from a declaration, or from the case's own runner when none is
+   * named. The declaration is validated by that runner's schema with this same context, so a
+   * checker that must run a prompt (the `judge`) asks the engine instead of holding a private
+   * invocation path.
+   */
+  readonly createRunner: (record?: ImplementationRecord) => Promise<PreparedRunner>;
 }
 
 export interface RunnerDefinition<P> {

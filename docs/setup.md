@@ -1,6 +1,6 @@
 # Setup
 
-Requirements: Node.js 24+ and macOS with `/usr/bin/sandbox-exec`. `view` needs neither a harness nor credentials; `run` needs the selected harness prepared as below, plus an installed `pi` CLI and provider key whenever a case uses `$type: judge` or the native `pi` runner.
+Requirements: Node.js 24+ and macOS with `/usr/bin/sandbox-exec`. `view` needs neither a harness nor credentials. `run` needs only what each declared runner needs: the native `pi` runner an installed `pi` CLI and provider key, the ACP runner its agent, `deps` and login prepared as below, and `noop` nothing. A `judge` adds no requirement of its own — it runs the runner it names, or the case's when it names none, so a case judged by an ACP runner needs no `pi` CLI.
 
 ## Install the CLI
 

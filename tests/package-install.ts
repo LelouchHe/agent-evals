@@ -103,9 +103,12 @@ test("the packed CLI installs and runs without source or development dependencie
       { $type: "file", path: "hello.txt", exists: true, matches: "/^Hello, world!\\n?$/" },
       {
         $type: "judge",
-        model: "opencode-go/test-judge",
-        apiKey: "${env:MY_KEY}",
-        executable: judge.executable,
+        runner: {
+          $type: "pi",
+          model: "opencode-go/test-judge",
+          apiKey: "${env:MY_KEY}",
+          executable: judge.executable,
+        },
         file: "hello.txt",
         rubric: ["The file satisfies the task."],
       },

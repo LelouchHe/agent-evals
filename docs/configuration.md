@@ -189,7 +189,7 @@ note: write $${env:X} # $${ is a literal ${
 ```
 
 - `${env:NAME}` reads `NAME` from the invocation `.env` ([Setup](setup.md#credentials-and-env)). `${NAME}` reads a built-in variable: `HOME` and `TMPDIR` are the run's HOME and temporary directory, the same directories the runner gives its process; a preparation helper uses its own. Other sources and names are errors; nothing falls back to the operator's environment.
-- Placeholders apply to every string in the selected runner/checker parameters, nested objects and arrays included, and in standalone agent files—not keys, `$type` or Case-level fields. YAML quoting does not change them.
+- Placeholders apply to every string in the selected runner/checker parameters, nested objects and arrays included, and in standalone agent files—not keys, `$type` or Case-level fields. A `$type` selector is a registry key, so it is literal text even when it contains something that looks like a placeholder. YAML quoting does not change them. A [`judge`](#judge-checker-type-judge) that declares its own `runner` is the one exception to "the run's HOME and TMPDIR": that declaration is substituted against the evaluated run (see the judge section).
 - The engine chooses the run directories' paths first, substitutes, applies the implementation schema, and only then creates the directories. Substituted text is not scanned again and is not converted to numbers or booleans. Malformed placeholders in the selected case fail at load, also for `view`; a missing `.env` name fails before any run resource exists.
 - `view` and result declarations show placeholders unsubstituted; the declared text itself says which parts are placeholders.
 
@@ -295,7 +295,7 @@ The program starts in the workspace root in the engine's check sandbox: open rea
 
 The engine validates `files` when the case loads, and the check sandbox copies it into the live workspace just before the program starts, after the agent stopped, so the agent never saw those bytes during the run. Placed files stay for later checks and disappear with the run root; they are not part of the baseline. When the case loads, the engine checks that every source exists and that two entries do not produce the same file, so a missing source is a configuration error rather than a check result. Placement runs inside the check sandbox, so Seatbelt's write policy contains it even against a concurrent race. It also never follows a destination symlink: a symlinked ancestor is a check error, and anything at a file's destination is removed before the copy, so an agent-planted symlink or hard link cannot redirect the write outside the workspace. A directory where a file goes is a check error.
 
-A shell check runs in the live workspace, in declaration order, so a `file` `changed: false` check that must see the agent's result unchanged belongs before it. Mocks are closed when checks run: a mocked `PATH` command is not on the check's `PATH`, and a mocked workspace script reaches only a closed host. The sandbox policy is fixed and has no case syntax; `judge` keeps its own network-enabled sandbox instead.
+A shell check runs in the live workspace, in declaration order, so a `file` `changed: false` check that must see the agent's result unchanged belongs before it. Mocks are closed when checks run: a mocked `PATH` command is not on the check's `PATH`, and a mocked workspace script reaches only a closed host. The sandbox policy is fixed and has no case syntax; a `judge` runs its declared runner in its own run root instead, so its sandbox is that runner's.
 
 Extensions get the same behavior through the engine interfaces: `ImplementationContext.validateFiles(files)` at load time and `CheckerContext.checkSandbox.run(run, { files })` at check time. An extension checker assembles no file-staging logic or sandbox policy of its own.
 
@@ -349,25 +349,29 @@ What `trace` cannot prove about the text: it is what the agent said in the recor
 
 ### Judge Checker (`$type: judge`)
 
-| Parameter                                   | Contract                                                   |
-| ------------------------------------------- | ---------------------------------------------------------- |
-| `model`, `thinking`, `executable`, `apiKey` | Same meanings as for Pi; judge invocation is independent.  |
-| `file`                                      | Optional workspace-relative evidence file.                 |
-| `trace`                                     | Optional literal `true`: give the run's trace as evidence. |
-| `rubric`                                    | Required non-empty list of non-empty statements.           |
+| Parameter | Contract                                                   |
+| --------- | ---------------------------------------------------------- |
+| `runner`  | Optional runner declaration; absent means the case's own.  |
+| `file`    | Optional workspace-relative evidence file.                 |
+| `trace`   | Optional literal `true`: give the run's trace as evidence. |
+| `rubric`  | Required non-empty list of non-empty statements.           |
 
-At least one of `file` and `trace` is required; with both, every statement is judged against both.
+At least one of `file` and `trace` is required; with both, both are staged and the model decides which statements need which. The trace is staged as `trace.md`, so `file` may not name that path or anything under it.
 
 ```yaml
 - $type: judge
-  model: opencode-go/deepseek-v4.1-flash
-  apiKey: ${env:OPENCODE_API_KEY}
+  # Absent here: the judge runs this case's runner with its harness, model and
+  # credentials. Name a runner to judge with a different one.
   trace: true
   rubric:
     - The agent consulted the deploy-runbook skill before writing the diagnosis.
 ```
 
-The judge receives the task, the selected regular-file evidence (or an explicit missing-file signal), the rendered trace, and the rubric. The trace is rendered in run order without cutting: messages, reasoning, and each tool call's title, kind, status, input and output. Use it for process questions a fixed rule cannot answer, such as whether the agent's account matches what it actually did. Skill consultations have a deterministic checker ([`trace`](#trace-checker-type-trace)); do not judge them twice. A requested call shows what the agent asked for, not every effect, and harnesses differ in what they report (reasoning may be absent). `trace: true` with a runner that records no trace, such as the native Pi runner, is a checker error. Its separate Pi invocation has no tools and no access to the evaluated workspace. Verdict JSON must have exactly one criterion per rubric item, each with boolean `pass` and non-empty `reason`. Extra fields/criterion labels are ignored. Valid negative judgments are `fail`; malformed, absent or wrong-count verdicts are checker errors.
+The judge runs a runner over its own workspace: it stages the named regular file at the same relative path and the rendered trace as `trace.md`, then asks that runner to decide the rubric from those files. The staged path is the declared one with `.` segments and trailing separators resolved, and the prompt names that staged path; a backslash is part of a file name here, not a separator. The prompt carries the task, the rubric and the names of the evidence files, never their contents, so one file the model must read chooses how much of a large trace or file it opens. The run's workspace itself is never handed over, and its evidence is read once through the same regular-file access every checker uses. A file the run never wrote is staged as absent and the prompt says so; the trace is rendered in run order without cutting, with each tool call's title, kind, status, input and output. Use it for process questions a fixed rule cannot answer, such as whether the agent's account matches what it actually did. Skill consultations have a deterministic checker ([`trace`](#trace-checker-type-trace)); do not judge them twice. A requested call shows what the agent asked for, not every effect, and harnesses differ in what they report (reasoning may be absent). `trace: true` with a runner that records no trace, such as the native Pi runner, is a checker error. Everything about how the judge reaches a model — harness, model, credentials, tools and sandbox — is the declared runner's decision, and so is whether the evidence is read at all: the judge stages the files, it never parses them itself, so a runner whose harness cannot read its own workspace answers from the prompt alone. A runner that cannot produce a verdict is a checker error that says so, not a failed check: `noop` returns no text at all, and a harness whose model is configured outside the case only helps if that configuration supplies one. Declare a `runner` for the judge where the inherited one cannot judge.
+
+Verdict JSON must have exactly one criterion per rubric item, in rubric order, each with a boolean `pass` and a non-empty `reason`. A `criterion` label is ignored, as are extra fields; a malformed object, an absent verdict, or the wrong number of criteria is a checker error rather than a failed check. A valid negative judgment is `fail`.
+
+Two limits follow from running a runner. A judge's declared parameters are substituted once, when the case loads, against the evaluated run: `${HOME}` and `${TMPDIR}` there name that run's directories, not the judge's private run root, so an agent file that points a harness at `${TMPDIR}` points it outside the judge's writable directories. And the runner's own arrangement still applies, including anything it keeps outside the run root, such as an ACP login store it may read and copy back.
 
 ## Inspecting and Recording
 
