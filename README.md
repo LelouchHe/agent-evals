@@ -111,7 +111,7 @@ Serialize checkout build/test/eval commands because `npm run build` replaces `di
 
 ## Releasing
 
-[CI](https://github.com/LelouchHe/agent-evals/blob/main/.github/workflows/ci.yml) runs the gate on macOS for every pull request and push to `main`. A release is a tag: push `vX.Y.Z` matching `package.json`'s version, and [publish](https://github.com/LelouchHe/agent-evals/blob/main/.github/workflows/publish.yml) re-runs that gate, publishes `@lelouchhe/agent-evals` to npm with provenance, and creates the GitHub release. The workflow needs the `NPM_TOKEN` repository secret: an npm token with publish rights for the `@lelouchhe` scope. A scoped package defaults to restricted, so the publish command passes `--access public`.
+[CI](https://github.com/LelouchHe/agent-evals/blob/main/.github/workflows/ci.yml) runs the gate on macOS for every pull request and push to `main`. A release is a tag: push `vX.Y.Z` matching `package.json`'s version, and [publish](https://github.com/LelouchHe/agent-evals/blob/main/.github/workflows/publish.yml) re-runs that gate on macOS, publishes `@lelouchhe/agent-evals` to npm with provenance, and creates the GitHub release. The workflow needs the `NPM_TOKEN` repository secret: an npm token with publish rights for the `@lelouchhe` scope. A scoped package defaults to restricted, so the publish command passes `--access public`.
 
 ## License
 

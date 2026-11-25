@@ -14,7 +14,9 @@ jobs:
 
   publish:
     needs: test
-    runs-on: ubuntu-latest
+    # The package declares `os: darwin`, so `npm ci` refuses to install its own tree on any
+    # other platform (EBADPLATFORM). Publish where the gate already runs.
+    runs-on: macos-latest
     permissions:
       contents: write # create the GitHub release
       id-token: write # npm provenance
