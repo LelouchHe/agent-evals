@@ -157,17 +157,34 @@ test("the judge stages a copy of the named file and leaves the run's workspace a
   const fake = await createFakePi(t, "judge-evidence");
 
   const results = await judge(params(piDeclaration(fake)), await context(dirs.root, dirs.workspace, dirs.baseline));
-  assert.match(results[0]?.reason ?? "", /hello:staged-sentinel/);
+  assert.match(results[0]?.reason ?? "", /files:hello\.txt=staged-sentinel/);
   assert.equal(await readFile(join(dirs.workspace, "hello.txt"), "utf8"), "staged-sentinel\n");
 });
 
-test("a trailing separator in the evidence path still stages the file the read resolves to", async (t) => {
+test("a trailing separator in the evidence path stages and advertises the same file", async (t) => {
   const dirs = await setup(t, "slash-sentinel\n");
   const fake = await createFakePi(t, "judge-evidence");
   const { file: _file, ...rest } = params(piDeclaration(fake));
 
   const results = await judge({ ...rest, file: "hello.txt/" }, await context(dirs.root, dirs.workspace, dirs.baseline));
-  assert.match(results[0]?.reason ?? "", /hello:slash-sentinel/);
+  // One entry, under the name the read resolved to rather than the spelling that was declared.
+  assert.match(results[0]?.reason ?? "", /files:hello\.txt=slash-sentinel$/);
+});
+
+test("a backslash is part of the file name, not a separator", async (t) => {
+  const dirs = await setup(t, "backslash-sentinel\n");
+  await writeFile(join(dirs.workspace, "hello.txt\\"), "backslash-sentinel\n");
+  const fake = await createFakePi(t, "judge-evidence");
+  const { file: _file, ...rest } = params(piDeclaration(fake));
+
+  const results = await judge(
+    { ...rest, file: "hello.txt\\" },
+    await context(dirs.root, dirs.workspace, dirs.baseline),
+  );
+  const reason = results[0]?.reason ?? "";
+  // The backslash stays part of the name, so the staged entry is `hello.txt\`, not `hello.txt`.
+  assert.match(reason, /files:hello\.txt\\=backslash-sentinel$/);
+  assert.doesNotMatch(reason, /files:hello\.txt=/);
 });
 
 test("the judge stages the rendered trace and the prompt names it instead of a file", async (t) => {
@@ -184,7 +201,7 @@ test("the judge stages the rendered trace and the prompt names it instead of a f
     { ...(await context(dirs.root, dirs.workspace, dirs.baseline)), trace },
   );
   const reason = results[0]?.reason ?? "";
-  assert.match(reason, /trace:\[1\] message/);
+  assert.match(reason, /files:trace\.md=\[1\] message/);
   assert.match(reason, /tool call: cat deploy\.log/);
 });
 
@@ -227,7 +244,7 @@ test("a file the run never wrote is staged as absent and named as missing", asyn
   // Nothing is materialized in its place: the judge's workspace holds no stand-in file.
   const absent = await createFakePi(t, "judge-evidence");
   const staged = await judge(params(piDeclaration(absent)), await context(dirs.root, dirs.workspace, dirs.baseline));
-  assert.match(staged[0]?.reason ?? "", /hello:\(absent\)/);
+  assert.match(staged[0]?.reason ?? "", /files:\(none\)/);
 });
 
 test("the declared runner record reaches the engine, and an undeclared one inherits the case runner", async (t) => {
@@ -303,6 +320,7 @@ test("aborting the run stops the judge's runner instead of waiting for it", asyn
     // Only the runner's own stop releases it: nothing else would end this run.
     run: () => {
       if (stopped) return Promise.resolve(verdict);
+      started?.();
       return new Promise((resolve) => {
         release = () => resolve(verdict);
       });
@@ -314,16 +332,79 @@ test("aborting the run stops the judge's runner instead of waiting for it", asyn
     },
   };
   const controller = new AbortController();
+  let started: (() => void) | undefined;
+  const running = new Promise<void>((resolve) => {
+    started = resolve;
+  });
   const checkContext = {
     ...(await context(dirs.root, dirs.workspace, dirs.baseline)),
     signal: AbortSignal.any([controller.signal, AbortSignal.timeout(5_000)]),
   };
 
   const pending = judge(params(undefined), checkContext, async () => ({ type: "stub", runner: stub }));
+  await running;
   controller.abort();
   const results = await pending;
   assert.equal(results[0]?.status, "pass");
   assert.ok(stops.length >= 1, "the abort handler did not stop the runner");
+});
+
+test("an already cancelled run never starts the judge's runner", async (t) => {
+  const dirs = await setup(t);
+  const starts: string[] = [];
+  let stops = 0;
+  const stub: Runner = {
+    run: async () => {
+      starts.push("run");
+      return { finalText: '{"criteria":[{"pass":true,"reason":"ok"}]}', diagnostics: [] };
+    },
+    stop: async () => {
+      stops += 1;
+    },
+  };
+  const controller = new AbortController();
+  controller.abort();
+
+  await assert.rejects(
+    judge(
+      params(undefined),
+      { ...(await context(dirs.root, dirs.workspace, dirs.baseline)), signal: controller.signal },
+      async () => ({
+        type: "stub",
+        runner: stub,
+      }),
+    ),
+    (error: unknown) => error instanceof JudgeError && /cancelled before its runner started/.test(error.message),
+  );
+  assert.deepEqual(starts, []);
+  assert.equal(stops, 0);
+});
+
+test("a cancellation during HOME preparation does not launch the runner either", async (t) => {
+  const dirs = await setup(t);
+  const starts: string[] = [];
+  const controller = new AbortController();
+  const stub: Runner = {
+    prepareHome: async () => {
+      controller.abort();
+      return [];
+    },
+    run: async () => {
+      starts.push("run");
+      return { finalText: '{"criteria":[{"pass":true,"reason":"ok"}]}', diagnostics: [] };
+    },
+    stop: async () => {},
+  };
+
+  await assert.rejects(
+    judge(
+      params(undefined),
+      { ...(await context(dirs.root, dirs.workspace, dirs.baseline)), signal: controller.signal },
+      async () => ({ type: "stub", runner: stub }),
+    ),
+    (error: unknown) => error instanceof JudgeError && /cancelled before its runner started/.test(error.message),
+  );
+  assert.deepEqual(starts, []);
 });
 
 test("judge rejects invalid parameters before launch", async (t) => {
@@ -342,7 +423,14 @@ test("judge rejects invalid parameters before launch", async (t) => {
   );
   await assert.rejects(() => parse({ file: "hello.txt", rubric: [""] }), ConfigError);
   // The staged trace owns its own path, so an evidence file cannot land on it.
-  for (const file of ["trace.md", "Trace.MD", "trace.md/report.txt"]) {
+  for (const file of [
+    "trace.md",
+    "Trace.MD",
+    "trace.md/report.txt",
+    "./trace.md",
+    "./Trace.MD/report.txt",
+    "./trace.md/",
+  ]) {
     await assert.rejects(
       () => parse({ file, trace: true, rubric: ["x"] }),
       /file cannot be trace\.md, or under it/,

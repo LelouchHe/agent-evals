@@ -3,7 +3,16 @@
 // Deterministic fake Pi RPC process for tests. Behavior is selected by a
 // "scenario" file beside this script; no model or network is involved.
 import { execFileSync, spawn } from "node:child_process";
-import { existsSync, readFileSync, readdirSync, rmdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  readFileSync,
+  readdirSync,
+  rmdirSync,
+  rmSync,
+  statSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { dirname, join } from "node:path";
 
 const here = dirname(process.argv[1] ?? process.cwd());
@@ -200,11 +209,18 @@ function handlePrompt(command) {
       settle("```json\n" + JSON.stringify({ criteria: [{ criterion: "a", pass: true, reason: "ok" }] }) + "\n```");
       break;
     case "judge-evidence": {
-      // Reports what the judge's own workspace holds, proving the checker staged it there.
-      const read = (name) =>
-        existsSync(join(process.cwd(), name)) ? readFileSync(join(process.cwd(), name), "utf8").trim() : "(absent)";
+      // Reports every entry of the judge's own workspace with its content, under whatever name
+      // the checker staged it. Nothing is looked up by a name the test chose.
+      const cwd = process.cwd();
+      const entries = readdirSync(cwd).sort();
+      const files = entries.map((name) => {
+        const path = join(cwd, name);
+        return `${name}=${statSync(path).isFile() ? readFileSync(path, "utf8").trim() : "(directory)"}`;
+      });
       settle(
-        JSON.stringify({ criteria: [{ pass: true, reason: `hello:${read("hello.txt")} trace:${read("trace.md")}` }] }),
+        JSON.stringify({
+          criteria: [{ pass: true, reason: `files:${files.length === 0 ? "(none)" : files.join(" ")}` }],
+        }),
       );
       break;
     }

@@ -186,6 +186,46 @@ test("a judge's declared runner resolves its placeholders once, without expandin
   assert.deepEqual(seen, ["case-key", "${TMPDIR}"]);
 });
 
+test("an inherited runner gets its own copy of the case declaration", async (t) => {
+  const seen: unknown[] = [];
+  const stub: RunnerDefinition<{ readonly state: { readonly n: number } }> = {
+    type: "stub",
+    // `z.custom` keeps the value it is given, so a shared declaration would be visible here.
+    params: z.strictObject({ state: z.custom<{ readonly n: number }>((value) => typeof value === "object") }),
+    create: (params) => {
+      const state = params.state as { n: number };
+      seen.push(state.n);
+      state.n += 1;
+      return {
+        run: async () => ({ finalText: '{"criteria":[{"pass":true,"reason":"ok"}]}', diagnostics: [] }),
+        stop: async () => {},
+      };
+    },
+  };
+  const registry = createRegistry();
+  addRunner(registry, stub, "test");
+  addChecker(registry, judgeChecker, "built-in");
+
+  const casePath = join(await makeTempDir(t, "ae-judge-copy-"), "case.yml");
+  await writeFile(
+    casePath,
+    stringify({
+      input: "Do the task.",
+      checks: [{ $type: "judge", file: "report.md", rubric: ["x"] }],
+      runner: { $type: "stub", state: { n: 0 } },
+    }),
+  );
+  const record = await runEvaluation({
+    case: await loadCase(casePath),
+    registry,
+    resultsDir: await makeTempDir(t, "ae-judge-copy-results-"),
+    tempParent: await makeTempDir(t, "ae-judge-copy-runs-"),
+  });
+
+  assert.equal(record.status, "pass", record.error);
+  assert.deepEqual(seen, [0, 0]);
+});
+
 test("a runner a checker declares is reported as that check's error, not the case runner's", async (t) => {
   const stub: RunnerDefinition<{ readonly apiKey: string }> = {
     type: "stub",

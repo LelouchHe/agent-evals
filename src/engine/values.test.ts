@@ -105,3 +105,18 @@ test("lookups happen only for real placeholders and only after every string is v
     /environment value MISSING is not defined/,
   );
 });
+
+test("a $type selector stays literal, while ordinary data under that name is still substituted", async () => {
+  // A selector is a registry key: a placeholder there would name an implementation that cannot
+  // exist, so the text is left exactly as written.
+  const literal = (await substituteValues({ $type: "stub${", key: "${HOME}" }, "checker", source({}))) as {
+    $type: string;
+  };
+  assert.equal(literal.$type, "stub${");
+
+  // Anything else under the name `$type` is data, and data is substituted like anywhere else.
+  const nested = (await substituteValues({ $type: { text: "${HOME}" } }, "checker", source({}))) as {
+    $type: { text: string };
+  };
+  assert.equal(nested.$type.text, "/run/home");
+});

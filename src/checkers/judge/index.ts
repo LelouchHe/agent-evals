@@ -1,5 +1,5 @@
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { dirname, join, posix } from "node:path";
 import { z } from "zod";
 import { errorMessage, type ImplementationRecord } from "../../engine/config.ts";
 import { nonEmptyTrimmedString, runRelativePathSchema } from "../../engine/params.ts";
@@ -110,30 +110,41 @@ class JudgeChecker implements Checker {
  * result, because a runner that did not tear down cleanly did not judge cleanly either.
  */
 async function runJudge(runner: Runner, context: RunnerContext): Promise<RunnerOutcome> {
+  if (context.signal.aborted) {
+    throw new JudgeError("judge was cancelled before its runner started");
+  }
   let outcome: RunnerOutcome | undefined;
   let failure: unknown;
+  let failed = false;
+  const fail = (error: unknown): void => {
+    failure = error;
+    failed = true;
+  };
   const stopOnAbort = (): void => {
     void runner.stop().catch(() => {});
   };
-  if (context.signal.aborted) {
-    stopOnAbort();
-  } else {
-    context.signal.addEventListener("abort", stopOnAbort, { once: true });
-  }
+  context.signal.addEventListener("abort", stopOnAbort, { once: true });
   try {
     await runner.prepareHome?.(context);
+    // The only stop a runner may need is the one the abort handler already sent, so a run that
+    // starts after cancellation would have nothing left to end it.
+    if (context.signal.aborted) {
+      throw new JudgeError("judge was cancelled before its runner started");
+    }
     outcome = await runner.run(context);
   } catch (error) {
-    failure = error;
+    fail(error);
   } finally {
     context.signal.removeEventListener("abort", stopOnAbort);
     try {
       await runner.stop();
     } catch (error) {
-      failure ??= new JudgeError(`judge teardown failed: ${errorMessage(error)}`);
+      if (!failed) {
+        fail(new JudgeError(`judge teardown failed: ${errorMessage(error)}`));
+      }
     }
   }
-  if (failure !== undefined) {
+  if (failed) {
     throw failure;
   }
   // Reaching here means `run` returned, so the outcome is the one it returned.
@@ -182,12 +193,11 @@ async function stageEvidence(
       }
     }
     if (content !== null) {
-      // The read accepts trailing separators; the destination has to name the file itself.
-      const target = join(workspaceDir, withoutTrailingSeparators(path));
+      const target = join(workspaceDir, stagedPath(path));
       await mkdir(dirname(target), { recursive: true, mode: 0o700 });
       await writeFile(target, content, { mode: 0o600 });
     }
-    evidence.push({ path, kind: "file", present: content !== null });
+    evidence.push({ path: stagedPath(path), kind: "file", present: content !== null });
   }
   if (params.trace) {
     await writeFile(join(workspaceDir, TRACE_PATH), `${renderTrace(context.trace!)}\n`, { mode: 0o600 });
@@ -198,13 +208,17 @@ async function stageEvidence(
 
 /** True when a declared evidence path would land on the trace's own destination. */
 function shadowsTrace(path: string): boolean {
-  const staged = withoutTrailingSeparators(path).toLowerCase();
+  const staged = stagedPath(path).toLowerCase();
   return staged === TRACE_PATH || staged.startsWith(`${TRACE_PATH}/`);
 }
 
-/** A path without its trailing separators, so it names the same entry a read resolves to. */
-function withoutTrailingSeparators(path: string): string {
-  return path.replace(/[\\/]+$/u, "");
+/**
+ * The run-relative path as the judge's workspace will hold it: POSIX segments, no `.` segments and
+ * no trailing separator, which is also the path the prompt advertises. A backslash is filename
+ * data on this platform, so it is left alone.
+ */
+function stagedPath(path: string): string {
+  return posix.normalize(path).replace(/\/+$/u, "");
 }
 
 function runnerDeclaration(record: Record<string, unknown>, context: z.RefinementCtx): ImplementationRecord {

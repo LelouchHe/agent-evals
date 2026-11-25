@@ -80,8 +80,9 @@ function walk(value: unknown, where: string, onString: (text: string, at: string
     const copy: Record<string, unknown> = {};
     for (const [key, item] of Object.entries(value)) {
       Object.defineProperty(copy, key, {
-        // `$type` selects an implementation, so it is a registry key rather than data.
-        value: key === "$type" ? item : walk(item, `${where}.${key}`, onString),
+        // A `$type` selector names an implementation, so it is a registry key rather than data;
+        // a non-string value under that name is ordinary data and is walked like any other.
+        value: key === "$type" && typeof item === "string" ? item : walk(item, `${where}.${key}`, onString),
         enumerable: true,
         writable: true,
         configurable: true,

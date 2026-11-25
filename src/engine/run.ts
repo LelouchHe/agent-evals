@@ -468,7 +468,9 @@ async function prepareImplementations(
     const definition = requireRunner(request.registry, declaration.$type);
     const params = await parseImplementationParams(
       definition.params,
-      record === undefined ? caseRunnerParams : paramsOf(record),
+      // Each instance gets its own copy: a schema may keep a value it was given, and the case
+      // runner's parameters are also the inherited judge's.
+      structuredClone(record === undefined ? caseRunnerParams : paramsOf(record)),
       `runner "${definition.type}"`,
     );
     return { type: definition.type, runner: await definition.create(params, context) };
