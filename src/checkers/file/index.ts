@@ -258,10 +258,11 @@ function describeChanges(
 
   const shown = changes
     .slice(0, 5)
-    .map((change) => `${change.kind} ${change.path}`)
+    .map((change) => `${change.kind} ${change.path === "" ? "." : change.path}`)
     .join(", ");
   const rest = changes.length > 5 ? `, and ${changes.length - 5} more` : "";
-  return truncate(`${changes.length} changes: ${shown}${rest}`, 300);
+  const count = `${changes.length} change${changes.length === 1 ? "" : "s"}`;
+  return truncate(`${count}: ${shown}${rest}`, 300);
 }
 
 /** A literal in quotes, or a regex between slashes, so the subject says which pattern was used. */
