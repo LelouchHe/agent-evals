@@ -42,7 +42,7 @@ The workspace is the project the agent is asked to change. `HOME` is the user it
 - **Separate user-level from project-level skills.** A project skill belongs in the workspace where the harness discovers project skills (`.agents/skills/`, `.claude/skills/`); a user-level skill belongs under the corresponding `~/` directory. Both are ordinary authoring copies, with `.agentevalsignore` applied.
 - **HOME is layered, not shared.** The agent file's settings, then its login files, then the case's `~/` entries. A case may replace an agent-placed settings file — settings are an evaluation variable — but never a login file.
 - **Evidence works the same way.** A `file` check accepts `~/` paths, and `trace` recognizes a `SKILL.md` the case placed in HOME. `changed` compares against what the case placed, so a restraint check over `~/` proves the case's own baseline was respected.
-- **Runners without a HOME reject `~/`.** `noop` and the native `pi` runner fail the case at load time rather than silently ignoring the placement. Use an ACP harness for HOME placement.
+- **Runners without a HOME reject `~/`.** The native `pi` runner fails the case at load time rather than silently ignoring the placement. Use an ACP harness or `noop` for HOME placement.
 
 A case that needs the harness's own settings changed places its own file over the agent-placed one: settings are an evaluation variable, and the case overlay runs last. It may not place over login state. A case that only needs `HOME` to resemble a user's home leaves the agent file's settings alone.
 
