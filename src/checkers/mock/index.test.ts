@@ -15,6 +15,7 @@ function implementationContext(mockTargets?: readonly string[]) {
   return {
     authoringDir: process.cwd(),
     runnerSupportsHome: true,
+    validateCheckPlatform: async () => {},
     validateFiles: (files: Readonly<Record<string, string>>) => validateCheckFiles(files, process.cwd()),
     values: {
       env: { require: (name: string) => Promise.reject(new Error(`no environment value ${name}`)) },

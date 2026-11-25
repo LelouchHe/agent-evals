@@ -291,6 +291,8 @@ test(
   async (t) => {
     const loaded = await loadCase(CASE, { caseName: "baseline" });
     assert.deepEqual(loaded.config.runner, { $type: "noop" });
+    // The worked example is where the field is first read, so it has to declare it.
+    assert.equal(loaded.config.expect, "fail");
     // Strip only the model-calling judges so the deterministic baseline runs offline.
     const record = await runEvaluation({
       case: deterministicCase(loaded, { $type: "noop" }),

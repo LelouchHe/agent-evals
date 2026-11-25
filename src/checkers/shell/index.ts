@@ -1,30 +1,15 @@
 import { z } from "zod";
-import { errorMessage } from "../../engine/config.ts";
-import { expectCheckFiles } from "../../engine/files.ts";
 import type { CheckResult, Checker, CheckerContext, CheckerDefinition } from "../../engine/registry.ts";
-import { assertSeatbeltAvailable } from "../../platform/macos/policy.ts";
 import { truncate } from "../../engine/truncate.ts";
 
 const MAX_REASON = 800;
 const MAX_SUBJECT = 200;
 
-/**
- * Syntactic validation only: the engine validates sources and stages them through
- * `context.validateFiles`, so extension checkers get the same rules without this schema.
- */
-const shellFilesSchema = z.record(z.string(), z.string()).superRefine((files, context) => {
-  try {
-    expectCheckFiles(files);
-  } catch (error) {
-    context.addIssue({ code: "custom", path: ["files"], message: errorMessage(error) });
-  }
-});
-
 const shellCheckParamsSchema = z.strictObject({
   /** A program and its arguments, started in the workspace root; never a shell interpreter. */
   run: z.array(z.string().min(1, "must be a non-empty string")).min(1, "must name a program"),
   /** Authoring files the engine stages into the workspace only after the agent stopped. */
-  files: shellFilesSchema.optional(),
+  files: z.record(z.string(), z.string()).optional(),
 });
 
 type ShellCheckParams = z.output<typeof shellCheckParamsSchema>;
@@ -34,7 +19,7 @@ export const shellChecker: CheckerDefinition<ShellCheckParams> = {
   type: "shell",
   params: shellCheckParamsSchema,
   async create(params, context) {
-    assertSeatbeltAvailable();
+    await context.validateCheckPlatform();
     if (params.files !== undefined) await context.validateFiles(params.files);
     return new ShellChecker(params);
   },

@@ -11,8 +11,8 @@ import { loadCase, loadCases } from "./engine/authoring.ts";
 import { ConfigError, errorMessage } from "./engine/config.ts";
 import { addChecker, addRunner, createRegistry, loadTrustedImplementations } from "./engine/registry.ts";
 import { executeEvaluation, prepareEvaluation, type PreparedEvaluation } from "./engine/run.ts";
-import { formatReport } from "./engine/report.ts";
-import type { EvaluationRecord } from "./engine/results.ts";
+import { formatMatrix, formatReport } from "./engine/report.ts";
+import { runOutcome, type EvaluationRecord } from "./engine/results.ts";
 import { describePlacement } from "./engine/placement.ts";
 import { formatResolvedCase } from "./engine/view.ts";
 import { piRunner } from "./runners/pi/index.ts";
@@ -35,6 +35,7 @@ Options:
   --results-dir <path>     Where run records are written (default: .agent-evals)
   --extension-dir <path>   Trusted extension root, one implementation per subdirectory (repeatable)
   --files                  With view: list every placed and excluded path
+  --matrix                 With report: one table of checks by case instead of the session report
   --help                   Show this help
 
 Configuration errors exit with code 2 before any run resource is created.
@@ -49,6 +50,7 @@ interface CliOptions {
   readonly resultsDir?: string;
   readonly extensionDirs: readonly string[];
   readonly showFiles: boolean;
+  readonly matrix: boolean;
   readonly reps: number;
   /** Additional paths for `report`; the first one is `configPath`. */
   readonly extraPaths: readonly string[];
@@ -83,7 +85,8 @@ async function main(argv: readonly string[]): Promise<number> {
       return 0;
     }
     if (options.command === "report") {
-      process.stdout.write(formatReport(await readRecords(options.configPath, ...options.extraPaths)));
+      const records = await readRecords(options.configPath, ...options.extraPaths);
+      process.stdout.write(options.matrix ? formatMatrix(records) : formatReport(records));
       return 0;
     }
     if (options.command === "config" || options.command === "login") {
@@ -195,6 +198,7 @@ function parseArguments(argv: readonly string[]): CliOptions {
         "results-dir": { type: "string" },
         "extension-dir": { type: "string", multiple: true },
         files: { type: "boolean" },
+        matrix: { type: "boolean" },
         reps: { type: "string" },
         help: { type: "boolean", short: "h" },
       },
@@ -240,6 +244,9 @@ function parseArguments(argv: readonly string[]): CliOptions {
   if (command !== "view" && values.files === true) {
     throw new ConfigError("--files applies only to view");
   }
+  if (command !== "report" && values.matrix === true) {
+    throw new ConfigError("--matrix applies only to report");
+  }
   if (
     command === "report" &&
     (values.case !== undefined ||
@@ -258,6 +265,7 @@ function parseArguments(argv: readonly string[]): CliOptions {
     ...(values["results-dir"] === undefined ? {} : { resultsDir: resolve(values["results-dir"]) }),
     extensionDirs,
     showFiles: values.files === true,
+    matrix: values.matrix === true,
     reps,
     extraPaths: unexpected.map((path) => resolve(path)),
   };
@@ -329,7 +337,7 @@ async function findResultFiles(path: string): Promise<string[]> {
 
 function printRecord(record: EvaluationRecord, resultsDir: string): void {
   const caseLabel = record.case.name === undefined ? record.case.path : `${record.case.name} (${record.case.path})`;
-  const lines = [`run ${record.runId}: ${record.status}`, `  case: ${caseLabel}`];
+  const lines = [`run ${record.runId}: ${runOutcome(record)}`, `  case: ${caseLabel}`];
   lines.push(`  runner ${record.runner.type}: ${record.runner.status} (${record.runner.durationMs}ms)`);
   for (const check of record.checks) {
     lines.push(
@@ -343,11 +351,14 @@ function printRecord(record: EvaluationRecord, resultsDir: string): void {
   process.stdout.write(lines.join("\n") + "\n");
 }
 
+/** The outcome a reader sees, with the case's `expect` applied; an error is still an error. */
 function exitCode(record: EvaluationRecord): number {
-  switch (record.status) {
+  switch (runOutcome(record)) {
     case "pass":
+    case "expected-fail":
       return 0;
     case "fail":
+    case "unexpected-pass":
       return 1;
     default:
       return 2;
@@ -357,12 +368,12 @@ function exitCode(record: EvaluationRecord): number {
 /** One summary line per executed case: name, status and the retained result record. */
 function printCaseLine(record: EvaluationRecord, resultsDir: string, prefix = ""): void {
   const name = record.case.name ?? record.case.path;
-  process.stdout.write(`${prefix}${name}: ${record.status} ${join(resultsDir, record.runId, "result.json")}\n`);
+  process.stdout.write(`${prefix}${name}: ${runOutcome(record)} ${join(resultsDir, record.runId, "result.json")}\n`);
 }
 
 /** Zero only when every case passed, 1 for failed checks, 2 for anything that could not be judged. */
 function aggregateExit(records: readonly EvaluationRecord[]): number {
-  if (records.every((record) => record.status === "pass")) {
+  if (records.every((record) => exitCode(record) === 0)) {
     return 0;
   }
   return records.some((record) => exitCode(record) === 2) ? 2 : 1;

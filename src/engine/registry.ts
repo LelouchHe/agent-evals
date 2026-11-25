@@ -125,6 +125,8 @@ export interface ImplementationContext {
   readonly mockTargets?: readonly string[];
   /** True when the selected runner gives the run a HOME a case may place files in. */
   readonly runnerSupportsHome: boolean;
+  /** Fail at load time when the engine's check sandbox cannot run on this host. */
+  readonly validateCheckPlatform: () => Promise<void>;
 }
 
 export interface RunnerDefinition<P> {
@@ -173,11 +175,20 @@ export interface CheckerContext {
 
 export type CheckStatus = "pass" | "fail" | "error";
 
+/** A checker's judgment. An implementation never says which declaration produced it. */
 export interface CheckResult {
   readonly checker: string;
   readonly subject: string;
   readonly status: CheckStatus;
   readonly reason: string;
+}
+
+/**
+ * A result as the engine records it: the checker's judgment plus the declared check that produced
+ * it. The engine owns this stamp; a record written before it existed lacks the field.
+ */
+export interface RecordedCheckResult extends CheckResult {
+  readonly declaration?: number;
 }
 
 /** A prepared checker instance; its factory already captured validated parameters. */

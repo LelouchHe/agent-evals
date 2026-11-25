@@ -2,6 +2,7 @@ import { randomBytes } from "node:crypto";
 import { cp, lstat, mkdir, realpath, rm, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { assertSeatbeltAvailable } from "../platform/macos/policy.ts";
 import {
   ConfigError,
   errorMessage,
@@ -12,7 +13,7 @@ import {
 import {
   requireChecker,
   requireRunner,
-  type CheckResult,
+  type RecordedCheckResult,
   type Checker,
   type ImplementationContext,
   type MockRecord,
@@ -183,7 +184,7 @@ export async function executeEvaluation(prepared: PreparedEvaluation): Promise<E
     durationMs: 0,
     finalText: null,
   };
-  let checks: CheckResult[] = [];
+  let checks: RecordedCheckResult[] = [];
   let trace: readonly TraceEntry[] | undefined;
   let usage: RunnerUsage | undefined;
   let mockRecords: readonly MockRecord[] | undefined;
@@ -462,6 +463,7 @@ async function prepareImplementations(
     validateFiles: (files) => validateCheckFiles(files, request.case.dir, "check files", signal),
     ...(mockTargets === undefined ? {} : { mockTargets }),
     runnerSupportsHome,
+    validateCheckPlatform: async () => assertSeatbeltAvailable(),
   };
   const runnerParams = await parseImplementationParams(
     runnerDefinition.params,
@@ -553,11 +555,12 @@ async function runChecks(
   timeoutMs: number,
   signal: AbortSignal,
   markCancelled: () => void,
-): Promise<CheckResult[]> {
-  const results: CheckResult[] = [];
-  for (const check of prepared) {
+): Promise<RecordedCheckResult[]> {
+  const results: RecordedCheckResult[] = [];
+  for (const [declaration, check] of prepared.entries()) {
     if (signal.aborted) {
       results.push({
+        declaration,
         checker: check.type,
         subject: `${check.type} check`,
         status: "error",
@@ -605,19 +608,20 @@ async function runChecks(
         }, timeoutMs + 1_000);
       });
       const settled = await Promise.race([promise, timeout]);
-      // A pass that arrives after the budget signal fired is not trusted: the deadline exists to
-      // bound the check, and claiming success past it is the loophole. A checker that reports its
-      // own error or fail is kept, because that is the deadline it is already reporting.
+      // A verdict that arrives after the budget signal fired is not trusted in either direction:
+      // a late pass claims success past the deadline, and a late fail may be a partial comparison
+      // that a negative case would otherwise read as the expected outcome.
       results.push(
         ...settled.map((result) =>
-          timedOutCheck && result.status === "pass"
+          timedOutCheck && result.status !== "error"
             ? {
+                declaration,
                 checker: result.checker,
                 subject: result.subject,
                 status: "error" as const,
                 reason: truncate(`checker exceeded the ${timeoutMs}ms execution timeout: ${result.reason}`, 800),
               }
-            : result,
+            : { ...result, declaration },
         ),
       );
     } catch (caught) {
@@ -630,6 +634,7 @@ async function runChecks(
         markCancelled();
       }
       results.push({
+        declaration,
         checker: check.type,
         subject: `${check.type} check`,
         status: "error",

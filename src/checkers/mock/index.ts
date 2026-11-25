@@ -9,7 +9,7 @@ import {
   type MockArgument,
   type MockPattern,
 } from "../../engine/config.ts";
-import { compileRules, matchCall, type CompiledRules } from "../../engine/mock-match.ts";
+import { compileMockArgs } from "../../engine/mock-match.ts";
 import type { CheckResult, Checker, CheckerContext, CheckerDefinition } from "../../engine/registry.ts";
 import { truncate } from "../../engine/truncate.ts";
 
@@ -83,19 +83,19 @@ function requireDeclaredTarget(targets: readonly string[] | undefined, requested
 class MockChecker implements Checker {
   readonly #params: MockCheckParams;
   readonly #target: string;
-  readonly #rules: CompiledRules;
+  readonly #matches: (argv: readonly string[]) => boolean;
 
   constructor(params: MockCheckParams, target: string) {
     this.#params = params;
     this.#target = target;
-    this.#rules = compileRules([{ args: params.args, action: { kind: "pass" } }]);
+    this.#matches = compileMockArgs(params.args);
   }
 
   readonly check = async (context: CheckerContext): Promise<readonly CheckResult[]> => {
     const subject = `${this.#target} ${renderArgs(this.#params.args)}`.trim();
     const calls = (context.mockRecords ?? [])
       .filter((record) => record.target === this.#target)
-      .filter((record) => matchCall(this.#rules, record.arguments) !== undefined);
+      .filter((record) => this.#matches(record.arguments));
     const expected = this.#params.times;
     const matched = expected === undefined ? calls.length >= 1 : calls.length === expected;
     return [

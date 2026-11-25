@@ -16,6 +16,9 @@ export interface ImplementationRecord extends ImplementationParams {
   readonly $type: string;
 }
 
+/** What the case's checks are expected to do: pass, or fail as a vacancy or negative baseline. */
+export type CaseExpectation = "pass" | "fail";
+
 /** One complete, executable case after composition. */
 export interface CaseConfig {
   readonly input: string;
@@ -24,6 +27,8 @@ export interface CaseConfig {
   readonly files?: Readonly<Record<string, string>>;
   readonly timeoutMs?: number;
   readonly mocks?: MocksConfig;
+  /** Absent means `pass`: a case is a test unless it declares itself a negative one. */
+  readonly expect?: CaseExpectation;
   readonly checks: readonly ImplementationRecord[];
   readonly runner: ImplementationRecord;
 }
@@ -106,6 +111,7 @@ export const CASE_FIELD_KEYS: ReadonlySet<string> = new Set([
   "files",
   "timeoutMs",
   "mocks",
+  "expect",
   "checks",
   "runner",
 ]);
@@ -133,6 +139,7 @@ export function expectCaseConfig(value: unknown, label: string): CaseConfig {
   const files = record.files === undefined ? undefined : expectFiles(record.files, label);
   const timeoutMs = record.timeoutMs === undefined ? undefined : expectTimeout(record.timeoutMs, `${label}.timeoutMs`);
   const mocks = record.mocks === undefined ? undefined : expectMocks(record.mocks, `${label}.mocks`);
+  const expect = record.expect === undefined ? undefined : expectExpectation(record.expect, `${label}.expect`);
   if (!Array.isArray(record.checks) || record.checks.length === 0) {
     throw new ConfigError(`${label}.checks must be a non-empty list`);
   }
@@ -145,9 +152,17 @@ export function expectCaseConfig(value: unknown, label: string): CaseConfig {
     ...(files === undefined ? {} : { files }),
     ...(timeoutMs === undefined ? {} : { timeoutMs }),
     ...(mocks === undefined ? {} : { mocks }),
+    ...(expect === undefined ? {} : { expect }),
     checks,
     runner,
   };
+}
+
+function expectExpectation(value: unknown, label: string): CaseExpectation {
+  if (value === "pass" || value === "fail") {
+    return value;
+  }
+  throw new ConfigError(`${label} must be "pass" or "fail"`);
 }
 
 function expectRecord(value: unknown, label: string): Record<string, unknown> {

@@ -1,18 +1,21 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { formatReport } from "./report.ts";
+import { ConfigError } from "./config.ts";
+import { formatMatrix, formatReport } from "./report.ts";
 import type { EvaluationRecord, RunStatus } from "./results.ts";
 
 interface RunSpec {
   readonly name?: string;
   readonly status: RunStatus;
-  readonly checks: readonly (readonly [string, "pass" | "fail" | "error", string?])[];
+  readonly checks: readonly (readonly [string, "pass" | "fail" | "error", string?, number?])[];
+  readonly declarations?: readonly unknown[];
   readonly agent?: string;
   readonly durationMs?: number;
   readonly tokens?: number;
   readonly cost?: number;
   readonly path?: string;
   readonly model?: string;
+  readonly expect?: "pass" | "fail";
 }
 
 function record(index: number, spec: RunSpec): EvaluationRecord {
@@ -26,7 +29,8 @@ function record(index: number, spec: RunSpec): EvaluationRecord {
     case: { path: spec.path ?? "/cases/example.yml", ...(spec.name === undefined ? {} : { name: spec.name }) },
     resolvedConfig: {
       input: "task",
-      checks: [],
+      ...(spec.expect === undefined ? {} : { expect: spec.expect }),
+      checks: spec.declarations ?? spec.checks.map(([subject]) => ({ $type: "trace", event: "skill", name: subject })),
       runner: {
         $type: "acp",
         agent: spec.agent ?? "/agents/pi.yml",
@@ -41,11 +45,12 @@ function record(index: number, spec: RunSpec): EvaluationRecord {
       finalText: null,
       ...(tokens === undefined ? {} : { usage: { tokens, ...(cost === undefined ? {} : { cost }) } }),
     },
-    checks: spec.checks.map(([subject, status, reason]) => ({
+    checks: spec.checks.map(([subject, status, reason, declaration], index) => ({
       checker: "trace",
       subject,
       status,
       reason: reason ?? "observed",
+      declaration: declaration ?? index,
     })),
     diagnostics: [],
     cleanup: { status: "removed" },
@@ -178,5 +183,150 @@ test("a run that recorded no check counts as not judged rather than leaving the 
     record(1, { name: "case", status: "fail", checks: [["a", "fail", "observed"]] }),
     record(2, { name: "case", status: "error", checks: [] }),
   ]);
-  assert.match(report, /^ {8}✗ a {2}1\/2 fail, 1\/2 not judged — observed$/mu);
+  assert.match(report, /^ {8}✗ a {2}1\/1 fail, 1\/2 not judged — observed$/mu);
+});
+
+test("a negative case is read against its expectation", () => {
+  const report = formatReport([
+    record(1, { name: "baseline", status: "fail", expect: "fail", checks: [["asked", "fail", "no steps"]] }),
+    record(2, { name: "baseline", status: "fail", expect: "fail", checks: [["asked", "fail", "no steps"]] }),
+    record(3, { name: "skill", status: "pass", checks: [["asked", "pass"]] }),
+  ]);
+
+  assert.match(report, /^EXPECTED FAIL baseline/mu);
+  assert.match(report, /^PASS {10}skill/mu);
+  assert.match(report, /^3 runs · 1 passed · 2 fail \(2 expected\)/mu);
+});
+
+test("a negative case that passes is an unexpected pass", () => {
+  const report = formatReport([
+    record(1, { name: "baseline", status: "pass", expect: "fail", checks: [["asked", "pass"]] }),
+    record(2, { name: "baseline", status: "fail", expect: "fail", checks: [["asked", "fail"]] }),
+  ]);
+
+  assert.match(report, /^UNEXPECTED PASS baseline/mu);
+  assert.match(report, /^2 runs · 1 passed \(1 unexpected\) · 1 fail \(1 expected\)/mu);
+});
+
+test("the matrix puts a check per row and a case per column", () => {
+  const text = formatMatrix([
+    record(1, {
+      name: "skill",
+      status: "pass",
+      checks: [
+        ["resource|exists", "pass"],
+        ["asked", "pass"],
+      ],
+    }),
+    record(2, {
+      name: "skill",
+      status: "pass",
+      checks: [
+        ["resource|exists", "pass"],
+        ["asked", "pass"],
+      ],
+    }),
+    record(3, {
+      name: "baseline",
+      status: "fail",
+      expect: "fail",
+      checks: [
+        ["resource|exists", "pass"],
+        ["asked", "fail", "no steps"],
+      ],
+    }),
+    record(4, {
+      name: "baseline",
+      status: "fail",
+      expect: "fail",
+      checks: [
+        ["resource|exists", "pass"],
+        ["asked", "fail", "no steps"],
+      ],
+    }),
+  ]);
+
+  assert.ok(text.includes("| # | Check | skill | baseline (expect fail) |"), text);
+  assert.ok(text.includes("| 1 | trace resource\\|exists | 2/2 | 2/2 |"), text);
+  assert.ok(text.includes("| 2 | trace asked | 2/2 | 0/2 |"), text);
+});
+
+test("a matrix cell names errors and runs that recorded no check", () => {
+  const declarations = [{ $type: "trace", event: "skill", name: "asked" }];
+  const text = formatMatrix([
+    record(1, { name: "case", status: "pass", declarations, checks: [["asked", "pass"]] }),
+    record(2, { name: "case", status: "error", declarations, checks: [["asked", "error", "deadline"]] }),
+    record(3, { name: "case", status: "error", declarations, checks: [] }),
+  ]);
+
+  assert.match(text, /^\| 1 \| trace asked \| 1\/2 \(1 err\) \(1 not judged\) \|$/mu);
+});
+
+test("a matrix refuses declarations that differ even when their result labels match", () => {
+  assert.throws(
+    () =>
+      formatMatrix([
+        record(1, {
+          name: "a",
+          status: "pass",
+          declarations: [{ $type: "trace", event: "skill", name: "x", times: 2 }],
+          checks: [["skill x", "pass"]],
+        }),
+        record(2, {
+          name: "b",
+          status: "pass",
+          declarations: [{ $type: "trace", event: "skill", name: "x", times: 0 }],
+          checks: [["skill x", "pass"]],
+        }),
+      ]),
+    ConfigError,
+  );
+});
+
+test("a matrix groups one declaration's results across different result counts", () => {
+  const declarations = [{ $type: "file", path: "vault" }];
+  const text = formatMatrix([
+    record(1, {
+      name: "run",
+      status: "fail",
+      declarations,
+      checks: [
+        ["pattern one", "pass", undefined, 0],
+        ["pattern two", "fail", undefined, 0],
+      ],
+    }),
+    record(2, { name: "other", status: "error", declarations, checks: [["file check", "error", "no evidence", 0]] }),
+  ]);
+
+  // The declaration-level error is its own identity, not the first pattern's slot.
+  assert.ok(text.includes("| 1 | trace pattern one | 1/1 | — (1 not judged) |"), text);
+  assert.ok(text.includes("| 2 | trace pattern two | 0/1 | — (1 not judged) |"), text);
+  assert.ok(text.includes("| 3 | trace file check | — (1 not judged) | 0/1 (1 err) |"), text);
+});
+
+test("a matrix names runs that recorded no result at all", () => {
+  const declarations = [{ $type: "judge", rubric: ["asked"] }];
+  const text = formatMatrix([
+    record(1, { name: "a", status: "error", declarations, checks: [] }),
+    record(2, { name: "b", status: "error", declarations, checks: [] }),
+  ]);
+
+  assert.ok(text.includes("No check result was recorded for any repetition."), text);
+});
+
+test("a matrix refuses records that do not name their declaration", () => {
+  const old = record(1, {
+    name: "a",
+    status: "pass",
+    declarations: [{ $type: "file", path: "x" }],
+    checks: [["x", "pass"]],
+  });
+  const { declaration: _declaration, ...result } = old.checks[0]!;
+  assert.throws(() => formatMatrix([{ ...old, checks: [result] }]), ConfigError);
+});
+
+test("a matrix keeps a carriage return out of the table", () => {
+  const text = formatMatrix([record(1, { name: "a", status: "pass", checks: [["line\rone", "pass"]] })]);
+  assert.ok(text.includes("| 1 | trace line one | 1/1 |"), text);
+  assert.equal(text.includes("\r"), false, text);
 });

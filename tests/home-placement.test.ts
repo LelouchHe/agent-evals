@@ -6,19 +6,33 @@ import { stringify } from "yaml";
 import { fileChecker } from "../src/checkers/file/index.ts";
 import { loadCase } from "../src/engine/authoring.ts";
 import { ConfigError } from "../src/engine/config.ts";
-import { addChecker, addRunner, createRegistry } from "../src/engine/registry.ts";
+import { addChecker, addRunner, createRegistry, type RunnerDefinition } from "../src/engine/registry.ts";
 import { runEvaluation } from "../src/engine/run.ts";
 import { acpRunner } from "../src/runners/acp/index.ts";
+import { z } from "zod";
 import { noopRunner } from "../src/runners/noop/index.ts";
 import { makeAcpAgent } from "./helpers/acp-agent.ts";
 import { makeTempDir } from "./helpers/fake-pi-control.ts";
 
 type Declaration = Record<string, unknown>;
 
+/** A runner that declares no HOME, so the rejection path is not tied to `noop`'s capability. */
+const homeLessParams = z.strictObject({});
+const homeLessRunner: RunnerDefinition<z.output<typeof homeLessParams>> = {
+  type: "home-less",
+  params: homeLessParams,
+  create: () => ({
+    run: async () => ({ finalText: null, diagnostics: [] }),
+    stop: async () => {},
+    trace: () => [],
+  }),
+};
+
 function registry() {
   const value = createRegistry();
   addRunner(value, acpRunner, "built-in");
   addRunner(value, noopRunner, "built-in");
+  addRunner(value, homeLessRunner, "built-in");
   addChecker(value, fileChecker, "built-in");
   return value;
 }
@@ -62,14 +76,18 @@ async function runHomeCase(t: TestContext, build: (root: string) => Promise<Decl
   return { fixture, record, casePath };
 }
 
-async function runNoopCase(t: TestContext, build: (root: string) => Promise<Declaration> | Declaration) {
+async function runNoopCase(
+  t: TestContext,
+  build: (root: string) => Promise<Declaration> | Declaration,
+  runner = "noop",
+) {
   const root = await makeTempDir(t, "ae-home-noop-");
   const casePath = join(root, "case.yml");
   await writeFile(
     casePath,
     stringify({
       input: "task",
-      runner: { $type: "noop" },
+      runner: { $type: runner },
       checks: [{ $type: "file", path: "x", exists: false }],
       ...(await build(root)),
     }),
@@ -183,7 +201,7 @@ test("two case entries and a file-versus-directory conflict fail before the harn
   }
 });
 
-test("a runner without a HOME rejects case files and file checks under ~/", async (t) => {
+test("a runner that declares no HOME rejects case files and file checks under ~/", async (t) => {
   const declarations: readonly [(root: string) => Declaration | Promise<Declaration>, RegExp][] = [
     [
       async (root) => {
@@ -195,7 +213,26 @@ test("a runner without a HOME rejects case files and file checks under ~/", asyn
     [() => ({ checks: [{ $type: "file", path: "~/value.md", exists: true }] }), /does not provide/],
   ];
   for (const [build, message] of declarations) {
-    const { casePath, root } = await runNoopCase(t, build);
-    await assert.rejects(() => runCase(casePath, root, "noop"), message);
+    const { casePath, root } = await runNoopCase(t, build, "home-less");
+    await assert.rejects(() => runCase(casePath, root, "home-less"), message);
   }
+});
+
+test("noop places the case's ~/ entries, compares them and needs no agent", async (t) => {
+  const { casePath, root } = await runNoopCase(t, async (root) => {
+    await source(root, "value", "content\n");
+    return {
+      files: { "~/notes/today.md": "value/today.md" },
+      checks: [
+        { $type: "file", path: "~/notes/today.md", matches: "content" },
+        { $type: "file", path: "~/notes/today.md", changed: false },
+      ],
+    };
+  });
+  const record = await runCase(casePath, root, "noop-home");
+  assert.equal(record.status, "pass");
+  assert.deepEqual(
+    record.checks.map((check) => check.status),
+    ["pass", "pass"],
+  );
 });

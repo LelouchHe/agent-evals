@@ -3,6 +3,7 @@ import {
   workspaceTargetPath,
   type MockAction,
   type MockArgument,
+  type MockArgs,
   type MockPattern,
   type MockRule,
   type ShellMocks,
@@ -53,6 +54,16 @@ export function compileShellMocks(shell: ShellMocks): CompiledShellMocks {
     }
   }
   return { path, workspace };
+}
+
+/**
+ * Compile one argument specification into a predicate over a call's argv. A checker asks whether a
+ * recorded call matches; ordered dispatch and actions belong to the host, not to the check.
+ */
+export function compileMockArgs(args: MockArgs): (argv: readonly string[]) => boolean {
+  const positional = args.positional.map(compilePatternOf);
+  const options = args.options.map(compileArgument);
+  return (argv) => argsMatch(positional, options, argv);
 }
 
 /** Compile one target's ordered rules; the same path serves the host and a mock check. */

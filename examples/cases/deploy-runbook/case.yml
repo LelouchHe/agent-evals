@@ -139,6 +139,9 @@ cases:
       agent: ../../agents/copilot.yml
       config:
         model: gpt-6-luna
+  # No agent, so the positive checks fail by construction; the declaration says so,
+  # and the run is as expected rather than a broken document.
   baseline:
     runner:
       $type: noop
+    expect: fail

@@ -42,11 +42,11 @@ The workspace is the project the agent is asked to change. `HOME` is the user it
 - **Separate user-level from project-level skills.** A project skill belongs in the workspace where the harness discovers project skills (`.agents/skills/`, `.claude/skills/`); a user-level skill belongs under the corresponding `~/` directory. Both are ordinary authoring copies, with `.agentevalsignore` applied.
 - **HOME is layered, not shared.** The agent file's settings, then its login files, then the case's `~/` entries. A case may replace an agent-placed settings file — settings are an evaluation variable — but never a login file.
 - **Evidence works the same way.** A `file` check accepts `~/` paths, and `trace` recognizes a `SKILL.md` the case placed in HOME. `changed` compares against what the case placed, so a restraint check over `~/` proves the case's own baseline was respected.
-- **Runners without a HOME reject `~/`.** `noop` and the native `pi` runner fail the case at load time rather than silently ignoring the placement. Use an ACP harness for HOME placement.
+- **Runners without a HOME reject `~/`.** The native `pi` runner fails the case at load time rather than silently ignoring the placement. Use an ACP harness or `noop` for HOME placement.
 
 A case that needs the harness's own settings changed places its own file over the agent-placed one: settings are an evaluation variable, and the case overlay runs last. It may not place over login state. A case that only needs `HOME` to resemble a user's home leaves the agent file's settings alone.
 
-A case that should need the agent can be checked for vacuity: run it with `runner: { $type: noop }` as a named case. Checks that pass there do not depend on what the agent did.
+A case that should need the agent can be checked for vacuity: run it with `runner: { $type: noop }` as a named case and declare `expect: fail`. Checks that pass there do not depend on what the agent did, and the declared expectation keeps the document's exit code meaningful instead of failing on every vacuity run.
 
 ## Choose the Behavior
 
@@ -80,7 +80,7 @@ Expose only the intended task, resources and environment to the agent. Case/chec
 
 ## Choose Evidence and Checks
 
-Use deterministic checks for exact facts and a judge for qualitative criteria. A file check need not become a new checker class for every assertion; one checker can return several results. A rubric can be a list of statements without mandatory business categories. Use `shell` for an outcome only execution shows, such as the project's tests; it runs the command, so pair it with `file` `changed: false` on files the agent must not edit. A `shell` check's `files` places authored tests into the workspace only when it runs, so the agent never sees them; placement replaces whatever the agent left at that path without following a symlink.
+Use deterministic checks for exact facts and a judge for qualitative criteria. A file check need not become a new checker class for every assertion; one checker can return several results. A rubric can be a list of statements without mandatory business categories. Use `shell` for an outcome only execution shows, such as the project's tests; it runs the command, so pair it with `file` `changed: false` on the files, or the directory, the agent must not edit. A `shell` check's `files` places authored tests into the workspace only when it runs, so the agent never sees them; placement replaces whatever the agent left at that path without following a symlink.
 
 Do not create routing-versus-behavior pipelines. Use the [`trace`](configuration.md#trace-checker-type-trace) checker for skill consultations; tool choices, restraint and result quality remain concerns for checks and evidence as those observations exist: a requested call in the trace does not prove its effect, so restraint is stronger when a mock proves the call never reached the collaborator.
 

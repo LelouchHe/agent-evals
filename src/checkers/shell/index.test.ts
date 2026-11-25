@@ -125,11 +125,14 @@ test("check-time files reject unsafe destinations, sources and overlap at load",
 
   const parse = (files: Record<string, string>) =>
     parseImplementationParams(shellChecker.params, { run: ["true"], files }, 'checker "shell"');
+  // Destination and source rules belong to the shared validator, which create() runs at load.
+  const create = async (files: Record<string, string>) =>
+    shellChecker.create(await parse(files), implementationContext(authoring));
   for (const destination of ["../escape", "/absolute", "", ".", "./", "C:\\temp\\x", "\\rooted"]) {
-    await assert.rejects(parse({ [destination]: "source.txt" }), ConfigError, destination);
+    await assert.rejects(create({ [destination]: "source.txt" }), ConfigError, destination);
   }
   for (const source of ["/absolute.txt", "", "nul\0byte"]) {
-    await assert.rejects(parse({ "tests/file.txt": source }), ConfigError, source);
+    await assert.rejects(create({ "tests/file.txt": source }), ConfigError, source);
   }
   await assert.rejects(
     parseImplementationParams(shellChecker.params, { run: ["true"], files: {}, other: 1 }, 'checker "shell"'),

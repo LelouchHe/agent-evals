@@ -10,6 +10,7 @@ export function implementationContext(authoringDir: string, runnerSupportsHome =
   return {
     authoringDir,
     runnerSupportsHome,
+    validateCheckPlatform: async () => {},
     validateFiles: (files) => validateCheckFiles(files, authoringDir),
     values: {
       env: {

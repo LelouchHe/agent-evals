@@ -46,6 +46,7 @@ const checkerContext: CheckerContext = {
 const implementationContext: ImplementationContext = {
   authoringDir: "/authoring",
   runnerSupportsHome: true,
+  validateCheckPlatform: async () => {},
   validateFiles: async () => {},
   values: { env: { require: async (name) => name }, run: { HOME: "/run/home", TMPDIR: "/run/tmp" } },
 };

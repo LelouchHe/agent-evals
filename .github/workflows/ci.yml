@@ -1,0 +1,25 @@
+name: CI
+
+# Reused by the publish workflow, so a tag cannot publish a tree that the gate did not pass.
+on:
+  workflow_call:
+  pull_request:
+  push:
+    branches:
+      - main
+
+jobs:
+  check:
+    # The sandbox backend is macOS Seatbelt, so the gate runs where the toolkit runs.
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "24"
+          cache: npm
+
+      - run: npm ci
+      - run: npm run check
+      - run: npm run test:package

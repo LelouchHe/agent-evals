@@ -733,7 +733,7 @@ test("integration: a checker that returns results synchronously is judged, not d
   assert.match(record.checks[1]?.reason ?? "", /synchronous failure/);
 });
 
-test("integration: a checker that answers after its budget is an error, not a pass", async (t) => {
+test("integration: a checker that answers after its budget is an error, not a verdict", async (t) => {
   const directory = await makeTempDir(t, "ae-late-checker-");
   const casePath = join(directory, "case.yml");
   await writeFile(
@@ -741,13 +741,13 @@ test("integration: a checker that answers after its budget is an error, not a pa
     stringify({
       input: "noop",
       timeoutMs: 20,
-      checks: [{ $type: "late-pass" }, { $type: "sentinel" }],
+      checks: [{ $type: "late-pass" }, { $type: "late-fail" }, { $type: "sentinel" }],
       runner: { $type: "noop" },
     }),
   );
 
   // The budget is the verdict: a checker that finishes after its abort signal fired has still
-  // exceeded it, and the remaining checks must run regardless.
+  // exceeded it, whatever it claims, and the remaining checks must run regardless.
   const registry = createRegistry();
   addRunner(registry, noopRunner, "built-in");
   addChecker(
@@ -763,6 +763,28 @@ test("integration: a checker that answers after its budget is an error, not a pa
                 () =>
                   resolve([
                     { checker: "late-pass", subject: "late result", status: "pass" as const, reason: "answered late" },
+                  ]),
+                50,
+              ),
+            );
+          }),
+      }),
+    },
+    "test",
+  );
+  addChecker(
+    registry,
+    {
+      type: "late-fail",
+      params: z.strictObject({}),
+      create: () => ({
+        check: ({ signal }: { signal: AbortSignal }) =>
+          new Promise((resolve) => {
+            signal.addEventListener("abort", () =>
+              setTimeout(
+                () =>
+                  resolve([
+                    { checker: "late-fail", subject: "late result", status: "fail" as const, reason: "answered late" },
                   ]),
                 50,
               ),
@@ -802,6 +824,7 @@ test("integration: a checker that answers after its budget is an error, not a pa
     record.checks.map((check) => [check.checker, check.status]),
     [
       ["late-pass", "error"],
+      ["late-fail", "error"],
       ["sentinel", "pass"],
     ],
   );

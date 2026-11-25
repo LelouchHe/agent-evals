@@ -8,7 +8,7 @@ import {
   openRunRoot,
   readRunFile,
   resolveWorkspacePath,
-  runFileExists,
+  runPathExists,
   WorkspacePathError,
 } from "./workspace.ts";
 
@@ -24,7 +24,7 @@ test("workspace paths resolve relative to the run root", async (t) => {
 
   const missing = await resolveWorkspacePath(root, "nested/missing.txt");
   assert.equal(missing, join(await realpath(path), "nested", "missing.txt"));
-  assert.equal(await runFileExists(root, "nested/missing.txt"), false);
+  assert.equal(await runPathExists(root, "nested/missing.txt"), false);
 });
 
 test("workspace paths reject absolute, parent, and NUL paths", async (t) => {
@@ -106,5 +106,5 @@ test("a replaced run root is rejected instead of followed", async (t) => {
 
   await assert.rejects(() => resolveWorkspacePath(root, "hello.txt"), /replaced/);
   await assert.rejects(() => readRunFile(root, "hello.txt"), /replaced/);
-  await assert.rejects(() => runFileExists(root, "hello.txt"), /replaced/);
+  await assert.rejects(() => runPathExists(root, "hello.txt"), /replaced/);
 });

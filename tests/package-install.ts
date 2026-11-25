@@ -58,7 +58,7 @@ test("the packed CLI installs and runs without source or development dependencie
     ["install", "--prefix", prefix, "--omit=dev", "--no-audit", "--no-fund", join(root, pack.filename)],
     cwd,
   );
-  const installed = join(prefix, "node_modules", "agent-evals");
+  const installed = join(prefix, "node_modules", "@lelouchhe", "agent-evals");
   const bin = join(prefix, "node_modules", ".bin", "agent-evals");
   const require = createRequire(join(installed, "package.json"));
   const installRoot = (await realpath(prefix)) + sep;
@@ -70,7 +70,7 @@ test("the packed CLI installs and runs without source or development dependencie
   }
   assert.deepEqual((await readdir(join(prefix, "node_modules"))).filter((name) => !name.startsWith(".")).sort(), [
     "@agentclientprotocol",
-    "agent-evals",
+    "@lelouchhe",
     "ignore",
     "re2js",
     "yaml",
@@ -169,4 +169,75 @@ test("the packed CLI installs and runs without source or development dependencie
   assert.equal(await readFile(join(cwd, "count"), "utf8"), "x");
   assert.doesNotMatch(resultText + run.stdout + run.stderr, /synthetic-runner-key/);
   assert.deepEqual(await readdir(runtime), []);
+
+  // An external checker may use only the packaged entry. It is placed inside the installation so
+  // the package and `zod` resolve from that prefix, exactly as a third-party package would.
+  const extensions = join(prefix, "extensions");
+  const extension = join(extensions, "parity");
+  await mkdir(extension, { recursive: true });
+  await writeFile(
+    join(extension, "index.mjs"),
+    `import { z } from "zod";
+import { readRunFile, readRunTree, runPathExists, searches } from "@lelouchhe/agent-evals";
+
+export const checker = {
+  type: "parity",
+  params: z.strictObject({ path: z.string(), matches: z.string() }),
+  async create(params, context) {
+    await context.validateCheckPlatform();
+    return {
+      check: async (ctx) => {
+        const home = params.path.startsWith("~/");
+        const root = home ? ctx.home : ctx.workspace;
+        const relative = home ? params.path.slice(2) : params.path;
+        if (!(await runPathExists(root, relative))) {
+          return [{ checker: "parity", subject: params.path, status: "error", reason: "not found" }];
+        }
+        const text = (await readRunFile(root, relative)).toString("utf8");
+        const tree = await readRunTree(root, relative.slice(0, relative.lastIndexOf("/")));
+        const pass = searches(params.matches, text) && (tree?.size ?? 0) > 0;
+        return [
+          {
+            checker: "parity",
+            subject: params.path,
+            status: pass ? "pass" : "fail",
+            reason: pass ? "matched" : "no match",
+          },
+        ];
+      },
+    };
+  },
+};
+`,
+  );
+  await writeFile(join(cwd, "notes.txt"), "hello world\n");
+  const extensionCase = join(cwd, "extension.yml");
+  await writeFile(
+    extensionCase,
+    stringify({
+      input: "noop",
+      files: { "~/notes/answer.txt": "notes.txt" },
+      runner: { $type: "noop" },
+      checks: [{ $type: "parity", path: "~/notes/answer.txt", matches: "hello" }],
+    }),
+  );
+  const extensionResults = join(root, "extension-results");
+  const runExtension = async (matches: string, path = "~/notes/answer.txt") => {
+    await writeFile(
+      extensionCase,
+      stringify({
+        input: "noop",
+        files: { "~/notes/answer.txt": "notes.txt" },
+        runner: { $type: "noop" },
+        checks: [{ $type: "parity", path, matches }],
+      }),
+    );
+    return await invoke(bin, ["run", extensionCase, "--extension-dir", extensions, "--results-dir", extensionResults]);
+  };
+  const extensionPass = await runExtension("hello");
+  assert.equal(extensionPass.code, 0, extensionPass.stdout + extensionPass.stderr);
+  const extensionFail = await runExtension("goodbye");
+  assert.equal(extensionFail.code, 1, extensionFail.stdout + extensionFail.stderr);
+  const extensionMissing = await runExtension("hello", "~/notes/missing.txt");
+  assert.equal(extensionMissing.code, 2, extensionMissing.stdout + extensionMissing.stderr);
 });

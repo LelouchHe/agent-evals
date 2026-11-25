@@ -37,17 +37,18 @@ Runner and checker definitions have the same three parts:
 | `params` | A Zod schema for the record's other keys. The engine substitutes [placeholders](configuration.md#placeholders), then parses with this schema once. |
 | `create` | `create(params, context)` returns the instance, or a promise of one. It runs before the agent starts, so it is where to reject an unusable setup.  |
 
-A runner definition may also set `mocks: true`: the runner places the mocked commands it receives in [`RunnerContext.mocks`](#runner). A case that declares mocks is rejected for a runner without it. A runner that gives the run a HOME sets `home: true` and implements `prepareHome`; a case that places or checks a `~/` path is rejected for a runner without it.
+A runner definition may also set `mocks: true`: the runner places the mocked commands it receives in [`RunnerContext.mocks`](#runner). A case that declares mocks is rejected for a runner without it. A runner that gives the run a HOME sets `home: true`; a case that places or checks a `~/` path is rejected for a runner without it.
 
 `create` receives an `ImplementationContext`:
 
-| Field                | Meaning                                                                                                      |
-| -------------------- | ------------------------------------------------------------------------------------------------------------ |
-| `authoringDir`       | Directory of the case file, for resolving the author's relative paths.                                       |
-| `values`             | The run's placeholder sources, for a parameter the implementation loads itself.                              |
-| `validateFiles`      | Validates and stages a checker's check-time `files` (workspace destination → authoring source) at load time. |
-| `mockTargets`        | The case's declared `mocks.shell` targets; absent when the case declares no mocks.                           |
-| `runnerSupportsHome` | True when the selected runner gives the run a HOME; a checker that reads `~/` paths needs it.                |
+| Field                   | Meaning                                                                                                                            |
+| ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| `authoringDir`          | Directory of the case file, for resolving the author's relative paths.                                                             |
+| `values`                | The run's placeholder sources, for a parameter the implementation loads itself.                                                    |
+| `validateFiles`         | Validates and stages a checker's check-time `files` (workspace destination → authoring source) at load time.                       |
+| `mockTargets`           | The case's declared `mocks.shell` targets; absent when the case declares no mocks.                                                 |
+| `runnerSupportsHome`    | True when the selected runner gives the run a HOME; a checker that reads `~/` paths needs it.                                      |
+| `validateCheckPlatform` | Fails at load time when the engine's check sandbox cannot run on this host; a checker that needs the sandbox calls it in `create`. |
 
 An error thrown from `create` stops the case before the agent starts, so a setup that cannot work costs no agent run.
 
@@ -81,9 +82,9 @@ Runner.homeFiles?                  -> readonly string[]
 
 Three optional members describe a runner's HOME:
 
-- **`prepareHome(context)`** runs before the case's `~/` entries and the baseline snapshot. The runner links its `deps`, copies its agent-file `files` and login state into `homeDir`, and returns the HOME-relative login files the case may not touch. Absent for a runner without a HOME.
+- **`prepareHome(context)`** runs before the case's `~/` entries and the baseline snapshot. The runner links its `deps`, copies its agent-file `files` and login state into `homeDir`, and returns the HOME-relative login files the case may not touch. Optional: a runner that starts nothing, such as `noop`, sets `home: true` alone.
 - **`homeFiles`** is the same login-file list, available without running `prepareHome`, so the engine can reject a case `~/` entry at load time.
-- A definition sets `home: true` only when both are true; without it, a case that places or checks a `~/` path is a configuration error.
+- `home: true` means case HOME placement is supported; it does not imply harness-owned HOME content. Without the flag, a case that places or checks a `~/` path is a configuration error.
 
 The two optional evidence methods are read after a failed run too:
 
@@ -168,8 +169,9 @@ checks:
 
 ## Current Limits
 
-- **The package entry exports the contracts and two trace derivations.** `import type { CheckerDefinition, CheckResult } from "agent-evals"` gives the contracts on this page, `await skillConsultations(trace, { workspace, home, workspaceBaseline, homeBaseline })` returns the skills a run consulted, and `messageText(trace)` returns the text the agent produced, as the built-in [`trace` checker](configuration.md#trace-checker-type-trace) derives them ([`index.ts`](../src/index.ts)). Type imports are erased before the module runs. The package is not published, and nothing resolves it for an extension directory by itself, so the functions are not yet importable at run time from an arbitrary extension.
-- **Engine helpers are not available.** The identity-checked file reads the built-in `file` checker uses, pattern compilation and mock matching are internal. The exported skill derivation encapsulates its own baseline reads; an extension reading other files uses `workspace.path` and `baseline.path` with its own code and owns the containment checks it needs.
+- **The package entry exports the contracts, the trace derivations and the evidence access the built-in `file` checker uses.** `import type { CheckerDefinition, CheckResult } from "@lelouchhe/agent-evals"` gives the contracts on this page; `skillConsultations` and `messageText` derive what the built-in `trace` checker asserts; and `readRunFile`, `readRunTree` and `runPathExists` answer the same questions as the built-in `file` checker with the same guarantees — the run root identity is verified for every operation, a link is never followed, a read is bounded by `MAX_CHECK_BYTES`, and `runRelativePathSchema`, `patternListSchema` and `searches` are the same path and pattern grammar. `WorkspacePathError`, `isMissing` and `ConfigError` are exported so a failure reaches the engine the way a built-in's does, and `shellSkillAccess` exposes the shell-touch observation the built-in `trace` checker reports ([`index.ts`](../src/index.ts)).
+- **The mock argument grammar and matcher are exported too.** `expectMockArgs` and `expectMockTarget` parse the same grammar a `mocks.shell` declaration uses, `mockTargetIdentity` distinguishes a bare command from a workspace path, and `compileMockArgs` turns a specification into a predicate over a recorded argv. Ordered dispatch and the declared actions stay in the host; `ImplementationContext.mockTargets` carries the declared targets at load time.
+- **Not available: a model invocation and a runner's environment.** The `judge` checker's tool-free model call and the ACP and Pi runners' sandbox, supervisor and harness assembly are internal. A third-party checker that needs a model, and a third-party runner that runs an agent, cannot be written against the current contract yet. The other checker capabilities are available; this is the remaining gap, and it is deferred on purpose.
 - **An extension resolves its own dependencies.** `params` only has to behave like a Zod schema (`safeParseAsync`), but `import { z } from "zod"` must resolve from the module's own location.
 - **`view` does not load extensions.** `--extension-dir` applies to `run` only.
 - **`shell` checks do not receive the trace.** `trace.json` is written with the result, after checks ran; trace assertions need a checker in TypeScript or JavaScript.

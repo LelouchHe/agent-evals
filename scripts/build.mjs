@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { chmod, cp, mkdir, readFile, rm } from "node:fs/promises";
+import { chmod, cp, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -17,9 +17,29 @@ for (const asset of ["engine/forwarder.sh", "platform/macos/supervisor.sh", "run
   await cp(join(root, "src", asset), target);
 }
 
+// Declaration files keep the source's `.ts` specifiers, which a consumer's TypeScript only
+// resolves by extension substitution. Emit `.js` so the published types use the same specifiers
+// as the JavaScript beside them.
+for (const file of await declarationFiles(dist)) {
+  const source = await readFile(file, "utf8");
+  const rewritten = source.replace(/(from\s*|import\()(["'])(\.[^"']*?)\.ts\2/g, "$1$2$3.js$2");
+  if (rewritten !== source) await writeFile(file, rewritten);
+}
+
 const cli = join(dist, "cli.js");
 const source = await readFile(cli, "utf8");
 if (!source.startsWith("#!/usr/bin/env node\n")) {
   throw new Error("built dist/cli.js is missing its Node.js shebang");
 }
 await chmod(cli, 0o755);
+
+/** Every `.d.ts` beneath a directory. */
+async function declarationFiles(directory) {
+  const found = [];
+  for (const entry of await readdir(directory, { withFileTypes: true })) {
+    const path = join(directory, entry.name);
+    if (entry.isDirectory()) found.push(...(await declarationFiles(path)));
+    else if (entry.name.endsWith(".d.ts")) found.push(path);
+  }
+  return found;
+}
