@@ -91,6 +91,10 @@ npm run test:package   # Pack tarball, install into an external prefix, and veri
 
 Serialize checkout build/test/eval commands because `npm run build` replaces `dist/` non-atomically; see [Architecture](docs/architecture.md#known-limitations) for runtime and development constraints.
 
+## Releasing
+
+[CI](.github/workflows/ci.yml) runs the gate on macOS for every pull request and push to `main`. A release is a tag: push `vX.Y.Z` matching `package.json`'s version, and [publish](.github/workflows/publish.yml) re-runs that gate, publishes to npm with provenance, and creates the GitHub release. The workflow needs the `NPM_TOKEN` repository secret: an npm token with publish rights for the package.
+
 ## License
 
 [MIT](LICENSE)

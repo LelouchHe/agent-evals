@@ -1,7 +1,6 @@
 {
   "name": "agent-evals",
   "version": "0.1.0",
-  "private": true,
   "type": "module",
   "description": "A toolkit for evaluating AI agent systems.",
   "license": "MIT",
