@@ -23,15 +23,19 @@ export type {
   RunnerUsage,
   TraceEntry,
 } from "./engine/registry.ts";
-export type { ValueSource } from "./engine/values.ts";
+export type { EnvSource } from "./engine/env-source.ts";
+export type { RunVariables, ValueSource } from "./engine/values.ts";
 export {
   ConfigError,
   expectMockArgs,
   expectMockTarget,
   mockTargetIdentity,
+  type MockAction,
   type MockArgs,
   type MockArgument,
   type MockPattern,
+  type MockResult,
+  type MockRule,
   type PatternSyntax,
 } from "./engine/config.ts";
 export { compileRules, matchCall, type CompiledRules } from "./engine/mock-match.ts";
