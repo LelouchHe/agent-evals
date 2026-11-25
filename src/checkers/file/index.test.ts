@@ -177,6 +177,106 @@ test("changed true passes exactly when the run created, removed or modified the 
   assert.match(absent[0]?.reason ?? "", /absent in both/);
 });
 
+test("changed compares every path in a directory, not only its top entry", async (t) => {
+  const dirs = await setup(t);
+  for (const root of [dirs.workspace, dirs.baseline]) {
+    await mkdir(join(root, "vault/Plan/Gamma"), { recursive: true });
+    await writeFile(join(root, "vault/Plan/Gamma/handover.md"), "state\n");
+  }
+  const contextValue = await context(dirs.root, dirs.workspace, dirs.baseline);
+
+  const same = await checkRaw({ path: "vault", changed: false }, contextValue);
+  assert.deepEqual(statuses(same), ["pass"]);
+  assert.equal(same[0]?.reason, "content matches the initial baseline");
+
+  await writeFile(join(dirs.workspace, "vault/Plan/Gamma/changelog.md"), "released\n");
+  const added = await checkRaw({ path: "vault", changed: false }, contextValue);
+  assert.equal(added[0]?.status, "fail");
+  assert.match(added[0]?.reason ?? "", /1 changes: added Plan\/Gamma\/changelog\.md/);
+
+  await rm(join(dirs.workspace, "vault/Plan/Gamma/changelog.md"));
+  await writeFile(join(dirs.workspace, "vault/Plan/Gamma/handover.md"), "changed\n");
+  const modified = await checkRaw({ path: "vault", changed: false }, contextValue);
+  assert.equal(modified[0]?.status, "fail");
+  assert.match(modified[0]?.reason ?? "", /1 changes: modified Plan\/Gamma\/handover\.md/);
+
+  await rm(join(dirs.workspace, "vault/Plan/Gamma/handover.md"));
+  const removed = await checkRaw({ path: "vault", changed: false }, contextValue);
+  assert.match(removed[0]?.reason ?? "", /1 changes: removed Plan\/Gamma\/handover\.md/);
+
+  // A directory the run added is a change even when it holds no file: deleting
+  // evidence is not the same as never writing it.
+  await rm(join(dirs.workspace, "vault"), { recursive: true });
+  await mkdir(join(dirs.workspace, "vault"), { recursive: true });
+  const emptied = await checkRaw({ path: "vault", changed: false }, contextValue);
+  assert.equal(emptied[0]?.status, "fail");
+  assert.match(emptied[0]?.reason ?? "", /3 changes: removed Plan, /);
+});
+
+test("a directory the agent did not write stays unchanged, and a written one does not", async (t) => {
+  const dirs = await setup(t);
+  for (const root of [dirs.workspace, dirs.baseline]) {
+    await mkdir(join(root, "vault/Plan"), { recursive: true });
+  }
+  const contextValue = await context(dirs.root, dirs.workspace, dirs.baseline);
+
+  assert.deepEqual(statuses(await checkRaw({ path: "vault", changed: false }, contextValue)), ["pass"]);
+
+  // The baseline has no Project at all, so any entry under it is created evidence.
+  await mkdir(join(dirs.workspace, "vault/Plan/Alpha"));
+  const created = await checkRaw({ path: "vault", changed: false }, contextValue);
+  assert.equal(created[0]?.status, "fail");
+  assert.match(created[0]?.reason ?? "", /1 changes: added Plan\/Alpha/);
+
+  assert.deepEqual(statuses(await checkRaw({ path: "vault", changed: true }, contextValue)), ["pass"]);
+  assert.deepEqual(statuses(await checkRaw({ path: "other", changed: false }, contextValue)), ["pass"]);
+});
+
+test("a link the run wrote is a change, not unreadable evidence", async (t) => {
+  const dirs = await setup(t);
+  for (const root of [dirs.workspace, dirs.baseline]) {
+    await mkdir(join(root, "vault"), { recursive: true });
+  }
+  const outside = await makeTempDir(t, "ae-file-outside-");
+  await symlink(join(outside, "secret.txt"), join(dirs.workspace, "vault/link"));
+
+  const results = await checkRaw(
+    { path: "vault", changed: false },
+    await context(dirs.root, dirs.workspace, dirs.baseline),
+  );
+  assert.equal(results[0]?.status, "fail");
+  assert.match(results[0]?.reason ?? "", /1 changes: added link/);
+});
+
+test("a path that changed kind is one change, reported with both kinds", async (t) => {
+  const dirs = await setup(t);
+  await mkdir(join(dirs.baseline, "swap"));
+  await writeFile(join(dirs.workspace, "swap"), "now a file\n");
+
+  const results = await checkRaw(
+    { path: "swap", changed: false },
+    await context(dirs.root, dirs.workspace, dirs.baseline),
+  );
+  assert.equal(results[0]?.status, "fail");
+  assert.equal(results[0]?.reason, "swap changed from a directory to a file");
+});
+
+test("changed compares a ~/ directory against the case's own HOME placement", async (t) => {
+  const dirs = await setup(t);
+  for (const root of [dirs.home, dirs.homeBaseline]) {
+    await mkdir(join(root, "mine/space"), { recursive: true });
+    await writeFile(join(root, "mine/space/index.md"), "vault\n");
+  }
+  const contextValue = await context(dirs.root, dirs.workspace, dirs.baseline);
+
+  assert.deepEqual(statuses(await checkRaw({ path: "~/mine/space", changed: false }, contextValue)), ["pass"]);
+
+  await writeFile(join(dirs.home, "mine/space/index.md"), "edited\n");
+  const edited = await checkRaw({ path: "~/mine/space", changed: false }, contextValue);
+  assert.equal(edited[0]?.status, "fail");
+  assert.match(edited[0]?.reason ?? "", /1 changes: modified index\.md/);
+});
+
 test("notMatches passes only when the pattern is absent from the file", async (t) => {
   const dirs = await setup(t);
   await writeFile(join(dirs.workspace, "diagnosis.md"), "E4127: make rotate-signing-cert, then make deploy.\n");
@@ -292,16 +392,19 @@ test("file checker refuses to read files over the bounded size", async (t) => {
   assert.match(results[0]?.reason ?? "", /check limit/);
 });
 
-test("non-regular evidence is an error for every assertion", async (t) => {
+test("a directory is comparable by changed and still refused by exists and patterns", async (t) => {
   const dirs = await setup(t);
-  await mkdir(join(dirs.workspace, "directory"));
+  for (const root of [dirs.workspace, dirs.baseline]) {
+    await mkdir(join(root, "directory"));
+  }
 
   const results = await checkRaw(
     { path: "directory", exists: true, changed: false, matches: "x", notMatches: "x" },
     await context(dirs.root, dirs.workspace, dirs.baseline),
   );
-  assert.deepEqual(statuses(results), ["error", "error", "error", "error"]);
+  assert.deepEqual(statuses(results), ["error", "pass", "error", "error"]);
   assert.match(results[0]?.reason ?? "", /not a regular file/);
+  assert.match(results[2]?.reason ?? "", /not a regular file/);
 });
 
 test("a ~/ path reads the run HOME and its case-placed HOME baseline", async (t) => {

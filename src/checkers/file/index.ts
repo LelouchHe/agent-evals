@@ -3,7 +3,14 @@ import type { CheckResult, Checker, CheckerContext, CheckerDefinition } from "..
 import { patternListSchema, runRelativePathSchema } from "../../engine/params.ts";
 import { truncate } from "../../engine/truncate.ts";
 import { searches } from "../../engine/regex.ts";
-import { isMissing, readRunFile, runFileExists, type RunRoot } from "../../engine/workspace.ts";
+import {
+  isMissing,
+  readRunFile,
+  readRunTree,
+  runFileExists,
+  type RunRoot,
+  type RunTree,
+} from "../../engine/workspace.ts";
 import { ConfigError, errorMessage, type PatternSyntax } from "../../engine/config.ts";
 
 /** A workspace path, or `~/…` for a file in the run HOME. `~/` alone names HOME, not a file. */
@@ -108,27 +115,16 @@ class FileChecker implements Checker {
     const { path } = this.#params;
     const target = this.#target(context);
     return condition(`${path} ${expected ? "changed" : "unchanged"} since run start`, async () => {
-      const current = await readOptional(target.root, target.relative);
-      const baseline = await readOptional(target.baseline, target.relative);
-      const change =
-        current === undefined
-          ? baseline === undefined
-            ? "absent"
-            : "removed"
-          : baseline === undefined
-            ? "created"
-            : current.equals(baseline)
-              ? "same"
-              : "modified";
-      const reasons = {
-        absent: "the file is absent in both the run and the initial baseline",
-        created: `${path} was created during the run`,
-        removed: `${path} was removed during the run`,
-        modified: "content changed during the run",
-        same: "content matches the initial baseline",
-      } as const;
-      const isChanged = change === "created" || change === "removed" || change === "modified";
-      return (isChanged === expected ? pass : fail)(reasons[change]);
+      const [current, baseline] = await Promise.all([
+        readRunTree(target.root, target.relative),
+        readRunTree(target.baseline, target.relative),
+      ]);
+      const changes = await diffTrees(
+        { root: target.baseline, relative: target.relative, entries: baseline },
+        { root: target.root, relative: target.relative, entries: current },
+      );
+      const isChanged = changes.length > 0;
+      return (isChanged === expected ? pass : fail)(describeChanges(path, baseline, current, changes));
     });
   }
 
@@ -172,20 +168,105 @@ class FileChecker implements Checker {
   }
 }
 
+/** One differing path between the run and its baseline. */
+interface TreeChange {
+  readonly kind: "added" | "removed" | "modified";
+  readonly path: string;
+}
+
+/** One side of a comparison: the root it names, its path, and its snapshot when it exists. */
+interface TreeSide {
+  readonly root: RunRoot;
+  readonly relative: string;
+  readonly entries: RunTree | undefined;
+}
+
+/**
+ * Every path that differs, sorted; the root is `""`, so a replaced path is one change.
+ * Files are compared one pair at a time, so peak memory follows the check's per-file
+ * cap rather than the size of the tree.
+ */
+async function diffTrees(baseline: TreeSide, current: TreeSide): Promise<readonly TreeChange[]> {
+  if (baseline.entries === undefined || current.entries === undefined) {
+    const present = current.entries === undefined ? baseline : current;
+    if (present.entries === undefined) {
+      return [];
+    }
+    const kind = current.entries === undefined ? "removed" : "added";
+    return [...present.entries.keys()].sort().map((path) => ({ kind, path }));
+  }
+
+  const changes: TreeChange[] = [];
+  const paths = [...new Set([...baseline.entries.keys(), ...current.entries.keys()])].sort();
+  for (const path of paths) {
+    const before = baseline.entries.get(path);
+    const after = current.entries.get(path);
+    if (before === undefined) {
+      changes.push({ kind: "added", path });
+    } else if (after === undefined) {
+      changes.push({ kind: "removed", path });
+    } else if (before.kind !== after.kind || before.size !== after.size) {
+      changes.push({ kind: "modified", path });
+    } else if (before.kind === "file" && !(await sameContent(baseline, current, path))) {
+      changes.push({ kind: "modified", path });
+    }
+  }
+  return changes;
+}
+
+/** Compare two files with equal size by their bytes, read one pair at a time. */
+async function sameContent(baseline: TreeSide, current: TreeSide, path: string): Promise<boolean> {
+  const [before, after] = await Promise.all([
+    readRunFile(baseline.root, runPath(baseline.relative, path)),
+    readRunFile(current.root, runPath(current.relative, path)),
+  ]);
+  return before.equals(after);
+}
+
+/** The run-relative path of `path` under a compared path: `""` is the compared path itself. */
+function runPath(relative: string, path: string): string {
+  return path === "" ? relative : relative === "" ? path : `${relative}/${path}`;
+}
+
+/** Why the comparison held, keeping a single file's wording and summarizing a tree. */
+function describeChanges(
+  path: string,
+  baseline: RunTree | undefined,
+  current: RunTree | undefined,
+  changes: readonly TreeChange[],
+): string {
+  if (changes.length === 0) {
+    return current === undefined
+      ? "the file is absent in both the run and the initial baseline"
+      : "content matches the initial baseline";
+  }
+
+  const [only] = changes;
+  if (changes.length === 1 && only !== undefined && only.path === "") {
+    if (only.kind === "added") {
+      return `${path} was created during the run`;
+    }
+    if (only.kind === "removed") {
+      return `${path} was removed during the run`;
+    }
+    const beforeKind = baseline?.get("")?.kind ?? "absent";
+    const afterKind = current?.get("")?.kind ?? "absent";
+    return beforeKind === "file" && afterKind === "file"
+      ? "content changed during the run"
+      : `${path} changed from a ${beforeKind} to a ${afterKind}`;
+  }
+
+  const shown = changes
+    .slice(0, 5)
+    .map((change) => `${change.kind} ${change.path}`)
+    .join(", ");
+  const rest = changes.length > 5 ? `, and ${changes.length - 5} more` : "";
+  return truncate(`${changes.length} changes: ${shown}${rest}`, 300);
+}
+
 /** A literal in quotes, or a regex between slashes, so the subject says which pattern was used. */
 function display(pattern: PatternSyntax): string {
   return pattern.regex ? `/${truncate(pattern.source, 120)}/` : `"${truncate(pattern.source, 120)}"`;
-}
-
-async function readOptional(root: RunRoot, path: string): Promise<Buffer | undefined> {
-  try {
-    return await readRunFile(root, path);
-  } catch (error) {
-    if (isMissing(error)) {
-      return undefined;
-    }
-    throw error;
-  }
 }
 
 async function condition(subject: string, body: () => Promise<CheckResult>): Promise<CheckResult> {

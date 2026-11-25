@@ -1,5 +1,5 @@
-import { constants } from "node:fs";
-import { lstat, open, realpath } from "node:fs/promises";
+import { constants, type Stats } from "node:fs";
+import { lstat, open, readdir, realpath } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { ConfigError, errorMessage } from "./config.ts";
 
@@ -152,10 +152,89 @@ export async function readRunFile(root: RunRoot, requestedPath: string): Promise
   if (!entry.isFile()) {
     throw new WorkspacePathError(`not a regular file: ${requestedPath}`);
   }
+  return readBoundedFile(resolved, requestedPath);
+}
 
+/** The kind of one node in a run tree. Non-regular entries are recorded, never opened. */
+export type RunEntryKind = "file" | "directory" | "symlink" | "other";
+
+/** One node of a run tree. `size` is the byte size of a regular file within the check limit. */
+export interface RunTreeEntry {
+  readonly kind: RunEntryKind;
+  readonly size?: number;
+}
+
+/**
+ * A run path's contents keyed by path relative to it, with `""` for the path itself.
+ * Symlinks and special files are recorded by kind and never followed, so a link the
+ * agent wrote is visible as a change instead of hiding the evidence behind an error.
+ */
+export type RunTree = ReadonlyMap<string, RunTreeEntry>;
+
+/**
+ * Snapshot a run path for comparison. `undefined` means the path itself does not
+ * exist; an existing path is one entry per node beneath it, listed and opened
+ * without following links.
+ */
+export async function readRunTree(root: RunRoot, requestedPath: string): Promise<RunTree | undefined> {
+  const resolved = await resolveWorkspacePath(root, requestedPath);
+  let entry;
+  try {
+    entry = await lstat(resolved);
+  } catch (error) {
+    if (isMissing(error)) {
+      return undefined;
+    }
+    throw new WorkspacePathError(`could not inspect ${requestedPath}: ${errorMessage(error)}`);
+  }
+
+  const entries = new Map<string, RunTreeEntry>();
+  const visit = async (absolute: string, relative: string, stats: Stats) => {
+    if (stats.isSymbolicLink()) {
+      entries.set(relative, { kind: "symlink" });
+      return;
+    }
+    if (stats.isDirectory()) {
+      entries.set(relative, { kind: "directory" });
+      let names: string[];
+      try {
+        names = await readdir(absolute);
+      } catch (error) {
+        throw new WorkspacePathError(`could not list ${requestedPath}: ${errorMessage(error)}`);
+      }
+      for (const name of [...names].sort()) {
+        const child = join(absolute, name);
+        const childRelative = relative === "" ? name : `${relative}/${name}`;
+        let childStats;
+        try {
+          childStats = await lstat(child);
+        } catch (error) {
+          throw new WorkspacePathError(`could not inspect ${childRelative}: ${errorMessage(error)}`);
+        }
+        await visit(child, childRelative, childStats);
+      }
+      return;
+    }
+    if (stats.isFile()) {
+      if (stats.size > MAX_CHECK_BYTES) {
+        throw new WorkspacePathError(
+          `file exceeds the ${MAX_CHECK_BYTES}-byte check limit: ${relative || requestedPath} (${stats.size} bytes)`,
+        );
+      }
+      entries.set(relative, { kind: "file", size: stats.size });
+      return;
+    }
+    entries.set(relative, { kind: "other" });
+  };
+  await visit(resolved, "", entry);
+  return entries;
+}
+
+/** Read one regular file with the size ceiling and the same no-follow open as `readRunFile`. */
+async function readBoundedFile(absolute: string, requestedPath: string): Promise<Buffer> {
   let handle;
   try {
-    handle = await open(resolved, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+    handle = await open(absolute, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
   } catch (error) {
     if (isMissing(error)) {
       throw error;
