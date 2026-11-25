@@ -398,6 +398,8 @@ A case is a test and its checks are its assertions: the case line carries the ve
 
 `—` stands for a value the runner does not report, such as usage from `noop` or the native Pi runner, and a figure followed by `(2/3)` is a subtotal over the runs that reported it, not a total. A check is identified by its declared position, not by its subject, so a case may declare the same subject twice and each declaration keeps its own line; a run that recorded no check for a position is counted as `not judged` rather than dropped from the denominator. The header lists every distinct runner, harness and model the runs used, so a document that mixes harnesses does not attribute them all to the first run. The verdicts and totals count runs, not cases.
 
+Records written before `expect` existed read as `expect: pass`, and records written before results named their declaration cannot feed `--matrix`; do not mix instrument versions in one results root.
+
 `report` prints the same session from retained records without running anything: `report <results-dir>...` walks each path — a results root, one run directory or a `result.json` is accepted — and groups records by the case document they came from. Records from several documents print as one session each plus a `total` line, so a sweep split across invocations still adds up; the command knows only what the records say, not which case files produced them.
 
 `report --matrix` prints the same records as one table per document instead of the session report: a row per declared check, a column per case, and a cell of `passes/judged` over that case's repetitions.

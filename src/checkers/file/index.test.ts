@@ -195,6 +195,12 @@ test("changed compares every path in a directory, not only its top entry", async
   assert.match(added[0]?.reason ?? "", /1 change: added Plan\/Gamma\/changelog\.md/);
 
   await rm(join(dirs.workspace, "vault/Plan/Gamma/changelog.md"));
+  // Same length, different bytes: this must reach the content comparison, not stop at size.
+  await writeFile(join(dirs.workspace, "vault/Plan/Gamma/handover.md"), "statf\n");
+  const bytes = await checkRaw({ path: "vault", changed: false }, contextValue);
+  assert.equal(bytes[0]?.status, "fail");
+  assert.equal(bytes[0]?.reason, "1 change: modified Plan/Gamma/handover.md");
+
   await writeFile(join(dirs.workspace, "vault/Plan/Gamma/handover.md"), "changed\n");
   const modified = await checkRaw({ path: "vault", changed: false }, contextValue);
   assert.equal(modified[0]?.status, "fail");
