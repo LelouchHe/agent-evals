@@ -180,12 +180,17 @@ export async function readRunTree(root: RunRoot, requestedPath: string): Promise
   const resolved = await resolveWorkspacePath(root, requestedPath);
   let entry;
   try {
-    entry = await lstat(resolved);
+    // Inspect the named node itself rather than its canonical target: a directory replaced by
+    // an in-root link must read as a link, or a twin tree would make the comparison pass.
+    entry = await lstat(resolve(root.path, requestedPath));
   } catch (error) {
     if (isMissing(error)) {
       return undefined;
     }
     throw new WorkspacePathError(`could not inspect ${requestedPath}: ${errorMessage(error)}`);
+  }
+  if (entry.isSymbolicLink()) {
+    return new Map([["", { kind: "symlink" }]]);
   }
 
   const entries = new Map<string, RunTreeEntry>();
@@ -251,7 +256,19 @@ async function readBoundedFile(absolute: string, requestedPath: string): Promise
         `file exceeds the ${MAX_CHECK_BYTES}-byte check limit: ${requestedPath} (${stats.size} bytes)`,
       );
     }
-    return await handle.readFile();
+    // Read at most one byte past the ceiling: a file that grows between the size check and the
+    // read would otherwise let readFile allocate without a bound.
+    const buffer = Buffer.allocUnsafe(MAX_CHECK_BYTES + 1);
+    let offset = 0;
+    while (offset < buffer.length) {
+      const { bytesRead } = await handle.read(buffer, offset, buffer.length - offset, null);
+      if (bytesRead === 0) break;
+      offset += bytesRead;
+    }
+    if (offset > MAX_CHECK_BYTES) {
+      throw new WorkspacePathError(`file exceeds the ${MAX_CHECK_BYTES}-byte check limit: ${requestedPath}`);
+    }
+    return buffer.subarray(0, offset);
   } finally {
     await handle.close();
   }

@@ -261,6 +261,26 @@ test("a link the run wrote is a change, not unreadable evidence", async (t) => {
   assert.match(results[0]?.reason ?? "", /1 change: added link/);
 });
 
+test("replacing the compared directory with an in-root link is a change", async (t) => {
+  const dirs = await setup(t);
+  for (const root of [dirs.workspace, dirs.baseline]) {
+    await mkdir(join(root, "vault"), { recursive: true });
+    await writeFile(join(root, "vault", "state.md"), "state\n");
+  }
+  await mkdir(join(dirs.workspace, "twin"), { recursive: true });
+  await writeFile(join(dirs.workspace, "twin", "state.md"), "state\n");
+  await rm(join(dirs.workspace, "vault"), { recursive: true });
+  await symlink("twin", join(dirs.workspace, "vault"));
+
+  const results = await checkRaw(
+    { path: "vault", changed: false },
+    await context(dirs.root, dirs.workspace, dirs.baseline),
+  );
+  assert.equal(results[0]?.status, "fail");
+  // The link is the change; its target is not compared, so the old child reads as removed.
+  assert.equal(results[0]?.reason, "2 changes: modified ., removed state.md");
+});
+
 test("a path that changed kind is one change, reported with both kinds", async (t) => {
   const dirs = await setup(t);
   await mkdir(join(dirs.baseline, "swap"));

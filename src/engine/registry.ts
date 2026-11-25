@@ -178,6 +178,8 @@ export interface CheckResult {
   readonly subject: string;
   readonly status: CheckStatus;
   readonly reason: string;
+  /** Zero-based position of the declared check that produced this result. Absent on old records. */
+  readonly declaration?: number;
 }
 
 /** A prepared checker instance; its factory already captured validated parameters. */

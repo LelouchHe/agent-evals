@@ -1,5 +1,7 @@
 import { basename } from "node:path";
 import { ConfigError } from "./config.ts";
+import type { ImplementationRecord } from "./config.ts";
+import type { CheckResult } from "./registry.ts";
 import type { EvaluationRecord, RunStatus } from "./results.ts";
 
 /**
@@ -70,38 +72,56 @@ function grouped(records: readonly EvaluationRecord[]): Map<string, Map<string, 
 }
 
 function matrix(path: string, cases: ReadonlyMap<string, readonly EvaluationRecord[]>): string {
-  // The shape comes from the first run that recorded checks: an errored first run wrote none.
-  const shapeRun = [...cases.values()].flat().find((run) => run.checks.length > 0);
-  const shape = shapeRun === undefined ? [] : checksOf([shapeRun]);
+  const labels = [...cases.keys()];
+  const declarations = [...cases.values()][0]?.[0]?.resolvedConfig.checks ?? [];
+  const canonical = JSON.stringify(declarations);
   for (const [label, runs] of cases) {
     for (const run of runs) {
-      // A run that recorded no check is not judged; it is a column cell, not a broken shape.
-      if (run.checks.length === 0) continue;
-      const found = checksOf([run]);
-      const index = shape.findIndex((check, position) => check !== found[position]);
-      if (found.length !== shape.length && index === -1) {
-        throw new ConfigError(
-          `--matrix needs one check list across cases: "${label}" declares ${found.length} checks, not ${shape.length}`,
-        );
-      }
-      if (index !== -1) {
-        throw new ConfigError(
-          `--matrix needs one check list across cases: "${label}" declares "${found[index]}" at position ${index + 1}, not "${shape[index]}"`,
-        );
-      }
+      const found = run.resolvedConfig.checks;
+      if (JSON.stringify(found) === canonical) continue;
+      const position = firstDifference(declarations, found);
+      throw new ConfigError(
+        `--matrix needs one check list across cases: "${label}" declares ${describe(found[position])} at check ${position + 1}, not ${describe(declarations[position])}`,
+      );
     }
   }
 
-  const labels = [...cases.keys()];
   const columns = labels.map((label) => {
     const runs = cases.get(label) ?? [];
     const negative = runs.length > 0 && runs.every((run) => run.resolvedConfig.expect === "fail");
     return `${escape(label)}${negative ? " (expect fail)" : ""}`;
   });
-  const rows = shape.map((subject, index) => {
-    const cells = labels.map((label) => cell(cases.get(label) ?? [], index));
-    return `| ${index + 1} | ${escape(subject)} | ${cells.join(" | ")} |`;
-  });
+
+  for (const [label, runs] of cases) {
+    for (const run of runs) {
+      for (const check of run.checks) {
+        if (check.declaration === undefined) {
+          throw new ConfigError(
+            `--matrix needs records that name their declared check: "${label}" predates that field; use report instead`,
+          );
+        }
+      }
+    }
+  }
+
+  const rows: string[] = [];
+  for (let group = 0; group < declarations.length; group += 1) {
+    const slots = labels.map((label) => (cases.get(label) ?? []).map((run) => resultsOf(run, group)));
+    const width = Math.max(1, ...slots.flat().map((results) => results.length));
+    for (let ordinal = 0; ordinal < width; ordinal += 1) {
+      const label = slots
+        .flat()
+        .map((results) => results[ordinal])
+        .find((result) => result !== undefined);
+      const subject =
+        label === undefined
+          ? `${value(declarations[group]?.["$type"] ?? "check")} check`
+          : `${label.checker} ${label.subject}`;
+      const cells = labels.map((_label, index) => cell(slots[index] ?? [], ordinal));
+      rows.push(`| ${rows.length + 1} | ${escape(subject)} | ${cells.join(" | ")} |`);
+    }
+  }
+
   return [
     path,
     instrument(cases),
@@ -112,33 +132,53 @@ function matrix(path: string, cases: ReadonlyMap<string, readonly EvaluationReco
   ].join("\n");
 }
 
-/** What a matrix column treats as one check: the implementation and the subject it decided. */
-function checksOf(runs: readonly EvaluationRecord[]): readonly string[] {
-  const [first] = runs;
-  return first === undefined ? [] : first.checks.map((check) => `${check.checker} ${check.subject}`);
+/** The results one run recorded for one declared check, in the order the checker returned them. */
+function resultsOf(run: EvaluationRecord, declaration: number): readonly CheckResult[] {
+  // Records written before the field existed fall back to the result position, which is the
+  // declaration position only when that declaration returned a single result.
+  return run.checks.filter((check, index) => (check.declaration ?? index) === declaration);
 }
 
-/** `passes/judged`, with errors and unanswered runs named rather than folded into the count. */
-function cell(runs: readonly EvaluationRecord[], index: number): string {
-  const observed = runs.flatMap((run) => {
-    const check = run.checks[index];
-    return check === undefined ? [] : [check];
-  });
-  if (observed.length === 0) {
+/** `passes/judged` for one slot, with errors and unanswered runs named rather than folded in. */
+function cell(runs: readonly (readonly CheckResult[])[], ordinal: number): string {
+  if (runs.length === 0) {
     return "—";
+  }
+  const observed = runs.flatMap((results) => {
+    const result = results[ordinal];
+    return result === undefined ? [] : [result];
+  });
+  const unjudged = runs.length - observed.length;
+  if (observed.length === 0) {
+    return `— (${unjudged} not judged)`;
   }
   const passes = observed.filter((check) => check.status === "pass").length;
   const errors = observed.filter((check) => check.status === "error").length;
-  const unjudged = runs.length - observed.length;
   const parts = [`${passes}/${observed.length}`];
   if (errors > 0) parts.push(`(${errors} err)`);
   if (unjudged > 0) parts.push(`(${unjudged} not judged)`);
   return parts.join(" ");
 }
 
-/** A table cell is one line: a pipe would open a new column and a newline would end the row. */
+/** The first declaration position where two lists differ, or the shorter length when nested. */
+function firstDifference(left: readonly ImplementationRecord[], right: readonly ImplementationRecord[]): number {
+  const length = Math.max(left.length, right.length);
+  for (let index = 0; index < length; index += 1) {
+    if (JSON.stringify(left[index]) !== JSON.stringify(right[index])) {
+      return index;
+    }
+  }
+  return Math.min(left.length, right.length);
+}
+
+/** A declaration in an error message: one line, bounded, and never the word undefined. */
+function describe(spec: ImplementationRecord | undefined): string {
+  return spec === undefined ? "nothing" : truncate(JSON.stringify(spec), 120);
+}
+
+/** A table cell is one line: a pipe would open a column and any line ending would end the row. */
 function escape(text: string): string {
-  return text.replaceAll("|", "\\|").replaceAll("\n", " ");
+  return text.replaceAll("|", "\\|").replaceAll(/\r\n?|\n/g, " ");
 }
 
 function document(path: string, cases: ReadonlyMap<string, readonly EvaluationRecord[]>): string {
