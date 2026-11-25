@@ -48,6 +48,7 @@ cases:
   baseline:
     runner:
       $type: noop
+    expect: fail # a vacuity arm: its failures are the expected outcome
 ```
 
 Checker and runner [extensions](https://github.com/LelouchHe/agent-evals-extensions) live in their own repository and load with `--extension-dir` ([contract](docs/extensions.md)).
@@ -62,6 +63,7 @@ cp .env.example .env                        # fill in harness paths and keys (se
 npm run eval -- view examples/cases/deploy-runbook/case.yml --case pi-with-skill
 npm run eval -- config examples/agents/pi.yml
 npm run eval -- run examples/cases/deploy-runbook/case.yml --case pi-with-skill
+npm run eval -- report --matrix /tmp/deploy-runbook # after a sweep: one row per check
 ```
 
 [`deploy-runbook-native`](examples/cases/deploy-runbook-native/case.yml) runs the same task through the native Pi runner using an installed `pi` CLI and provider key alone.
