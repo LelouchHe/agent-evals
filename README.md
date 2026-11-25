@@ -1,8 +1,18 @@
 # Agent Evals
 
+[![CI](https://github.com/LelouchHe/agent-evals/actions/workflows/ci.yml/badge.svg)](https://github.com/LelouchHe/agent-evals/actions/workflows/ci.yml)
+[![npm](https://img.shields.io/npm/v/@lelouchhe/agent-evals)](https://www.npmjs.com/package/@lelouchhe/agent-evals)
+
 A toolkit for evaluating AI agent systems on the real CLI and harness layer.
 
 Requirements: macOS with `sandbox-exec` and Node.js 24+. The package declares `os: darwin`, so npm refuses to install it on another platform; the CLI is published as `@lelouchhe/agent-evals`, and a run additionally needs an invocation `.env` and prepared harness directories, per [Setup](https://github.com/LelouchHe/agent-evals/blob/main/docs/setup.md). Version 0.1.1 is the first published state — the toolkit, not a finished instrument; [Roadmap](https://github.com/LelouchHe/agent-evals/blob/main/docs/roadmap.md) lists what is still open.
+
+> **Status: pre-1.0.** Breaking changes ship in a minor release while the toolkit is
+> still finding its shape: the exported implementation contracts (`RunnerDefinition`,
+> `CheckerDefinition`, `ImplementationContext`, `CheckerContext`), the case and agent-file
+> fields, and the CLI's flags. Result records name their own `schemaVersion` and are read as
+> they were written, so an upgrade does not rewrite what a past run recorded. This release
+> is one of those changes: `judge` took a `runner` instead of its own model parameters.
 
 ## Why Agent Evals
 
