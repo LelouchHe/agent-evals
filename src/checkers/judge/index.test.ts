@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { test } from "node:test";
 import { ConfigError, type ImplementationParams } from "../../engine/config.ts";
@@ -152,12 +152,22 @@ test("the prompt names the task, the evidence and the rubric, and carries no evi
   assert.doesNotMatch(prompt, /file-content-sentinel/);
 });
 
-test("the judge stages the named file into the runner's own workspace", async (t) => {
+test("the judge stages a copy of the named file and leaves the run's workspace alone", async (t) => {
   const dirs = await setup(t, "staged-sentinel\n");
   const fake = await createFakePi(t, "judge-evidence");
 
   const results = await judge(params(piDeclaration(fake)), await context(dirs.root, dirs.workspace, dirs.baseline));
   assert.match(results[0]?.reason ?? "", /hello:staged-sentinel/);
+  assert.equal(await readFile(join(dirs.workspace, "hello.txt"), "utf8"), "staged-sentinel\n");
+});
+
+test("a trailing separator in the evidence path still stages the file the read resolves to", async (t) => {
+  const dirs = await setup(t, "slash-sentinel\n");
+  const fake = await createFakePi(t, "judge-evidence");
+  const { file: _file, ...rest } = params(piDeclaration(fake));
+
+  const results = await judge({ ...rest, file: "hello.txt/" }, await context(dirs.root, dirs.workspace, dirs.baseline));
+  assert.match(results[0]?.reason ?? "", /hello:slash-sentinel/);
 });
 
 test("the judge stages the rendered trace and the prompt names it instead of a file", async (t) => {
@@ -193,6 +203,8 @@ test("a trace-only judge names no file in its prompt", async (t) => {
   const prompt = results[0]?.reason ?? "";
   assert.match(prompt, /trace\.md: the run's messages/);
   assert.doesNotMatch(prompt, /hello\.txt: /);
+  // The trace reaches the judge as a staged file, never as text inside the prompt.
+  assert.doesNotMatch(prompt, /The certificate expired\./);
 });
 
 test("judge trace evidence without a runner trace is a checker error", async (t) => {
@@ -211,6 +223,11 @@ test("a file the run never wrote is staged as absent and named as missing", asyn
 
   const results = await judge(params(piDeclaration(fake)), await context(dirs.root, dirs.workspace, dirs.baseline));
   assert.match(results[0]?.reason ?? "", /the run produced no such file/);
+
+  // Nothing is materialized in its place: the judge's workspace holds no stand-in file.
+  const absent = await createFakePi(t, "judge-evidence");
+  const staged = await judge(params(piDeclaration(absent)), await context(dirs.root, dirs.workspace, dirs.baseline));
+  assert.match(staged[0]?.reason ?? "", /hello:\(absent\)/);
 });
 
 test("the declared runner record reaches the engine, and an undeclared one inherits the case runner", async (t) => {
@@ -240,7 +257,8 @@ test("a runner that declares HOME preparation receives it before the prompt", as
   const steps: string[] = [];
   const stub: Runner = {
     prepareHome: async (run: RunnerContext) => {
-      steps.push(`prepareHome:${run.workspaceDir.includes("judge-")}`);
+      const privateRoot = run.runRootDir !== dirs.root && run.workspaceDir === join(run.runRootDir, "workspace");
+      steps.push(`prepareHome:${privateRoot && run.workspaceDir !== dirs.workspace}`);
       return [];
     },
     run: async (run: RunnerContext) => {
@@ -255,6 +273,57 @@ test("a runner that declares HOME preparation receives it before the prompt", as
     runner: stub,
   }));
   assert.deepEqual(steps, ["prepareHome:true", "run:true"]);
+});
+
+test("a runner that fails to stop turns a verdict into a checker error", async (t) => {
+  const dirs = await setup(t);
+  const stub: Runner = {
+    run: async () => ({ finalText: '{"criteria":[{"pass":true,"reason":"ok"}]}', diagnostics: [] }),
+    stop: async () => {
+      throw new Error("cleanup failed");
+    },
+  };
+
+  await assert.rejects(
+    judge(params(undefined), await context(dirs.root, dirs.workspace, dirs.baseline), async () => ({
+      type: "stub",
+      runner: stub,
+    })),
+    (error: unknown) => error instanceof JudgeError && /judge teardown failed: cleanup failed/.test(error.message),
+  );
+});
+
+test("aborting the run stops the judge's runner instead of waiting for it", async (t) => {
+  const dirs = await setup(t);
+  const verdict = { finalText: '{"criteria":[{"pass":true,"reason":"ok"}]}', diagnostics: [] };
+  const stops: string[] = [];
+  let stopped = false;
+  let release: (() => void) | undefined;
+  const stub: Runner = {
+    // Only the runner's own stop releases it: nothing else would end this run.
+    run: () => {
+      if (stopped) return Promise.resolve(verdict);
+      return new Promise((resolve) => {
+        release = () => resolve(verdict);
+      });
+    },
+    stop: async () => {
+      stopped = true;
+      stops.push("stop");
+      release?.();
+    },
+  };
+  const controller = new AbortController();
+  const checkContext = {
+    ...(await context(dirs.root, dirs.workspace, dirs.baseline)),
+    signal: AbortSignal.any([controller.signal, AbortSignal.timeout(5_000)]),
+  };
+
+  const pending = judge(params(undefined), checkContext, async () => ({ type: "stub", runner: stub }));
+  controller.abort();
+  const results = await pending;
+  assert.equal(results[0]?.status, "pass");
+  assert.ok(stops.length >= 1, "the abort handler did not stop the runner");
 });
 
 test("judge rejects invalid parameters before launch", async (t) => {
@@ -272,4 +341,13 @@ test("judge rejects invalid parameters before launch", async (t) => {
     /must name the runner "\$type"/,
   );
   await assert.rejects(() => parse({ file: "hello.txt", rubric: [""] }), ConfigError);
+  // The staged trace owns its own path, so an evidence file cannot land on it.
+  for (const file of ["trace.md", "Trace.MD", "trace.md/report.txt"]) {
+    await assert.rejects(
+      () => parse({ file, trace: true, rubric: ["x"] }),
+      /file cannot be trace\.md, or under it/,
+      file,
+    );
+  }
+  assert.equal((await parse({ file: "trace.md", rubric: ["x"] })).file, "trace.md");
 });

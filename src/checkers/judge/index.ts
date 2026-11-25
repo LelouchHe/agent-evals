@@ -10,7 +10,9 @@ import type {
   CheckerContext,
   CheckerDefinition,
   PreparedRunner,
+  Runner,
   RunnerContext,
+  RunnerOutcome,
 } from "../../engine/registry.ts";
 import { isMissing, readRunFile } from "../../engine/workspace.ts";
 import { buildJudgePrompt, type JudgeEvidence } from "./prompt.ts";
@@ -31,6 +33,10 @@ const judgeParamsSchema = z
   })
   .refine((params) => params.file !== undefined || params.trace !== undefined, {
     message: "needs file, trace or both as evidence",
+  })
+  .refine((params) => params.file === undefined || params.trace === undefined || !shadowsTrace(params.file), {
+    message: `file cannot be ${TRACE_PATH}, or under it, when the trace is evidence too`,
+    path: ["file"],
   });
 
 type JudgeParams = z.output<typeof judgeParamsSchema>;
@@ -81,16 +87,7 @@ class JudgeChecker implements Checker {
     const judgeDir = await mkdtemp(join(context.runRootDir, "judge-"));
     try {
       const runnerContext = await prepareRun(parsed, context, judgeDir);
-      const runner = this.#judge.runner;
-      let finalText: string | null;
-      let diagnostics: readonly string[];
-      try {
-        await runner.prepareHome?.(runnerContext);
-        ({ finalText, diagnostics } = await runner.run(runnerContext));
-      } finally {
-        // The judge's verdict stands; its private run root is removed either way.
-        await runner.stop().catch(() => {});
-      }
+      const { finalText, diagnostics } = await runJudge(this.#judge.runner, runnerContext);
       return parseVerdict(finalText, parsed.rubric, diagnostics);
     } catch (error) {
       if (error instanceof JudgeError) {
@@ -105,6 +102,42 @@ class JudgeChecker implements Checker {
       }
     }
   };
+}
+
+/**
+ * Run the judge's runner once and stop it whatever happens. The abort handler stops it alongside
+ * the pending run, as the engine's own path does; a stop that fails after a verdict is part of the
+ * result, because a runner that did not tear down cleanly did not judge cleanly either.
+ */
+async function runJudge(runner: Runner, context: RunnerContext): Promise<RunnerOutcome> {
+  let outcome: RunnerOutcome | undefined;
+  let failure: unknown;
+  const stopOnAbort = (): void => {
+    void runner.stop().catch(() => {});
+  };
+  if (context.signal.aborted) {
+    stopOnAbort();
+  } else {
+    context.signal.addEventListener("abort", stopOnAbort, { once: true });
+  }
+  try {
+    await runner.prepareHome?.(context);
+    outcome = await runner.run(context);
+  } catch (error) {
+    failure = error;
+  } finally {
+    context.signal.removeEventListener("abort", stopOnAbort);
+    try {
+      await runner.stop();
+    } catch (error) {
+      failure ??= new JudgeError(`judge teardown failed: ${errorMessage(error)}`);
+    }
+  }
+  if (failure !== undefined) {
+    throw failure;
+  }
+  // Reaching here means `run` returned, so the outcome is the one it returned.
+  return outcome as RunnerOutcome;
 }
 
 /** The judge's private run root: empty directories plus the evidence it staged. */
@@ -149,7 +182,8 @@ async function stageEvidence(
       }
     }
     if (content !== null) {
-      const target = join(workspaceDir, path);
+      // The read accepts trailing separators; the destination has to name the file itself.
+      const target = join(workspaceDir, withoutTrailingSeparators(path));
       await mkdir(dirname(target), { recursive: true, mode: 0o700 });
       await writeFile(target, content, { mode: 0o600 });
     }
@@ -160,6 +194,17 @@ async function stageEvidence(
     evidence.push({ path: TRACE_PATH, kind: "trace", present: true });
   }
   return evidence;
+}
+
+/** True when a declared evidence path would land on the trace's own destination. */
+function shadowsTrace(path: string): boolean {
+  const staged = withoutTrailingSeparators(path).toLowerCase();
+  return staged === TRACE_PATH || staged.startsWith(`${TRACE_PATH}/`);
+}
+
+/** A path without its trailing separators, so it names the same entry a read resolves to. */
+function withoutTrailingSeparators(path: string): string {
+  return path.replace(/[\\/]+$/u, "");
 }
 
 function runnerDeclaration(record: Record<string, unknown>, context: z.RefinementCtx): ImplementationRecord {

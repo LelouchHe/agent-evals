@@ -24,6 +24,7 @@ test("placeholders substitute anywhere in nested strings, once, leaving keys and
     url: "https://${env:HOST}/${env:HOST}?tmp=${TMPDIR}",
     literal: "$${env:TOKEN} and $${HOME} cost $5",
     nested: { list: ["${HOME}/.config", 3, true, null] },
+    record: { $type: "${HOME}", value: "${HOME}" },
     "${env:KEY}": "key stays",
   });
   const result = await substituteValues(params, "runner", source({ TOKEN: "${HOME}", HOST: "example.com" }, lookups));
@@ -33,6 +34,8 @@ test("placeholders substitute anywhere in nested strings, once, leaving keys and
     url: "https://example.com/example.com?tmp=/run/tmp",
     literal: "${env:TOKEN} and ${HOME} cost $5",
     nested: { list: ["/run/home/.config", 3, true, null] },
+    // `$type` names an implementation, so it is a registry key rather than a placeholder.
+    record: { $type: "${HOME}", value: "/run/home" },
     "${env:KEY}": "key stays",
     ["__proto__"]: "data",
   });
