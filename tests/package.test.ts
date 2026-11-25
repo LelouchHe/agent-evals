@@ -30,6 +30,17 @@ async function runEntry(
   });
 }
 
+/** Every file beneath a directory whose name ends with the suffix. */
+async function filesEndingWith(directory: string, suffix: string): Promise<string[]> {
+  const found: string[] = [];
+  for (const entry of await readdir(directory, { withFileTypes: true })) {
+    const path = join(directory, entry.name);
+    if (entry.isDirectory()) found.push(...(await filesEndingWith(path, suffix)));
+    else if (entry.name.endsWith(suffix)) found.push(path);
+  }
+  return found;
+}
+
 test("package metadata and built runtime assets point at the sole CLI implementation", async () => {
   const pkg = JSON.parse(await readFile(join(root, "package.json"), "utf8")) as {
     bin?: Record<string, string>;
@@ -39,6 +50,16 @@ test("package metadata and built runtime assets point at the sole CLI implementa
   assert.equal(pkg.bin?.["agent-evals"], "dist/cli.js");
   assert.equal(pkg.scripts?.eval, "node dist/cli.js");
   assert.deepEqual(pkg.files, ["dist", ".env.example"]);
+
+  // Published declarations must import the JavaScript beside them, not source `.ts` specifiers
+  // that a consumer's TypeScript only resolves by substitution.
+  for (const declaration of await filesEndingWith(join(root, "dist"), ".d.ts")) {
+    assert.doesNotMatch(
+      await readFile(declaration, "utf8"),
+      /(from\s*|import\()["']\.[^"']*\.ts["']/u,
+      `${declaration} keeps a .ts import specifier`,
+    );
+  }
 
   const cli = await readFile(distEntry, "utf8");
   assert.ok(cli.startsWith("#!/usr/bin/env node\n"), "dist/cli.js must keep its executable shebang");
