@@ -8,6 +8,7 @@ import {
   errorMessage,
   resolveAuthoringAsset,
   type ImplementationParams,
+  type ImplementationRecord,
   type ResolvedCase,
 } from "./config.ts";
 import {
@@ -17,6 +18,7 @@ import {
   type Checker,
   type ImplementationContext,
   type MockRecord,
+  type PreparedRunner,
   type Registry,
   type Runner,
   type RunnerContext,
@@ -457,6 +459,15 @@ async function prepareImplementations(
   if (!runnerSupportsHome && homeEntries(request.case.config.files).length > 0) {
     throw new ConfigError(`runner "${runnerDefinition.type}" does not support case files under "~"`);
   }
+  const createRunner = async (record: ImplementationRecord): Promise<PreparedRunner> => {
+    const definition = requireRunner(request.registry, record.$type);
+    const params = await parseImplementationParams(
+      definition.params,
+      await substituteValues(paramsOf(record), "runner", values),
+      `runner "${definition.type}"`,
+    );
+    return { type: definition.type, runner: await definition.create(params, context) };
+  };
   const context: ImplementationContext = {
     authoringDir: request.case.dir,
     values,
@@ -464,13 +475,9 @@ async function prepareImplementations(
     ...(mockTargets === undefined ? {} : { mockTargets }),
     runnerSupportsHome,
     validateCheckPlatform: async () => assertSeatbeltAvailable(),
+    createRunner: (record) => createRunner(record ?? request.case.config.runner),
   };
-  const runnerParams = await parseImplementationParams(
-    runnerDefinition.params,
-    await substituteValues(paramsOf(request.case.config.runner), "runner", values),
-    `runner "${runnerDefinition.type}"`,
-  );
-  const runner = await runnerDefinition.create(runnerParams, context);
+  const { runner } = await createRunner(request.case.config.runner);
   await validateCaseHomePlacement(request.case, runner.homeFiles ?? [], signal);
 
   const checks: { type: string; checker: Checker }[] = [];

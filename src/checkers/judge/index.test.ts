@@ -4,11 +4,18 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { ConfigError, type ImplementationParams } from "../../engine/config.ts";
 import { parseImplementationParams } from "../../engine/params.ts";
-import type { CheckerContext } from "../../engine/registry.ts";
-import { createFakePi, makeTempDir } from "../../../tests/helpers/fake-pi-control.ts";
+import type {
+  CheckerContext,
+  ImplementationContext,
+  PreparedRunner,
+  Runner,
+  RunnerContext,
+} from "../../engine/registry.ts";
+import { openRunRoot } from "../../engine/workspace.ts";
+import { piRunner } from "../../runners/pi/index.ts";
+import { createFakePi, makeTempDir, type FakePi } from "../../../tests/helpers/fake-pi-control.ts";
 import { implementationContext, unusedCheckSandbox } from "../../../tests/helpers/implementation-context.ts";
 import { judgeChecker, JudgeError } from "./index.ts";
-import { openRunRoot } from "../../engine/workspace.ts";
 
 async function setup(t: Parameters<typeof makeTempDir>[0], fileContent: string | null = "Hello, world!\n") {
   const root = await makeTempDir(t, "ae-judge-");
@@ -40,30 +47,52 @@ async function context(root: string, workspace: string, baseline: string): Promi
   };
 }
 
-function params(executable: string, rubric: string[] = ["hello.txt exists and contains Hello, world!."]) {
+/** The engine capability the judge asks for, with the declaration it was given. */
+type CreateRunner = ImplementationContext["createRunner"];
+
+/** Create the declared Pi runner the way the engine does: same schema, same context. */
+const createDeclaredRunner: CreateRunner = async (record) => {
+  const { $type: _type, ...declared } = record ?? {};
   return {
-    model: "test/judge-model",
-    thinking: "low",
+    type: "pi",
+    runner: await piRunner.create(
+      await parseImplementationParams(piRunner.params, declared, 'runner "pi"'),
+      implementationContext(process.cwd()),
+    ),
+  };
+};
+
+/** A runner declaration naming the fake executable, as a case would write it. */
+function piDeclaration(fake: FakePi, extra: Readonly<Record<string, unknown>> = {}) {
+  return { $type: "pi", model: "test/judge-model", thinking: "low", executable: fake.executable, ...extra };
+}
+
+function params(declaration: Readonly<Record<string, unknown>> | undefined, rubric?: string[]) {
+  return {
+    ...(declaration === undefined ? {} : { runner: declaration }),
     file: "hello.txt",
-    rubric,
-    executable,
+    rubric: rubric ?? ["hello.txt exists and contains Hello, world!."],
   };
 }
 
-async function checkRaw(
+async function prepare(raw: ImplementationParams, createRunner: CreateRunner) {
+  const parsed = await parseImplementationParams(judgeChecker.params, raw, 'checker "judge"');
+  return judgeChecker.create(parsed, { ...implementationContext(process.cwd()), createRunner });
+}
+
+async function judge(
   raw: ImplementationParams,
   contextValue: CheckerContext,
-): Promise<readonly import("../../engine/registry.ts").CheckResult[]> {
-  const paramsValue = await parseImplementationParams(judgeChecker.params, raw, 'checker "judge"');
-  const checker = await judgeChecker.create(paramsValue, implementationContext(process.cwd()));
-  return checker.check(contextValue);
+  createRunner: CreateRunner = createDeclaredRunner,
+) {
+  return (await prepare(raw, createRunner)).check(contextValue);
 }
 
 test("judge passes when every rubric statement passes", async (t) => {
   const dirs = await setup(t);
   const fake = await createFakePi(t, "judge-valid");
 
-  const results = await checkRaw(params(fake.executable), await context(dirs.root, dirs.workspace, dirs.baseline));
+  const results = await judge(params(piDeclaration(fake)), await context(dirs.root, dirs.workspace, dirs.baseline));
   assert.equal(results.length, 1);
   assert.equal(results[0]?.status, "pass");
   assert.equal(results[0]?.checker, "judge");
@@ -74,7 +103,7 @@ test("judge preserves a valid failing verdict as a failed check", async (t) => {
   const dirs = await setup(t);
   const fake = await createFakePi(t, "judge-fail");
 
-  const results = await checkRaw(params(fake.executable), await context(dirs.root, dirs.workspace, dirs.baseline));
+  const results = await judge(params(piDeclaration(fake)), await context(dirs.root, dirs.workspace, dirs.baseline));
   assert.equal(results[0]?.status, "fail");
   assert.match(results[0]?.reason ?? "", /differs/);
 });
@@ -83,7 +112,7 @@ test("judge accepts a fenced JSON verdict", async (t) => {
   const dirs = await setup(t);
   const fake = await createFakePi(t, "judge-fenced");
 
-  const results = await checkRaw(params(fake.executable), await context(dirs.root, dirs.workspace, dirs.baseline));
+  const results = await judge(params(piDeclaration(fake)), await context(dirs.root, dirs.workspace, dirs.baseline));
   assert.equal(results[0]?.status, "pass");
 });
 
@@ -93,7 +122,7 @@ test("judge reports malformed verdicts as checker failures, not failed checks", 
   for (const scenario of ["judge-invalid", "judge-count", "judge-type"]) {
     const fake = await createFakePi(t, scenario);
     await assert.rejects(
-      async () => checkRaw(params(fake.executable), await context(dirs.root, dirs.workspace, dirs.baseline)),
+      async () => judge(params(piDeclaration(fake)), await context(dirs.root, dirs.workspace, dirs.baseline)),
       JudgeError,
       scenario,
     );
@@ -105,61 +134,65 @@ test("judge invocation failure is a checker failure", async (t) => {
   const fake = await createFakePi(t, "crash");
 
   await assert.rejects(
-    async () => checkRaw(params(fake.executable), await context(dirs.root, dirs.workspace, dirs.baseline)),
+    async () => judge(params(piDeclaration(fake)), await context(dirs.root, dirs.workspace, dirs.baseline)),
     JudgeError,
   );
 });
 
-test("judge prompt contains the task, file evidence, and rubric", async (t) => {
-  const dirs = await setup(t, "Hello, world!\n");
+test("the prompt names the task, the evidence and the rubric, and carries no evidence content", async (t) => {
+  const dirs = await setup(t, "file-content-sentinel\n");
   const fake = await createFakePi(t, "judge-echo");
 
-  const results = await checkRaw(params(fake.executable), await context(dirs.root, dirs.workspace, dirs.baseline));
+  const results = await judge(params(piDeclaration(fake)), await context(dirs.root, dirs.workspace, dirs.baseline));
+  const prompt = results[0]?.reason ?? "";
+  assert.match(prompt, /Create hello\.txt/);
+  assert.match(prompt, /hello\.txt: a file the run left in its workspace/);
+  assert.match(prompt, /Rubric statements/);
+  assert.match(prompt, /hello\.txt exists and contains/);
+  assert.doesNotMatch(prompt, /file-content-sentinel/);
+});
+
+test("the judge stages the named file into the runner's own workspace", async (t) => {
+  const dirs = await setup(t, "staged-sentinel\n");
+  const fake = await createFakePi(t, "judge-evidence");
+
+  const results = await judge(params(piDeclaration(fake)), await context(dirs.root, dirs.workspace, dirs.baseline));
+  assert.match(results[0]?.reason ?? "", /hello:staged-sentinel/);
+});
+
+test("the judge stages the rendered trace and the prompt names it instead of a file", async (t) => {
+  const dirs = await setup(t);
+  const fake = await createFakePi(t, "judge-evidence");
+  const { file: _file, ...traceOnly } = params(piDeclaration(fake), ["The agent read the log."]);
+  const trace = [
+    { type: "message", text: "The certificate expired." },
+    { type: "tool", toolCallId: "a", title: "cat deploy.log" },
+  ] as const;
+
+  const results = await judge(
+    { ...traceOnly, trace: true },
+    { ...(await context(dirs.root, dirs.workspace, dirs.baseline)), trace },
+  );
   const reason = results[0]?.reason ?? "";
-  assert.match(reason, /Create hello\.txt/);
-  assert.match(reason, /Hello, world!/);
-  assert.match(reason, /Rubric statements/);
-  assert.match(reason, /hello\.txt exists and contains/);
+  assert.match(reason, /trace:\[1\] message/);
+  assert.match(reason, /tool call: cat deploy\.log/);
 });
 
-test("judge invocation disables tools and discovered resources", async (t) => {
-  const dirs = await setup(t);
-  const fake = await createFakePi(t, "judge-args");
-
-  const results = await checkRaw(params(fake.executable), await context(dirs.root, dirs.workspace, dirs.baseline));
-  const args = results[0]?.reason ?? "";
-  assert.match(args, /--no-tools/);
-  assert.doesNotMatch(args, /\s--tools\s/);
-  assert.match(args, /--no-session/);
-  assert.match(args, /--no-skills/);
-  assert.match(args, /--no-extensions/);
-  assert.match(args, /--no-mcp/);
-  assert.match(args, /--no-context-files/);
-  assert.match(args, /--model test\/judge-model/);
-  assert.match(args, /--thinking low/);
-});
-
-test("judge gives the rendered trace as evidence and omits the file section when none is named", async (t) => {
+test("a trace-only judge names no file in its prompt", async (t) => {
   const dirs = await setup(t);
   const fake = await createFakePi(t, "judge-echo");
-  const { file: _file, ...traceOnly } = params(fake.executable, ["The agent read the log."]);
+  const { file: _file, ...traceOnly } = params(piDeclaration(fake), ["The agent read the log."]);
 
-  const results = await checkRaw(
+  const results = await judge(
     { ...traceOnly, trace: true },
     {
       ...(await context(dirs.root, dirs.workspace, dirs.baseline)),
-      trace: [
-        // The echoed prompt is cut to 500 characters, so the trace stays short.
-        { type: "message", text: "The certificate expired." },
-        { type: "tool", toolCallId: "a", title: "cat deploy.log" },
-      ],
+      trace: [{ type: "message", text: "The certificate expired." }],
     },
   );
   const prompt = results[0]?.reason ?? "";
-  assert.match(prompt, /<<<TRACE \(untrusted output/);
-  assert.match(prompt, /tool call: cat deploy\.log/);
-  assert.match(prompt, /The certificate expired\./);
-  assert.doesNotMatch(prompt, /Evidence file/);
+  assert.match(prompt, /trace\.md: the run's messages/);
+  assert.doesNotMatch(prompt, /hello\.txt: /);
 });
 
 test("judge trace evidence without a runner trace is a checker error", async (t) => {
@@ -167,51 +200,76 @@ test("judge trace evidence without a runner trace is a checker error", async (t)
   const fake = await createFakePi(t, "judge-valid");
 
   await assert.rejects(
-    checkRaw({ ...params(fake.executable), trace: true }, await context(dirs.root, dirs.workspace, dirs.baseline)),
+    judge({ ...params(piDeclaration(fake)), trace: true }, await context(dirs.root, dirs.workspace, dirs.baseline)),
     (error: unknown) => error instanceof JudgeError && /runner records no trace/.test(error.message),
   );
 });
 
-test("judge receives an explicit missing-file signal", async (t) => {
+test("a file the run never wrote is staged as absent and named as missing", async (t) => {
   const dirs = await setup(t, null);
   const fake = await createFakePi(t, "judge-echo");
 
-  const results = await checkRaw(params(fake.executable), await context(dirs.root, dirs.workspace, dirs.baseline));
-  assert.match(results[0]?.reason ?? "", /the file does not exist/);
+  const results = await judge(params(piDeclaration(fake)), await context(dirs.root, dirs.workspace, dirs.baseline));
+  assert.match(results[0]?.reason ?? "", /the run produced no such file/);
+});
+
+test("the declared runner record reaches the engine, and an undeclared one inherits the case runner", async (t) => {
+  const dirs = await setup(t);
+  const seen: (undefined | Readonly<Record<string, unknown>>)[] = [];
+  const stub: Runner = {
+    prepareHome: async () => [],
+    run: async () => ({ finalText: '{"criteria":[{"pass":true,"reason":"ok"}]}', diagnostics: [] }),
+    stop: async () => {},
+  };
+  const createRunner: CreateRunner = async (record) => {
+    seen.push(record);
+    return { type: "stub", runner: stub } satisfies PreparedRunner;
+  };
+
+  await judge(params(undefined), await context(dirs.root, dirs.workspace, dirs.baseline), createRunner);
+  await judge(
+    params({ $type: "stub", model: "other/model", apiKey: "${env:IGNORED}" }),
+    await context(dirs.root, dirs.workspace, dirs.baseline),
+    createRunner,
+  );
+  assert.deepEqual(seen, [undefined, { $type: "stub", model: "other/model", apiKey: "${env:IGNORED}" }]);
+});
+
+test("a runner that declares HOME preparation receives it before the prompt", async (t) => {
+  const dirs = await setup(t);
+  const steps: string[] = [];
+  const stub: Runner = {
+    prepareHome: async (run: RunnerContext) => {
+      steps.push(`prepareHome:${run.workspaceDir.includes("judge-")}`);
+      return [];
+    },
+    run: async (run: RunnerContext) => {
+      steps.push(`run:${run.input.includes("Rubric statements")}`);
+      return { finalText: '{"criteria":[{"pass":true,"reason":"ok"}]}', diagnostics: [] };
+    },
+    stop: async () => {},
+  };
+
+  await judge(params(undefined), await context(dirs.root, dirs.workspace, dirs.baseline), async () => ({
+    type: "stub",
+    runner: stub,
+  }));
+  assert.deepEqual(steps, ["prepareHome:true", "run:true"]);
 });
 
 test("judge rejects invalid parameters before launch", async (t) => {
   await setup(t);
-  const fake = await createFakePi(t, "judge-valid");
   const parse = (value: ImplementationParams) =>
     parseImplementationParams(judgeChecker.params, value, 'checker "judge"');
 
+  await assert.rejects(() => parse({ file: "hello.txt", rubric: [] }), ConfigError);
+  await assert.rejects(() => parse({ file: "/etc/passwd", rubric: ["x"] }), ConfigError);
+  await assert.rejects(() => parse({ file: "hello.txt", rubric: ["x"], extra: 1 }), ConfigError);
+  await assert.rejects(() => parse({ rubric: ["x"] }), /needs file, trace or both/);
+  await assert.rejects(() => parse({ file: "hello.txt", trace: false, rubric: ["x"] }), ConfigError);
   await assert.rejects(
-    () => parse({ model: "", file: "hello.txt", rubric: ["x"], executable: fake.executable }),
-    ConfigError,
+    () => parse({ file: "hello.txt", rubric: ["x"], runner: { model: "p/m" } }),
+    /must name the runner "\$type"/,
   );
-  await assert.rejects(
-    () => parse({ model: "m", file: "hello.txt", rubric: [], executable: fake.executable }),
-    ConfigError,
-  );
-  await assert.rejects(
-    () => parse({ model: "m", file: "/etc/passwd", rubric: ["x"], executable: fake.executable }),
-    ConfigError,
-  );
-  await assert.rejects(
-    () => parse({ model: "m", file: "hello.txt", rubric: ["x"], executable: fake.executable, extra: 1 }),
-    ConfigError,
-  );
-  await assert.rejects(
-    () => parse({ model: "m", rubric: ["x"], executable: fake.executable }),
-    /needs file, trace or both/,
-  );
-  await assert.rejects(
-    () => parse({ model: "m", file: "hello.txt", trace: false, rubric: ["x"], executable: fake.executable }),
-    ConfigError,
-  );
-
-  const defaults = await parse({ model: "m", file: "hello.txt", rubric: ["x"], executable: fake.executable });
-  assert.equal(defaults.thinking, "medium");
-  assert.equal(defaults.apiKey, undefined);
+  await assert.rejects(() => parse({ file: "hello.txt", rubric: [""] }), ConfigError);
 });

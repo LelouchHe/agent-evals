@@ -199,6 +199,15 @@ function handlePrompt(command) {
     case "judge-fenced":
       settle("```json\n" + JSON.stringify({ criteria: [{ criterion: "a", pass: true, reason: "ok" }] }) + "\n```");
       break;
+    case "judge-evidence": {
+      // Reports what the judge's own workspace holds, proving the checker staged it there.
+      const read = (name) =>
+        existsSync(join(process.cwd(), name)) ? readFileSync(join(process.cwd(), name), "utf8").trim() : "(absent)";
+      settle(
+        JSON.stringify({ criteria: [{ pass: true, reason: `hello:${read("hello.txt")} trace:${read("trace.md")}` }] }),
+      );
+      break;
+    }
     case "probe-baseline": {
       let result;
       try {

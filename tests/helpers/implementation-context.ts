@@ -12,6 +12,7 @@ export function implementationContext(authoringDir: string, runnerSupportsHome =
     runnerSupportsHome,
     validateCheckPlatform: async () => {},
     validateFiles: (files) => validateCheckFiles(files, authoringDir),
+    createRunner: () => Promise.reject(new Error("this test creates no runner")),
     values: {
       env: {
         require: (name) => Promise.reject(new Error(`no environment value ${name} in this test`)),

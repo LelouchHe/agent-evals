@@ -8,6 +8,7 @@ import { ConfigError } from "../src/engine/config.ts";
 import { createEnvSource } from "../src/engine/env-source.ts";
 import { addChecker, addRunner, createRegistry } from "../src/engine/registry.ts";
 import { runEvaluation } from "../src/engine/run.ts";
+import type { EvaluationRecord } from "../src/engine/results.ts";
 import { fileChecker } from "../src/checkers/file/index.ts";
 import { judgeChecker } from "../src/checkers/judge/index.ts";
 import { piRunner } from "../src/runners/pi/index.ts";
@@ -26,6 +27,12 @@ function registry() {
   addChecker(value, fileChecker, "built-in");
   addChecker(value, judgeChecker, "built-in");
   return value;
+}
+
+/** The judge's own runner declaration, recorded unsubstituted like every other field. */
+function judgeRunnerApiKey(record: EvaluationRecord): string | undefined {
+  const judge = record.resolvedConfig.checks[0];
+  return (judge?.runner as { readonly apiKey?: string } | undefined)?.apiKey;
 }
 
 function runCli(
@@ -72,11 +79,14 @@ test("runner and judge share one cached environment value without leaking it", a
       checks: [
         {
           $type: "judge",
-          model: "opencode-go/test-judge",
-          apiKey: "${env:OPENCODE_API_KEY}",
+          runner: {
+            $type: "pi",
+            model: "opencode-go/test-judge",
+            apiKey: "${env:OPENCODE_API_KEY}",
+            executable: judge.executable,
+          },
           file: "hello.txt",
           rubric: ["ok"],
-          executable: judge.executable,
         },
       ],
       runner: {
@@ -102,7 +112,7 @@ test("runner and judge share one cached environment value without leaking it", a
   assert.equal(record.runner.finalText, "api-key-present");
   assert.equal(record.checks[0]?.reason, "api-key-present");
   assert.equal(record.resolvedConfig.runner.apiKey, "${env:OPENCODE_API_KEY}");
-  assert.equal(record.resolvedConfig.checks[0]?.apiKey, "${env:OPENCODE_API_KEY}");
+  assert.equal(judgeRunnerApiKey(record), "${env:OPENCODE_API_KEY}");
   assert.equal(await readFile(join(invocation, "count"), "utf8"), "x");
   await assert.rejects(() => readFile(join(invocation, "unused-ran")), /ENOENT/);
   const resultText = await readFile(join(resultsDir, record.runId, "result.json"), "utf8");
@@ -130,11 +140,14 @@ test("different environment values reach only their own runner and judge process
       checks: [
         {
           $type: "judge",
-          model: "deepseek/test-judge",
-          apiKey: "${env:DEEPSEEK_API_KEY}",
+          runner: {
+            $type: "pi",
+            model: "deepseek/test-judge",
+            apiKey: "${env:DEEPSEEK_API_KEY}",
+            executable: judge.executable,
+          },
           file: "hello.txt",
           rubric: ["ok"],
-          executable: judge.executable,
         },
       ],
       runner: {
@@ -221,11 +234,14 @@ test("CLI resolves .env only from the invocation working directory", async (t) =
       checks: [
         {
           $type: "judge",
-          model: "opencode-go/test-judge",
-          apiKey: "${env:OPENCODE_API_KEY}",
+          runner: {
+            $type: "pi",
+            model: "opencode-go/test-judge",
+            apiKey: "${env:OPENCODE_API_KEY}",
+            executable: judge.executable,
+          },
           file: "hello.txt",
           rubric: ["ok"],
-          executable: judge.executable,
         },
       ],
       runner: {
@@ -273,11 +289,14 @@ test("natural apiKey fields receive ordinary values from arbitrary environment n
       checks: [
         {
           $type: "judge",
-          model: "test/judge-model",
-          apiKey: "${env:MY_JUDGE_KEY}",
+          runner: {
+            $type: "pi",
+            model: "test/judge-model",
+            apiKey: "${env:MY_JUDGE_KEY}",
+            executable: judge.executable,
+          },
           file: "hello.txt",
           rubric: ["ok"],
-          executable: judge.executable,
         },
       ],
       runner: {
@@ -301,7 +320,7 @@ test("natural apiKey fields receive ordinary values from arbitrary environment n
   assert.equal(record.runner.finalText, "custom:true");
   assert.equal(record.checks[0]?.reason, "custom:true");
   assert.equal(record.resolvedConfig.runner.apiKey, "${env:MY_RUNNER_KEY}");
-  assert.equal(record.resolvedConfig.checks[0]?.apiKey, "${env:MY_JUDGE_KEY}");
+  assert.equal(judgeRunnerApiKey(record), "${env:MY_JUDGE_KEY}");
   assert.deepEqual(await readdir(tempParent), []);
 });
 

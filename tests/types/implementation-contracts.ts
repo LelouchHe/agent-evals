@@ -9,6 +9,7 @@ import type {
   CheckerContext,
   CheckerDefinition,
   ImplementationContext,
+  Runner,
   RunnerContext,
   RunnerDefinition,
 } from "../../src/engine/registry.ts";
@@ -48,7 +49,13 @@ const implementationContext: ImplementationContext = {
   runnerSupportsHome: true,
   validateCheckPlatform: async () => {},
   validateFiles: async () => {},
+  createRunner: async (record) => ({ type: record?.$type ?? "example", runner: exampleRunnerInstance }),
   values: { env: { require: async (name) => name }, run: { HOME: "/run/home", TMPDIR: "/run/tmp" } },
+};
+
+const exampleRunnerInstance: Runner = {
+  run: async () => ({ finalText: "typed", diagnostics: [] }),
+  stop: async () => {},
 };
 
 const exampleRunner: RunnerDefinition<ExampleParams> = {

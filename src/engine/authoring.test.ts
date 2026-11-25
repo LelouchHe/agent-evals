@@ -65,7 +65,7 @@ test("an ordinary document resolves one case and annotates every top-level field
     "    path: hello.txt",
     "    exists: true",
     "  - $type: judge",
-    "    model: p/m",
+    "    file: hello.txt",
     "    rubric: [one, two]",
     "runner:",
     "  $type: pi",

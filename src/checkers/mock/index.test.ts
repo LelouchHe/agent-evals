@@ -17,6 +17,7 @@ function implementationContext(mockTargets?: readonly string[]) {
     runnerSupportsHome: true,
     validateCheckPlatform: async () => {},
     validateFiles: (files: Readonly<Record<string, string>>) => validateCheckFiles(files, process.cwd()),
+    createRunner: () => Promise.reject(new Error("this test creates no runner")),
     values: {
       env: { require: (name: string) => Promise.reject(new Error(`no environment value ${name}`)) },
       run: { HOME: "/run/home", TMPDIR: "/run/tmp" },

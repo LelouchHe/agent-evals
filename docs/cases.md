@@ -20,7 +20,7 @@ Treat a case like a test: arrange an environment, send input, observe what happe
 
 ### Anything Can Be the Subject
 
-Unlike a unit test, a case has no fixed system-under-test slot. Every declared part—input, fixture, runner type, model, skills or other configuration, mocks, even a judge's model or rubric—can be what is evaluated. The subject is whatever differs between the cases being compared; the fields they share are the controls. Common fields and named cases express exactly this, and the engine does not know or need to know which part is the subject.
+Unlike a unit test, a case has no fixed system-under-test slot. Every declared part—input, fixture, runner type, model, skills or other configuration, mocks, even a judge's runner, model or rubric—can be what is evaluated. The subject is whatever differs between the cases being compared; the fields they share are the controls. Common fields and named cases express exactly this, and the engine does not know or need to know which part is the subject.
 
 ### Why the Trace Matters
 

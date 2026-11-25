@@ -12,9 +12,8 @@ checks:
     path: deploy.log
     changed: false
   - $type: judge
-    # Independent Pi invocation; omitted thinking uses the checker default.
-    model: opencode-go/deepseek-v4.1-flash
-    apiKey: ${env:OPENCODE_API_KEY}
+    # No runner is named, so the judge runs this case's Pi runner with its model and
+    # credentials; the evidence below is staged into that runner's own workspace.
     file: diagnosis.md
     rubric:
       - The diagnosis identifies an expired artifact signing certificate as the cause.

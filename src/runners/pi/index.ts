@@ -3,9 +3,10 @@ import { basename, join } from "node:path";
 import { z } from "zod";
 import { ConfigError, errorMessage, resolveAuthoringAsset } from "../../engine/config.ts";
 import { authoringCopyFilter } from "../../engine/files.ts";
+import { nonEmptyTrimmedString } from "../../engine/params.ts";
 import { assertSeatbeltAvailable } from "../../platform/macos/policy.ts";
 import type { Runner, RunnerContext, RunnerDefinition, RunnerOutcome } from "../../engine/registry.ts";
-import { nonEmptyTrimmedString, thinkingSchema } from "./params.ts";
+import { thinkingSchema } from "./params.ts";
 import { invokePi, resolvePiExecutable } from "./session.ts";
 
 const piRunnerParamsSchema = z.strictObject({

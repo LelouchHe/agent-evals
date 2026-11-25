@@ -1,6 +1,6 @@
 # Setup
 
-Requirements: Node.js 24+ and macOS with `/usr/bin/sandbox-exec`. `view` needs neither a harness nor credentials; `run` needs the selected harness prepared as below, plus an installed `pi` CLI and provider key whenever a case uses `$type: judge` or the native `pi` runner.
+Requirements: Node.js 24+ and macOS with `/usr/bin/sandbox-exec`. `view` needs neither a harness nor credentials; `run` needs the selected harness prepared as below, plus an installed `pi` CLI and provider key whenever a case uses the native `pi` runner or declares one for `$type: judge`.
 
 ## Install the CLI
 

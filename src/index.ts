@@ -15,6 +15,7 @@ export type {
   ImplementationContext,
   MockRecord,
   MockWiring,
+  PreparedRunner,
   Runner,
   RunnerContext,
   RunnerDefinition,
