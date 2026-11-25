@@ -15,7 +15,7 @@ To install the private package into a separate prefix (for example to run concur
 
 ```sh
 npm pack --pack-destination /tmp
-npm install --prefix /tmp/agent-evals-install /tmp/agent-evals-0.1.0.tgz
+npm install --prefix /tmp/agent-evals-install /tmp/agent-evals-0.1.1.tgz
 /tmp/agent-evals-install/node_modules/.bin/agent-evals --help
 ```
 
