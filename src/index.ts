@@ -24,7 +24,17 @@ export type {
   TraceEntry,
 } from "./engine/registry.ts";
 export type { ValueSource } from "./engine/values.ts";
-export { ConfigError, type PatternSyntax } from "./engine/config.ts";
+export {
+  ConfigError,
+  expectMockArgs,
+  expectMockTarget,
+  mockTargetIdentity,
+  type MockArgs,
+  type MockArgument,
+  type MockPattern,
+  type PatternSyntax,
+} from "./engine/config.ts";
+export { compileRules, matchCall, type CompiledRules } from "./engine/mock-match.ts";
 export { patternListSchema, patternSyntaxSchema, runRelativePathSchema } from "./engine/params.ts";
 export { compilePattern, searches } from "./engine/regex.ts";
 export {

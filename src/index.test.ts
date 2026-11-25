@@ -9,7 +9,12 @@ import {
   MAX_CHECK_BYTES,
   WorkspacePathError,
   compilePattern,
+  compileRules,
+  expectMockArgs,
+  expectMockTarget,
   isMissing,
+  matchCall,
+  mockTargetIdentity,
   patternListSchema,
   readRunFile,
   readRunTree,
@@ -46,4 +51,21 @@ test("the package entry exposes the evidence access a file-like checker needs", 
   await assert.rejects(() => readRunFile(runRoot, "vault"), WorkspacePathError);
   assert.equal(isMissing(Object.assign(new Error("missing"), { code: "ENOENT" })), true);
   assert.equal(typeof ConfigError, "function");
+});
+
+/** A mock-style checker reads the declared grammar and the recorded calls; both are public. */
+test("the package entry exposes the mock argument grammar and matcher", () => {
+  const args = expectMockArgs(["push", "/a.c/"], "test");
+  const rules = compileRules([{ args, action: { kind: "pass" } }]);
+
+  assert.notEqual(matchCall(rules, ["push", "abc"]), undefined);
+  assert.equal(matchCall(rules, ["pull", "abc"]), undefined);
+  assert.equal(matchCall(rules, ["push"]), undefined);
+
+  // A bare command name and a workspace path are different targets, and both spellings of one
+  // workspace path are the same target.
+  assert.equal(mockTargetIdentity("./scripts/x"), mockTargetIdentity("scripts/x"));
+  assert.notEqual(mockTargetIdentity("x"), mockTargetIdentity("./x"));
+  assert.equal(expectMockTarget("x", "test"), "x");
+  assert.throws(() => expectMockTarget("dir/", "test"), ConfigError);
 });
