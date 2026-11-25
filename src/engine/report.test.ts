@@ -183,7 +183,7 @@ test("a run that recorded no check counts as not judged rather than leaving the 
     record(1, { name: "case", status: "fail", checks: [["a", "fail", "observed"]] }),
     record(2, { name: "case", status: "error", checks: [] }),
   ]);
-  assert.match(report, /^ {8}✗ a {2}1\/2 fail, 1\/2 not judged — observed$/mu);
+  assert.match(report, /^ {8}✗ a {2}1\/1 fail, 1\/2 not judged — observed$/mu);
 });
 
 test("a negative case is read against its expectation", () => {
@@ -298,8 +298,10 @@ test("a matrix groups one declaration's results across different result counts",
     record(2, { name: "other", status: "error", declarations, checks: [["file check", "error", "no evidence", 0]] }),
   ]);
 
-  assert.ok(text.includes("| 1 | trace pattern one | 1/1 | 0/1 (1 err) |"), text);
+  // The declaration-level error is its own identity, not the first pattern's slot.
+  assert.ok(text.includes("| 1 | trace pattern one | 1/1 | — (1 not judged) |"), text);
   assert.ok(text.includes("| 2 | trace pattern two | 0/1 | — (1 not judged) |"), text);
+  assert.ok(text.includes("| 3 | trace file check | — (1 not judged) | 0/1 (1 err) |"), text);
 });
 
 test("a matrix names runs that recorded no result at all", () => {
@@ -309,7 +311,7 @@ test("a matrix names runs that recorded no result at all", () => {
     record(2, { name: "b", status: "error", declarations, checks: [] }),
   ]);
 
-  assert.ok(text.includes("| 1 | judge check | — (1 not judged) | — (1 not judged) |"), text);
+  assert.ok(text.includes("No check result was recorded for any repetition."), text);
 });
 
 test("a matrix refuses records that do not name their declaration", () => {

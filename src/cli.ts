@@ -12,7 +12,7 @@ import { ConfigError, errorMessage } from "./engine/config.ts";
 import { addChecker, addRunner, createRegistry, loadTrustedImplementations } from "./engine/registry.ts";
 import { executeEvaluation, prepareEvaluation, type PreparedEvaluation } from "./engine/run.ts";
 import { formatMatrix, formatReport } from "./engine/report.ts";
-import type { EvaluationRecord } from "./engine/results.ts";
+import { runOutcome, type EvaluationRecord } from "./engine/results.ts";
 import { describePlacement } from "./engine/placement.ts";
 import { formatResolvedCase } from "./engine/view.ts";
 import { piRunner } from "./runners/pi/index.ts";
@@ -337,7 +337,7 @@ async function findResultFiles(path: string): Promise<string[]> {
 
 function printRecord(record: EvaluationRecord, resultsDir: string): void {
   const caseLabel = record.case.name === undefined ? record.case.path : `${record.case.name} (${record.case.path})`;
-  const lines = [`run ${record.runId}: ${outcome(record)}`, `  case: ${caseLabel}`];
+  const lines = [`run ${record.runId}: ${runOutcome(record)}`, `  case: ${caseLabel}`];
   lines.push(`  runner ${record.runner.type}: ${record.runner.status} (${record.runner.durationMs}ms)`);
   for (const check of record.checks) {
     lines.push(
@@ -351,30 +351,24 @@ function printRecord(record: EvaluationRecord, resultsDir: string): void {
   process.stdout.write(lines.join("\n") + "\n");
 }
 
-/** `expect: fail` inverts a pass or fail verdict; an error is still an error. */
+/** The outcome a reader sees, with the case's `expect` applied; an error is still an error. */
 function exitCode(record: EvaluationRecord): number {
-  switch (record.status) {
+  switch (runOutcome(record)) {
     case "pass":
-      return record.resolvedConfig.expect === "fail" ? 1 : 0;
+    case "expected-fail":
+      return 0;
     case "fail":
-      return record.resolvedConfig.expect === "fail" ? 0 : 1;
+    case "unexpected-pass":
+      return 1;
     default:
       return 2;
   }
 }
 
-/** The status a reader should see, with a negative case's expectations applied. */
-function outcome(record: EvaluationRecord): string {
-  if (record.resolvedConfig.expect !== "fail") {
-    return record.status;
-  }
-  return record.status === "fail" ? "expected-fail" : record.status === "pass" ? "unexpected-pass" : record.status;
-}
-
 /** One summary line per executed case: name, status and the retained result record. */
 function printCaseLine(record: EvaluationRecord, resultsDir: string, prefix = ""): void {
   const name = record.case.name ?? record.case.path;
-  process.stdout.write(`${prefix}${name}: ${outcome(record)} ${join(resultsDir, record.runId, "result.json")}\n`);
+  process.stdout.write(`${prefix}${name}: ${runOutcome(record)} ${join(resultsDir, record.runId, "result.json")}\n`);
 }
 
 /** Zero only when every case passed, 1 for failed checks, 2 for anything that could not be judged. */

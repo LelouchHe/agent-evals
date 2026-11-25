@@ -6,7 +6,6 @@ import { runRelativePathSchema } from "../../engine/params.ts";
 import { truncate } from "../../engine/truncate.ts";
 import type { CheckResult, Checker, CheckerContext, CheckerDefinition } from "../../engine/registry.ts";
 import { isMissing, readRunFile } from "../../engine/workspace.ts";
-import { assertSeatbeltAvailable } from "../../platform/macos/policy.ts";
 import { invokePi, resolvePiExecutable, type PiSessionError } from "../../runners/pi/session.ts";
 import { nonEmptyTrimmedString, thinkingSchema } from "../../runners/pi/params.ts";
 import { buildJudgePrompt } from "./prompt.ts";
@@ -50,9 +49,9 @@ export class JudgeError extends Error {
 export const judgeChecker: CheckerDefinition<JudgeParams> = {
   type: "judge",
   params: judgeParamsSchema,
-  async create(params) {
+  async create(params, context) {
     await resolvePiExecutable(params.executable);
-    assertSeatbeltAvailable();
+    await context.validateCheckPlatform();
     return new JudgeChecker(params);
   },
 };

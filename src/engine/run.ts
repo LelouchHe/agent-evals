@@ -2,6 +2,7 @@ import { randomBytes } from "node:crypto";
 import { cp, lstat, mkdir, realpath, rm, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { assertSeatbeltAvailable } from "../platform/macos/policy.ts";
 import {
   ConfigError,
   errorMessage,
@@ -12,7 +13,7 @@ import {
 import {
   requireChecker,
   requireRunner,
-  type CheckResult,
+  type RecordedCheckResult,
   type Checker,
   type ImplementationContext,
   type MockRecord,
@@ -183,7 +184,7 @@ export async function executeEvaluation(prepared: PreparedEvaluation): Promise<E
     durationMs: 0,
     finalText: null,
   };
-  let checks: CheckResult[] = [];
+  let checks: RecordedCheckResult[] = [];
   let trace: readonly TraceEntry[] | undefined;
   let usage: RunnerUsage | undefined;
   let mockRecords: readonly MockRecord[] | undefined;
@@ -462,6 +463,7 @@ async function prepareImplementations(
     validateFiles: (files) => validateCheckFiles(files, request.case.dir, "check files", signal),
     ...(mockTargets === undefined ? {} : { mockTargets }),
     runnerSupportsHome,
+    validateCheckPlatform: async () => assertSeatbeltAvailable(),
   };
   const runnerParams = await parseImplementationParams(
     runnerDefinition.params,
@@ -553,8 +555,8 @@ async function runChecks(
   timeoutMs: number,
   signal: AbortSignal,
   markCancelled: () => void,
-): Promise<CheckResult[]> {
-  const results: CheckResult[] = [];
+): Promise<RecordedCheckResult[]> {
+  const results: RecordedCheckResult[] = [];
   for (const [declaration, check] of prepared.entries()) {
     if (signal.aborted) {
       results.push({

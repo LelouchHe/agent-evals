@@ -30,17 +30,14 @@ export {
   expectMockArgs,
   expectMockTarget,
   mockTargetIdentity,
-  type MockAction,
   type MockArgs,
   type MockArgument,
   type MockPattern,
-  type MockResult,
-  type MockRule,
   type PatternSyntax,
 } from "./engine/config.ts";
-export { compileRules, matchCall, type CompiledRules } from "./engine/mock-match.ts";
+export { compileMockArgs } from "./engine/mock-match.ts";
 export { patternListSchema, patternSyntaxSchema, runRelativePathSchema } from "./engine/params.ts";
-export { compilePattern, searches } from "./engine/regex.ts";
+export { searches } from "./engine/regex.ts";
 export {
   MAX_CHECK_BYTES,
   WorkspacePathError,
@@ -54,4 +51,10 @@ export {
   type RunTreeEntry,
 } from "./engine/workspace.ts";
 export { messageText } from "./engine/messages.ts";
-export { skillConsultations, type SkillConsultation, type SkillSources } from "./engine/skills.ts";
+export {
+  shellSkillAccess,
+  skillConsultations,
+  type ShellSkillAccess,
+  type SkillConsultation,
+  type SkillSources,
+} from "./engine/skills.ts";

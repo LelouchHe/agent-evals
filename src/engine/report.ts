@@ -1,8 +1,8 @@
 import { basename } from "node:path";
 import { ConfigError } from "./config.ts";
 import type { ImplementationRecord } from "./config.ts";
-import type { CheckResult } from "./registry.ts";
-import type { EvaluationRecord, RunStatus } from "./results.ts";
+import type { RecordedCheckResult } from "./registry.ts";
+import { runOutcome, type EvaluationRecord, type RunOutcome } from "./results.ts";
 
 /**
  * How a case ended across its repetitions; a repetition count is what makes FLAKY possible. A case
@@ -71,29 +71,71 @@ function grouped(records: readonly EvaluationRecord[]): Map<string, Map<string, 
   return documents;
 }
 
+/** One assertion as a record identifies it, with every result that identity produced. */
+interface Observation {
+  readonly declaration: number;
+  readonly subject: string;
+  readonly checker: string;
+  readonly results: readonly RecordedCheckResult[];
+}
+
+/**
+ * A run's results by identity: the declared check and the subject the checker named. A record
+ * written before the provenance stamp identifies a result by its position instead, because that is
+ * the only identity it has; the two reports never mix the two within one record.
+ */
+function observations(run: EvaluationRecord): Map<string, Observation> {
+  const grouped = new Map<
+    string,
+    { declaration: number; subject: string; checker: string; results: RecordedCheckResult[] }
+  >();
+  run.checks.forEach((check, position) => {
+    const key =
+      check.declaration === undefined
+        ? `position:${position}`
+        : `declaration:${check.declaration}\u0000${check.subject}`;
+    const existing = grouped.get(key);
+    if (existing === undefined) {
+      grouped.set(key, {
+        declaration: check.declaration ?? position,
+        subject: check.subject,
+        checker: check.checker,
+        results: [check],
+      });
+    } else {
+      existing.results.push(check);
+    }
+  });
+  return grouped;
+}
+
+/** Every identity the runs share, ordered by declaration and then by first appearance. */
+function identities(perRun: readonly ReadonlyMap<string, Observation>[]): readonly string[] {
+  const firstSeen = new Map<string, { declaration: number; index: number }>();
+  let index = 0;
+  for (const run of perRun) {
+    for (const [key, observation] of run) {
+      if (!firstSeen.has(key)) {
+        firstSeen.set(key, { declaration: observation.declaration, index: index++ });
+      }
+    }
+  }
+  return [...firstSeen.entries()]
+    .sort(([, left], [, right]) => left.declaration - right.declaration || left.index - right.index)
+    .map(([key]) => key);
+}
+
 function matrix(path: string, cases: ReadonlyMap<string, readonly EvaluationRecord[]>): string {
   const labels = [...cases.keys()];
   const declarations = [...cases.values()][0]?.[0]?.resolvedConfig.checks ?? [];
-  const canonical = JSON.stringify(declarations);
   for (const [label, runs] of cases) {
     for (const run of runs) {
-      const found = run.resolvedConfig.checks;
-      if (JSON.stringify(found) === canonical) continue;
-      const position = firstDifference(declarations, found);
-      throw new ConfigError(
-        `--matrix needs one check list across cases: "${label}" declares ${describe(found[position])} at check ${position + 1}, not ${describe(declarations[position])}`,
-      );
-    }
-  }
-
-  const columns = labels.map((label) => {
-    const runs = cases.get(label) ?? [];
-    const negative = runs.length > 0 && runs.every((run) => run.resolvedConfig.expect === "fail");
-    return `${escape(label)}${negative ? " (expect fail)" : ""}`;
-  });
-
-  for (const [label, runs] of cases) {
-    for (const run of runs) {
+      if (!sameValue(run.resolvedConfig.checks, declarations)) {
+        const position = firstDifference(declarations, run.resolvedConfig.checks);
+        throw new ConfigError(
+          `--matrix needs one check list across cases: "${label}" declares ${describe(run.resolvedConfig.checks[position])} at check ${position + 1}, not ${describe(declarations[position])}`,
+        );
+      }
       for (const check of run.checks) {
         if (check.declaration === undefined) {
           throw new ConfigError(
@@ -104,59 +146,52 @@ function matrix(path: string, cases: ReadonlyMap<string, readonly EvaluationReco
     }
   }
 
-  const rows: string[] = [];
-  for (let group = 0; group < declarations.length; group += 1) {
-    const slots = labels.map((label) => (cases.get(label) ?? []).map((run) => resultsOf(run, group)));
-    const width = Math.max(1, ...slots.flat().map((results) => results.length));
-    for (let ordinal = 0; ordinal < width; ordinal += 1) {
-      const label = slots
-        .flat()
-        .map((results) => results[ordinal])
-        .find((result) => result !== undefined);
-      const subject =
-        label === undefined
-          ? `${value(declarations[group]?.["$type"] ?? "check")} check`
-          : `${label.checker} ${label.subject}`;
-      const cells = labels.map((_label, index) => cell(slots[index] ?? [], ordinal));
-      rows.push(`| ${rows.length + 1} | ${escape(subject)} | ${cells.join(" | ")} |`);
-    }
-  }
+  const columns = labels.map((label) => {
+    const runs = cases.get(label) ?? [];
+    const negative = runs.length > 0 && runs.every((run) => run.resolvedConfig.expect === "fail");
+    return `${escape(label)}${negative ? " (expect fail)" : ""}`;
+  });
 
-  return [
-    path,
-    instrument(cases),
-    "",
+  const perCase = labels.map((label) => (cases.get(label) ?? []).map(observations));
+  const keys = identities(perCase.flat());
+  const rows = keys.map((key, index) => {
+    const observation = perCase
+      .flat()
+      .map((run) => run.get(key))
+      .find((entry) => entry !== undefined);
+    const subject = `${observation?.checker ?? value(declarations[index]?.["$type"] ?? "check")} ${
+      observation?.subject ?? "check"
+    }`;
+    const cells = perCase.map((runs) => cell(runs, key));
+    return `| ${index + 1} | ${escape(subject)} | ${cells.join(" | ")} |`;
+  });
+
+  const table = [
     `| # | Check | ${columns.join(" | ")} |`,
     `| --- | --- | ${columns.map(() => "---").join(" | ")} |`,
     ...rows,
-  ].join("\n");
+  ];
+  if (rows.length === 0) {
+    table.push("", "No check result was recorded for any repetition.");
+  }
+  return [path, instrument(cases), "", ...table].join("\n");
 }
 
-/** The results one run recorded for one declared check, in the order the checker returned them. */
-function resultsOf(run: EvaluationRecord, declaration: number): readonly CheckResult[] {
-  // Records written before the field existed fall back to the result position, which is the
-  // declaration position only when that declaration returned a single result.
-  return run.checks.filter((check, index) => (check.declaration ?? index) === declaration);
-}
-
-/** `passes/judged` for one slot, with errors and unanswered runs named rather than folded in. */
-function cell(runs: readonly (readonly CheckResult[])[], ordinal: number): string {
+/** `passes/judged` for one identity across a case's runs, with errors and absence named. */
+function cell(runs: readonly ReadonlyMap<string, Observation>[], key: string): string {
   if (runs.length === 0) {
     return "—";
   }
-  const observed = runs.flatMap((results) => {
-    const result = results[ordinal];
-    return result === undefined ? [] : [result];
-  });
-  const unjudged = runs.length - observed.length;
+  const observed = runs.flatMap((run) => run.get(key)?.results ?? []);
+  const missing = runs.filter((run) => !run.has(key)).length;
   if (observed.length === 0) {
-    return `— (${unjudged} not judged)`;
+    return `— (${missing} not judged)`;
   }
   const passes = observed.filter((check) => check.status === "pass").length;
   const errors = observed.filter((check) => check.status === "error").length;
   const parts = [`${passes}/${observed.length}`];
   if (errors > 0) parts.push(`(${errors} err)`);
-  if (unjudged > 0) parts.push(`(${unjudged} not judged)`);
+  if (missing > 0) parts.push(`(${missing} not judged)`);
   return parts.join(" ");
 }
 
@@ -164,11 +199,37 @@ function cell(runs: readonly (readonly CheckResult[])[], ordinal: number): strin
 function firstDifference(left: readonly ImplementationRecord[], right: readonly ImplementationRecord[]): number {
   const length = Math.max(left.length, right.length);
   for (let index = 0; index < length; index += 1) {
-    if (JSON.stringify(left[index]) !== JSON.stringify(right[index])) {
+    if (!sameValue(left[index], right[index])) {
       return index;
     }
   }
   return Math.min(left.length, right.length);
+}
+
+/** Arrays are ordered and mappings are not; an authored key order is not a check parameter. */
+function sameValue(left: unknown, right: unknown): boolean {
+  if (Object.is(left, right)) {
+    return true;
+  }
+  if (Array.isArray(left) || Array.isArray(right)) {
+    if (!Array.isArray(left) || !Array.isArray(right) || left.length !== right.length) {
+      return false;
+    }
+    return left.every((value, index) => sameValue(value, right[index]));
+  }
+  if (typeof left === "object" && left !== null && typeof right === "object" && right !== null) {
+    const leftKeys = Object.keys(left);
+    const rightKeys = Object.keys(right);
+    if (leftKeys.length !== rightKeys.length) {
+      return false;
+    }
+    return leftKeys.every(
+      (key) =>
+        Object.hasOwn(right, key) &&
+        sameValue((left as Record<string, unknown>)[key], (right as Record<string, unknown>)[key]),
+    );
+  }
+  return false;
 }
 
 /** A declaration in an error message: one line, bounded, and never the word undefined. */
@@ -225,22 +286,19 @@ function caseLine(label: string, runs: readonly EvaluationRecord[], width: numbe
  * and a run that recorded no check at all is reported as not judged rather than dropped.
  */
 function details(runs: readonly EvaluationRecord[]): string[] {
+  const perRun = runs.map(observations);
   const lines: string[] = [];
-  for (let position = 0; position < longest(runs.map((run) => run.checks)); position += 1) {
-    const observed = runs.flatMap((run) => {
-      const check = run.checks[position];
-      return check === undefined ? [] : [check];
-    });
+  for (const key of identities(perRun)) {
+    const observed = perRun.flatMap((run) => run.get(key)?.results ?? []);
     if (observed.length === 0) continue;
-    if (observed.length === runs.length && observed.every((check) => check.status === "pass")) continue;
-    const subject = observed[0]!.subject;
-    // Only what did not pass: the denominator already says how many runs there were.
+    const missing = perRun.filter((run) => !run.has(key)).length;
+    if (missing === 0 && observed.every((check) => check.status === "pass")) continue;
+    const subject = perRun.map((run) => run.get(key)).find((entry) => entry !== undefined)!.subject;
     const counts = new Map<string, number>();
     for (const check of observed) {
       if (check.status !== "pass") counts.set(check.status, (counts.get(check.status) ?? 0) + 1);
     }
-    const parts = [...counts.entries()].map(([status, count]) => `${count}/${runs.length} ${status}`);
-    const missing = runs.length - observed.length;
+    const parts = [...counts.entries()].map(([status, count]) => `${count}/${observed.length} ${status}`);
     if (missing > 0) parts.push(`${missing}/${runs.length} not judged`);
     const first = observed.find((check) => check.status !== "pass");
     const reason = truncate(first?.reason ?? "", MAX_REASON);
@@ -250,34 +308,34 @@ function details(runs: readonly EvaluationRecord[]): string[] {
 }
 
 function verdictOf(runs: readonly EvaluationRecord[]): CaseVerdict {
-  const statuses = runs.map((run) => run.status);
-  if (statuses.some((status) => status !== "pass" && status !== "fail")) return "ERROR";
-  if (runs.every((run) => run.resolvedConfig.expect === "fail")) {
-    return statuses.every((status) => status === "fail") ? "EXPECTED FAIL" : "UNEXPECTED PASS";
+  const outcomes = runs.map(runOutcome);
+  if (outcomes.some((outcome) => outcome === "error" || outcome === "timeout" || outcome === "cancelled")) {
+    return "ERROR";
   }
-  if (statuses.every((status) => status === "pass")) return "PASS";
-  if (statuses.every((status) => status === "fail")) return "FAIL";
+  // A negative case that ever passed is one failure, however many repetitions failed as declared.
+  if (outcomes.some((outcome) => outcome === "unexpected-pass")) return "UNEXPECTED PASS";
+  if (outcomes.every((outcome) => outcome === "pass")) return "PASS";
+  if (outcomes.every((outcome) => outcome === "fail")) return "FAIL";
+  if (outcomes.every((outcome) => outcome === "expected-fail")) return "EXPECTED FAIL";
   return "FLAKY";
 }
 
 function aggregate(runs: readonly EvaluationRecord[]): string {
-  const counts = new Map<RunStatus, number>();
-  for (const run of runs) counts.set(run.status, (counts.get(run.status) ?? 0) + 1);
-  const expected = runs.filter((run) => run.resolvedConfig.expect === "fail");
-  const expectedFails = expected.filter((run) => run.status === "fail").length;
-  const unexpectedPasses = expected.filter((run) => run.status === "pass").length;
-  const named = (["pass", "fail", "error", "timeout", "cancelled"] as const)
-    .filter((status) => counts.has(status))
-    .map((status) => {
-      const count = counts.get(status) ?? 0;
-      if (status === "pass") {
-        return `${count} passed${unexpectedPasses === 0 ? "" : ` (${unexpectedPasses} unexpected)`}`;
-      }
-      if (status === "fail") {
-        return `${count} fail${expectedFails === 0 ? "" : ` (${expectedFails} expected)`}`;
-      }
-      return `${count} ${status}`;
-    });
+  const outcomes = runs.map(runOutcome);
+  const count = (outcome: RunOutcome): number => outcomes.filter((value) => value === outcome).length;
+  const passed = count("pass") + count("unexpected-pass");
+  const failed = count("fail") + count("expected-fail");
+  const named = [
+    ...(passed === 0
+      ? []
+      : [`${passed} passed${count("unexpected-pass") === 0 ? "" : ` (${count("unexpected-pass")} unexpected)`}`]),
+    ...(failed === 0
+      ? []
+      : [`${failed} fail${count("expected-fail") === 0 ? "" : ` (${count("expected-fail")} expected)`}`]),
+    ...(["error", "timeout", "cancelled"] as const)
+      .filter((status) => count(status) > 0)
+      .map((status) => `${count(status)} ${status}`),
+  ];
   return [
     `${runs.length} run${runs.length === 1 ? "" : "s"}`,
     ...named,

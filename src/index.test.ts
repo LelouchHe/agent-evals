@@ -8,12 +8,10 @@ import {
   ConfigError,
   MAX_CHECK_BYTES,
   WorkspacePathError,
-  compilePattern,
-  compileRules,
+  compileMockArgs,
   expectMockArgs,
   expectMockTarget,
   isMissing,
-  matchCall,
   mockTargetIdentity,
   patternListSchema,
   readRunFile,
@@ -41,7 +39,6 @@ test("the package entry exposes the evidence access a file-like checker needs", 
   assert.deepEqual([...(await readRunTree(runRoot, "link"))!], [["", { kind: "symlink" }]]);
 
   assert.equal(searches("^state", "state\n"), true);
-  assert.equal(compilePattern("a.c").matcher("abc").find(), true);
   assert.deepEqual(
     patternListSchema.parse(["literal", "/a.c/"]).map((pattern) => pattern.regex),
     [false, true],
@@ -55,12 +52,11 @@ test("the package entry exposes the evidence access a file-like checker needs", 
 
 /** A mock-style checker reads the declared grammar and the recorded calls; both are public. */
 test("the package entry exposes the mock argument grammar and matcher", () => {
-  const args = expectMockArgs(["push", "/a.c/"], "test");
-  const rules = compileRules([{ args, action: { kind: "pass" } }]);
+  const matches = compileMockArgs(expectMockArgs(["push", "/a.c/"], "test"));
 
-  assert.notEqual(matchCall(rules, ["push", "abc"]), undefined);
-  assert.equal(matchCall(rules, ["pull", "abc"]), undefined);
-  assert.equal(matchCall(rules, ["push"]), undefined);
+  assert.equal(matches(["push", "abc"]), true);
+  assert.equal(matches(["pull", "abc"]), false);
+  assert.equal(matches(["push"]), false);
 
   // A bare command name and a workspace path are different targets, and both spellings of one
   // workspace path are the same target.

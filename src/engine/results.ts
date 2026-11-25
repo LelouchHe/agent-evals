@@ -2,9 +2,22 @@ import { mkdir, rename, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { randomUUID } from "node:crypto";
 import type { CaseConfig } from "./config.ts";
-import type { CheckResult, MockRecord, RunnerUsage, TraceEntry } from "./registry.ts";
+import type { MockRecord, RecordedCheckResult, RunnerUsage, TraceEntry } from "./registry.ts";
 
 export type RunStatus = "pass" | "fail" | "error" | "timeout" | "cancelled";
+
+/** A run read against its case's expectation; the only place `expect` changes a status's meaning. */
+export type RunOutcome = RunStatus | "expected-fail" | "unexpected-pass";
+
+export function runOutcome(run: EvaluationRecord): RunOutcome {
+  if (run.status === "pass") {
+    return run.resolvedConfig.expect === "fail" ? "unexpected-pass" : "pass";
+  }
+  if (run.status === "fail") {
+    return run.resolvedConfig.expect === "fail" ? "expected-fail" : "fail";
+  }
+  return run.status;
+}
 export type RunnerStatus = "completed" | "error" | "timeout" | "cancelled";
 
 export interface RunnerRecord {
@@ -26,7 +39,7 @@ export interface EvaluationRecord {
   readonly resolvedConfig: CaseConfig;
   readonly status: RunStatus;
   readonly runner: RunnerRecord;
-  readonly checks: readonly CheckResult[];
+  readonly checks: readonly RecordedCheckResult[];
   readonly error?: string;
   readonly diagnostics: readonly string[];
   readonly cleanup: { readonly status: "removed" | "failed"; readonly error?: string };
