@@ -257,15 +257,15 @@ async function readBoundedFile(absolute: string, requestedPath: string): Promise
   }
 }
 
-/** True only when the run-relative path is a regular file. */
-export async function runFileExists(root: RunRoot, requestedPath: string): Promise<boolean> {
+/** True when the run-relative path is a regular file or a directory; special files are errors. */
+export async function runPathExists(root: RunRoot, requestedPath: string): Promise<boolean> {
   const resolved = await resolveWorkspacePath(root, requestedPath);
   try {
     const stats = await lstat(resolved);
-    if (stats.isFile()) {
+    if (stats.isFile() || stats.isDirectory()) {
       return true;
     }
-    throw new WorkspacePathError(`not a regular file: ${requestedPath}`);
+    throw new WorkspacePathError(`not a regular file or directory: ${requestedPath}`);
   } catch (error) {
     if (isMissing(error)) {
       return false;

@@ -1,8 +1,12 @@
 import { basename } from "node:path";
+import { ConfigError } from "./config.ts";
 import type { EvaluationRecord, RunStatus } from "./results.ts";
 
-/** How a case ended across its repetitions; a repetition count is what makes FLAKY possible. */
-type CaseVerdict = "PASS" | "FAIL" | "FLAKY" | "ERROR";
+/**
+ * How a case ended across its repetitions; a repetition count is what makes FLAKY possible. A case
+ * that declares `expect: fail` is read against that expectation rather than against passing.
+ */
+type CaseVerdict = "PASS" | "FAIL" | "FLAKY" | "ERROR" | "EXPECTED FAIL" | "UNEXPECTED PASS";
 
 const INDENT = "        ";
 const MAX_REASON = 140;
@@ -20,11 +24,38 @@ export function formatReport(records: readonly EvaluationRecord[]): string {
   if (records.length === 0) {
     return "no run records found\n";
   }
-  const documents = new Map<string, Map<string, EvaluationRecord[]>>();
   const ordered = [...records].sort((left, right) => {
     return left.finishedAt.localeCompare(right.finishedAt) || left.runId.localeCompare(right.runId);
   });
-  for (const record of ordered) {
+  const documents = grouped(ordered);
+  const blocks = [...documents].map(([path, cases]) => document(path, cases));
+  if (documents.size > 1) {
+    blocks.push(`total ${aggregate(ordered)}`);
+  }
+  return `${blocks.join("\n\n")}\n`;
+}
+
+/**
+ * Render one markdown table per document: a row per declared check, a column per case, and a cell
+ * of `passes/judged` over that case's repetitions. A document qualifies only when every case
+ * declares the same checks, because a position must mean the same thing in every column; otherwise
+ * the requested comparison does not exist and the command says so.
+ */
+export function formatMatrix(records: readonly EvaluationRecord[]): string {
+  if (records.length === 0) {
+    return "no run records found\n";
+  }
+  const ordered = [...records].sort((left, right) => {
+    return left.finishedAt.localeCompare(right.finishedAt) || left.runId.localeCompare(right.runId);
+  });
+  const blocks = [...grouped(ordered)].map(([path, cases]) => matrix(path, cases));
+  return `${blocks.join("\n\n")}\n`;
+}
+
+/** Records grouped by document and then by case name, in the order each first finished. */
+function grouped(records: readonly EvaluationRecord[]): Map<string, Map<string, EvaluationRecord[]>> {
+  const documents = new Map<string, Map<string, EvaluationRecord[]>>();
+  for (const record of records) {
     const label = record.case.name ?? "(ordinary)";
     let cases = documents.get(record.case.path);
     if (cases === undefined) {
@@ -35,29 +66,88 @@ export function formatReport(records: readonly EvaluationRecord[]): string {
     if (runs === undefined) cases.set(label, [record]);
     else runs.push(record);
   }
+  return documents;
+}
 
-  const blocks = [...documents].map(([path, cases]) => document(path, cases));
-  if (documents.size > 1) {
-    blocks.push(`total ${aggregate(ordered)}`);
+function matrix(path: string, cases: ReadonlyMap<string, readonly EvaluationRecord[]>): string {
+  // The shape comes from the first run that recorded checks: an errored first run wrote none.
+  const shapeRun = [...cases.values()].flat().find((run) => run.checks.length > 0);
+  const shape = shapeRun === undefined ? [] : checksOf([shapeRun]);
+  for (const [label, runs] of cases) {
+    for (const run of runs) {
+      // A run that recorded no check is not judged; it is a column cell, not a broken shape.
+      if (run.checks.length === 0) continue;
+      const found = checksOf([run]);
+      const index = shape.findIndex((check, position) => check !== found[position]);
+      if (found.length !== shape.length && index === -1) {
+        throw new ConfigError(
+          `--matrix needs one check list across cases: "${label}" declares ${found.length} checks, not ${shape.length}`,
+        );
+      }
+      if (index !== -1) {
+        throw new ConfigError(
+          `--matrix needs one check list across cases: "${label}" declares "${found[index]}" at position ${index + 1}, not "${shape[index]}"`,
+        );
+      }
+    }
   }
-  return `${blocks.join("\n\n")}\n`;
+
+  const labels = [...cases.keys()];
+  const columns = labels.map((label) => {
+    const runs = cases.get(label) ?? [];
+    const negative = runs.length > 0 && runs.every((run) => run.resolvedConfig.expect === "fail");
+    return `${escape(label)}${negative ? " (expect fail)" : ""}`;
+  });
+  const rows = shape.map((subject, index) => {
+    const cells = labels.map((label) => cell(cases.get(label) ?? [], index));
+    return `| ${index + 1} | ${escape(subject)} | ${cells.join(" | ")} |`;
+  });
+  return [
+    path,
+    instrument(cases),
+    "",
+    `| # | Check | ${columns.join(" | ")} |`,
+    `| --- | --- | ${columns.map(() => "---").join(" | ")} |`,
+    ...rows,
+  ].join("\n");
+}
+
+/** What a matrix column treats as one check: the implementation and the subject it decided. */
+function checksOf(runs: readonly EvaluationRecord[]): readonly string[] {
+  const [first] = runs;
+  return first === undefined ? [] : first.checks.map((check) => `${check.checker} ${check.subject}`);
+}
+
+/** `passes/judged`, with errors and unanswered runs named rather than folded into the count. */
+function cell(runs: readonly EvaluationRecord[], index: number): string {
+  const observed = runs.flatMap((run) => {
+    const check = run.checks[index];
+    return check === undefined ? [] : [check];
+  });
+  if (observed.length === 0) {
+    return "—";
+  }
+  const passes = observed.filter((check) => check.status === "pass").length;
+  const errors = observed.filter((check) => check.status === "error").length;
+  const unjudged = runs.length - observed.length;
+  const parts = [`${passes}/${observed.length}`];
+  if (errors > 0) parts.push(`(${errors} err)`);
+  if (unjudged > 0) parts.push(`(${unjudged} not judged)`);
+  return parts.join(" ");
+}
+
+/** A table cell is one line: a pipe would open a new column and a newline would end the row. */
+function escape(text: string): string {
+  return text.replaceAll("|", "\\|").replaceAll("\n", " ");
 }
 
 function document(path: string, cases: ReadonlyMap<string, readonly EvaluationRecord[]>): string {
   const runs = [...cases.values()].flat();
-  const counts = new Set([...cases.values()].map((entry) => entry.length));
-  const lines = [
-    path,
-    `runner ${listed(runs.map((run) => value(run.resolvedConfig.runner["$type"])))} · harness ${listed(
-      runs.map(harness),
-    )} · model ${listed(runs.map(model))} · ${
-      counts.size === 1 ? `reps ${[...counts][0]}` : "reps mixed"
-    } · cases ${cases.size}`,
-    "",
-  ];
+  const lines = [path, instrument(cases), ""];
   const width = Math.min(MAX_LABEL, longest([...cases.keys()]));
+  const verdictWidth = Math.max(7, ...[...cases.values()].map((caseRuns) => verdictOf(caseRuns).length));
   for (const [label, caseRuns] of cases) {
-    lines.push(caseLine(label, caseRuns, width));
+    lines.push(caseLine(label, caseRuns, width, verdictWidth));
     for (const detail of details(caseRuns)) {
       lines.push(`${INDENT}${detail}`);
     }
@@ -66,7 +156,18 @@ function document(path: string, cases: ReadonlyMap<string, readonly EvaluationRe
   return lines.join("\n");
 }
 
-function caseLine(label: string, runs: readonly EvaluationRecord[], width: number): string {
+/** The line under a document heading: which instruments ran it and at what repetition count. */
+function instrument(cases: ReadonlyMap<string, readonly EvaluationRecord[]>): string {
+  const runs = [...cases.values()].flat();
+  const counts = new Set([...cases.values()].map((entry) => entry.length));
+  return `runner ${listed(runs.map((run) => value(run.resolvedConfig.runner["$type"])))} · harness ${listed(
+    runs.map(harness),
+  )} · model ${listed(runs.map(model))} · ${
+    counts.size === 1 ? `reps ${[...counts][0]}` : "reps mixed"
+  } · cases ${cases.size}`;
+}
+
+function caseLine(label: string, runs: readonly EvaluationRecord[], width: number, verdictWidth: number): string {
   const verdict = verdictOf(runs);
   const cells = [
     `${runs.length} run${runs.length === 1 ? "" : "s"}`.padStart(8),
@@ -74,7 +175,7 @@ function caseLine(label: string, runs: readonly EvaluationRecord[], width: numbe
     tokens(runs).padStart(11),
     cost(runs).padStart(9),
   ];
-  return `${verdict.padEnd(7)} ${label.padEnd(width)} ${cells.join("  ")}`.trimEnd();
+  return `${verdict.padEnd(verdictWidth)} ${label.padEnd(width)} ${cells.join("  ")}`.trimEnd();
 }
 
 /**
@@ -111,6 +212,9 @@ function details(runs: readonly EvaluationRecord[]): string[] {
 function verdictOf(runs: readonly EvaluationRecord[]): CaseVerdict {
   const statuses = runs.map((run) => run.status);
   if (statuses.some((status) => status !== "pass" && status !== "fail")) return "ERROR";
+  if (runs.every((run) => run.resolvedConfig.expect === "fail")) {
+    return statuses.every((status) => status === "fail") ? "EXPECTED FAIL" : "UNEXPECTED PASS";
+  }
   if (statuses.every((status) => status === "pass")) return "PASS";
   if (statuses.every((status) => status === "fail")) return "FAIL";
   return "FLAKY";
@@ -119,9 +223,21 @@ function verdictOf(runs: readonly EvaluationRecord[]): CaseVerdict {
 function aggregate(runs: readonly EvaluationRecord[]): string {
   const counts = new Map<RunStatus, number>();
   for (const run of runs) counts.set(run.status, (counts.get(run.status) ?? 0) + 1);
+  const expected = runs.filter((run) => run.resolvedConfig.expect === "fail");
+  const expectedFails = expected.filter((run) => run.status === "fail").length;
+  const unexpectedPasses = expected.filter((run) => run.status === "pass").length;
   const named = (["pass", "fail", "error", "timeout", "cancelled"] as const)
     .filter((status) => counts.has(status))
-    .map((status) => `${counts.get(status) ?? 0} ${status === "pass" ? "passed" : status}`);
+    .map((status) => {
+      const count = counts.get(status) ?? 0;
+      if (status === "pass") {
+        return `${count} passed${unexpectedPasses === 0 ? "" : ` (${unexpectedPasses} unexpected)`}`;
+      }
+      if (status === "fail") {
+        return `${count} fail${expectedFails === 0 ? "" : ` (${expectedFails} expected)`}`;
+      }
+      return `${count} ${status}`;
+    });
   return [
     `${runs.length} run${runs.length === 1 ? "" : "s"}`,
     ...named,

@@ -7,7 +7,7 @@ import {
   isMissing,
   readRunFile,
   readRunTree,
-  runFileExists,
+  runPathExists,
   type RunRoot,
   type RunTree,
 } from "../../engine/workspace.ts";
@@ -87,9 +87,9 @@ class FileChecker implements Checker {
       const expected = params.exists;
       results.push(
         await condition(`${params.path} ${expected ? "exists" : "does not exist"}`, async () => {
-          const exists = await runFileExists(target.root, target.relative);
+          const exists = await runPathExists(target.root, target.relative);
           if (exists === expected) {
-            return pass(`${params.path} ${expected ? "is a regular file" : "is absent"}`);
+            return pass(`${params.path} ${expected ? "exists" : "is absent"}`);
           }
           return fail(`${params.path} ${exists ? "exists" : "does not exist"}`);
         }),

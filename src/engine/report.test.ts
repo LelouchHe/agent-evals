@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { formatReport } from "./report.ts";
+import { ConfigError } from "./config.ts";
+import { formatMatrix, formatReport } from "./report.ts";
 import type { EvaluationRecord, RunStatus } from "./results.ts";
 
 interface RunSpec {
@@ -13,6 +14,7 @@ interface RunSpec {
   readonly cost?: number;
   readonly path?: string;
   readonly model?: string;
+  readonly expect?: "pass" | "fail";
 }
 
 function record(index: number, spec: RunSpec): EvaluationRecord {
@@ -26,6 +28,7 @@ function record(index: number, spec: RunSpec): EvaluationRecord {
     case: { path: spec.path ?? "/cases/example.yml", ...(spec.name === undefined ? {} : { name: spec.name }) },
     resolvedConfig: {
       input: "task",
+      ...(spec.expect === undefined ? {} : { expect: spec.expect }),
       checks: [],
       runner: {
         $type: "acp",
@@ -179,4 +182,90 @@ test("a run that recorded no check counts as not judged rather than leaving the 
     record(2, { name: "case", status: "error", checks: [] }),
   ]);
   assert.match(report, /^ {8}✗ a {2}1\/2 fail, 1\/2 not judged — observed$/mu);
+});
+
+test("a negative case is read against its expectation", () => {
+  const report = formatReport([
+    record(1, { name: "baseline", status: "fail", expect: "fail", checks: [["asked", "fail", "no steps"]] }),
+    record(2, { name: "baseline", status: "fail", expect: "fail", checks: [["asked", "fail", "no steps"]] }),
+    record(3, { name: "skill", status: "pass", checks: [["asked", "pass"]] }),
+  ]);
+
+  assert.match(report, /^EXPECTED FAIL baseline/mu);
+  assert.match(report, /^PASS {10}skill/mu);
+  assert.match(report, /^3 runs · 1 passed · 2 fail \(2 expected\)/mu);
+});
+
+test("a negative case that passes is an unexpected pass", () => {
+  const report = formatReport([
+    record(1, { name: "baseline", status: "pass", expect: "fail", checks: [["asked", "pass"]] }),
+    record(2, { name: "baseline", status: "fail", expect: "fail", checks: [["asked", "fail"]] }),
+  ]);
+
+  assert.match(report, /^UNEXPECTED PASS baseline/mu);
+  assert.match(report, /^2 runs · 1 passed \(1 unexpected\) · 1 fail \(1 expected\)/mu);
+});
+
+test("the matrix puts a check per row and a case per column", () => {
+  const text = formatMatrix([
+    record(1, {
+      name: "skill",
+      status: "pass",
+      checks: [
+        ["resource|exists", "pass"],
+        ["asked", "pass"],
+      ],
+    }),
+    record(2, {
+      name: "skill",
+      status: "pass",
+      checks: [
+        ["resource|exists", "pass"],
+        ["asked", "pass"],
+      ],
+    }),
+    record(3, {
+      name: "baseline",
+      status: "fail",
+      expect: "fail",
+      checks: [
+        ["resource|exists", "pass"],
+        ["asked", "fail", "no steps"],
+      ],
+    }),
+    record(4, {
+      name: "baseline",
+      status: "fail",
+      expect: "fail",
+      checks: [
+        ["resource|exists", "pass"],
+        ["asked", "fail", "no steps"],
+      ],
+    }),
+  ]);
+
+  assert.ok(text.includes("| # | Check | skill | baseline (expect fail) |"), text);
+  assert.ok(text.includes("| 1 | trace resource\\|exists | 2/2 | 2/2 |"), text);
+  assert.ok(text.includes("| 2 | trace asked | 2/2 | 0/2 |"), text);
+});
+
+test("a matrix cell names errors and runs that recorded no check", () => {
+  const text = formatMatrix([
+    record(1, { name: "case", status: "pass", checks: [["asked", "pass"]] }),
+    record(2, { name: "case", status: "error", checks: [["asked", "error", "deadline"]] }),
+    record(3, { name: "case", status: "error", checks: [] }),
+  ]);
+
+  assert.match(text, /^\| 1 \| trace asked \| 1\/2 \(1 err\) \(1 not judged\) \|$/mu);
+});
+
+test("a matrix refuses cases that do not share one check list", () => {
+  assert.throws(
+    () =>
+      formatMatrix([
+        record(1, { name: "a", status: "pass", checks: [["one", "pass"]] }),
+        record(2, { name: "b", status: "pass", checks: [["two", "pass"]] }),
+      ]),
+    ConfigError,
+  );
 });

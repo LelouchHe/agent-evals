@@ -405,19 +405,28 @@ test("file checker refuses to read files over the bounded size", async (t) => {
   assert.match(results[0]?.reason ?? "", /check limit/);
 });
 
-test("a directory is comparable by changed and still refused by exists and patterns", async (t) => {
+test("a directory answers exists and changed, while the pattern predicates need a file", async (t) => {
   const dirs = await setup(t);
   for (const root of [dirs.workspace, dirs.baseline]) {
     await mkdir(join(root, "directory"));
   }
+  const contextValue = await context(dirs.root, dirs.workspace, dirs.baseline);
 
   const results = await checkRaw(
     { path: "directory", exists: true, changed: false, matches: "x", notMatches: "x" },
-    await context(dirs.root, dirs.workspace, dirs.baseline),
+    contextValue,
   );
-  assert.deepEqual(statuses(results), ["error", "pass", "error", "error"]);
-  assert.match(results[0]?.reason ?? "", /not a regular file/);
+  assert.deepEqual(statuses(results), ["pass", "pass", "error", "error"]);
+  assert.equal(results[0]?.reason, "directory exists");
   assert.match(results[2]?.reason ?? "", /not a regular file/);
+
+  // A directory exists, so a restraint on it is a real answer rather than an error.
+  const absent = await checkRaw({ path: "directory", exists: false }, contextValue);
+  assert.deepEqual(statuses(absent), ["fail"]);
+  assert.equal(absent[0]?.reason, "directory exists");
+
+  const missing = await checkRaw({ path: "missing", exists: false }, contextValue);
+  assert.deepEqual(statuses(missing), ["pass"]);
 });
 
 test("a ~/ path reads the run HOME and its case-placed HOME baseline", async (t) => {

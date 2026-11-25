@@ -141,3 +141,49 @@ test("report accepts a single run directory or a result file", async (t) => {
     assert.match(report.stdout, /^1 run · 1 passed/mu);
   }
 });
+
+test("report --matrix renders one row per check and one column per case", async (t) => {
+  const directory = await makeTempDir(t, "ae-matrix-");
+  const results = join(directory, "results");
+  await writeFile(join(directory, "source.txt"), "placed\n");
+  await writeFile(
+    join(directory, "case.yml"),
+    `input: task
+cases:
+  with-check:
+    runner: { $type: noop }
+    files:
+      placed.txt: source.txt
+    checks:
+      - $type: file
+        path: placed.txt
+        exists: true
+  baseline:
+    runner: { $type: noop }
+    expect: fail
+    checks:
+      - $type: file
+        path: placed.txt
+        exists: true
+`,
+  );
+  const run = await cli(t, directory, ["run", "case.yml", "--results-dir", results]);
+  // The negative case fails as declared, so the document is as expected and the command succeeds.
+  assert.equal(run.code, 0, run.stderr);
+
+  const report = await cli(t, directory, ["report", "--matrix", results]);
+  assert.equal(report.code, 0, report.stderr);
+  assert.ok(report.stdout.includes("| # | Check | with-check | baseline (expect fail) |"), report.stdout);
+  assert.ok(report.stdout.includes("| 1 | file placed.txt exists | 1/1 | 0/1 |"), report.stdout);
+  // The default report is unchanged.
+  const details = await cli(t, directory, ["report", results]);
+  assert.match(details.stdout, /^PASS +with-check/mu);
+});
+
+test("--matrix applies only to report", async (t) => {
+  const directory = await makeTempDir(t, "ae-matrix-flag-");
+  await writeFile(join(directory, "case.yml"), CASE);
+  const run = await cli(t, directory, ["run", "case.yml", "--matrix"]);
+  assert.equal(run.code, 2);
+  assert.match(run.stderr, /--matrix applies only to report/);
+});

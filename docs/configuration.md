@@ -115,22 +115,34 @@ A multi-case document is one invocation, but every case is an ordinary run: it v
 
 ## Common Fields and Parsing
 
-| Field       | Contract                                                                                                                                            |
-| ----------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `input`     | Required non-empty initial user message.                                                                                                            |
-| `runner`    | Required implementation record.                                                                                                                     |
-| `checks`    | Required non-empty list of implementation records.                                                                                                  |
-| `fixture`   | Optional directory relative to this YAML, copied into the workspace root. Omission starts an empty workspace.                                       |
-| `files`     | Optional mapping from a destination to an authoring file or directory, placed after the fixture; a `~/` destination places into the run HOME.       |
-| `timeoutMs` | Optional positive integer milliseconds; defaults to 300000. Bounds runner execution and is also each check's budget, not the whole run's wall time. |
-| `mocks`     | Optional declared collaborator substitutes; see [Mocks](#mocks).                                                                                    |
-| `cases`     | Optional document-level selection control; not passed to execution.                                                                                 |
+| Field       | Contract                                                                                                                                                |
+| ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `input`     | Required non-empty initial user message.                                                                                                                |
+| `runner`    | Required implementation record.                                                                                                                         |
+| `checks`    | Required non-empty list of implementation records.                                                                                                      |
+| `fixture`   | Optional directory relative to this YAML, copied into the workspace root. Omission starts an empty workspace.                                           |
+| `files`     | Optional mapping from a destination to an authoring file or directory, placed after the fixture; a `~/` destination places into the run HOME.           |
+| `timeoutMs` | Optional positive integer milliseconds; defaults to 300000. Bounds runner execution and is also each check's budget, not the whole run's wall time.     |
+| `mocks`     | Optional declared collaborator substitutes; see [Mocks](#mocks).                                                                                        |
+| `expect`    | Optional `pass` (default) or `fail`: whether the checks are expected to fail, as a vacuity or negative baseline. See [negative cases](#negative-cases). |
+| `cases`     | Optional document-level selection control; not passed to execution.                                                                                     |
 
 Unknown common fields, invalid shapes and duplicate YAML keys are errors. There is one document/file: no `extends`, imported collections or nested `cases`. Implementation parameters may contain [placeholders](#placeholders). Null is a value, not omission or deletion.
 
 Anchor declarations, alias nodes and the scalar mapping key `<<` are rejected at every depth, including quoted `<<` keys. Parser warnings, including unknown tags such as `!include`, are errors. Ordinary string values containing `&`, `*`, `<<` or tag-like text remain data; built-in YAML tags that parse without warnings are not categorically banned.
 
 Authoring resources are relative to the YAML file; checker targets are relative to the evaluated workspace. Neither is silently based on the engine's working directory. Credentials are separate runtime inputs from the invocation directory; see [Setup](setup.md#credentials-and-env).
+
+### Negative Cases
+
+`expect: fail` declares that the checks are supposed to fail: a vacuity arm, a deliberate negative test, a baseline that must not satisfy the task. It changes how the outcome is read, not what is recorded.
+
+- The result's `status` is still what the checks decided (`pass` or `fail`) — the record never rewrites evidence.
+- One run prints `expected-fail` or `unexpected-pass` on its case line, and the session report uses `EXPECTED FAIL` / `UNEXPECTED PASS`.
+- The exit code is 0 when every repetition failed as declared, 1 when any repetition passed (an unexpected pass), and 2 when a run or check could not be judged. A timeout is never absorbed by the declaration.
+- The aggregate line names the share: `3 fail (2 expected)`, `1 passed (1 unexpected)`.
+
+A document that mixes positive and negative cases therefore succeeds only when both halves did what they declared. Without the field, a `noop` vacancy arm would make every `run` of the document exit 1 and every record look like a broken test.
 
 ### Fixture and Files
 
@@ -230,21 +242,21 @@ Example: [`deploy-runbook`](../examples/cases/deploy-runbook/case.yml), whose Pi
 
 A parameterless baseline runner. It starts no harness and no sandbox and completes at once with `finalText: null`, no diagnostics, an empty trace (`trace.json` is `[]`), and no usage. It declares mock support, so a case with `mocks` loads; the forwarders are written and nothing calls them, so `mocks.json` is `[]`. It declares HOME support, so a case's `~/` entries are placed and snapshotted and a `~/` check sees the environment it would have seen with no agent.
 
-Run a case under it to see which checks need the agent: `file` `matches` or `notMatches`, a `mock` or `trace` `skill` check with its default count, or a `shell` command over a broken fixture fail, while restraint checks (`times: 0`, `changed: false` on a file that already exists) pass by construction. A `trace` `message` check is an `error` here, because the agent produced no text. It prepares the case's `~/` entries and their baseline like any other run, so a `~/` restraint is proved vacuous or not. Select it per named case; `run` has no baseline flag.
+Run a case under it to see which checks need the agent: `file` `matches` or `notMatches`, a `mock` or `trace` `skill` check with its default count, or a `shell` command over a broken fixture fail, while restraint checks (`times: 0`, `changed: false` on a file that already exists) pass by construction. A `trace` `message` check is an `error` here, because the agent produced no text. It prepares the case's `~/` entries and their baseline like any other run, so a `~/` restraint is proved vacuous or not. A vacancy case declares `expect: fail`, so the failures its checks report are the expected outcome rather than a failed command; see [negative cases](#negative-cases). Select it per named case; `run` has no baseline flag.
 
 ### File Checker (`$type: file`)
 
 | Parameter    | Contract                                                                                                                                                                                                                                                                     |
 | ------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `path`       | Required workspace-relative file or directory path, or `~/…` for the run HOME. Not absolute and without `..` segments; `~/` alone names HOME, not a file.                                                                                                                    |
-| `exists`     | Optional boolean; `false` is supported. Only regular files count.                                                                                                                                                                                                            |
+| `exists`     | Optional boolean; `false` is supported. A regular file or a directory exists; a special file is an error.                                                                                                                                                                    |
 | `changed`    | Optional boolean; compare against the initial baseline. On a file, `false` passes for identical or both-absent files and `true` only for one the run created, removed or modified. On a directory, every path beneath it is compared, so `false` requires an identical tree. |
 | `matches`    | Optional literal or `/…/` RE2 pattern, or a non-empty list of up to 100. Search semantics, not an implicit whole-file match.                                                                                                                                                 |
 | `notMatches` | Optional literal or `/…/` RE2 pattern, or a non-empty list of up to 100. Fails when a pattern is found.                                                                                                                                                                      |
 
 At least one of `exists`, `changed`, `matches` or `notMatches` is required, and every declared pattern produces its own result. A pattern scalar is a non-empty string or a finite number compared as its text; unquoted booleans and mappings are configuration errors, since an unquoted `state: failed` in a list is a mapping rather than a string. A string is a literal substring unless it starts and ends with `/`, which makes it a RE2 pattern searched within the file: `^` and `$` bind to the file's start and end unless the pattern uses `(?m)`. A literal that itself starts and ends with `/` is written as a regex, such as `/\/bin\//`. Every `/…/` pattern compiles at load time on the shared RE2 engine ([Mocks](mocks.md#regexes) owns the dialect), which is linear-time and needs no worker or timeout.
 
-A missing file fails both `matches` and `notMatches`, so a restraint check never passes because the agent wrote nothing. File reads are capped at 1 MiB. A directory's `changed` walks the tree without following links: each regular file is compared by bytes under the same cap, and a symlink or special file is compared by kind, so a link the agent wrote is a difference rather than unreadable evidence. `exists` and the pattern predicates still require one regular file, so `changed` is the only assertion a directory answers. Nothing caps the number of entries; the check's `timeoutMs` bounds the walk. Unsafe/replaced roots, escaping/broken symlinks, non-regular files, oversized files and unreadable evidence are errors rather than passes. No content normalization or `includes` alias is provided. A `~/` path is rejected at load for a runner that gives the run no HOME, and `changed` compares against the case's own HOME placement, not against the agent file's or the login's content.
+A missing file fails both `matches` and `notMatches`, so a restraint check never passes because the agent wrote nothing. File reads are capped at 1 MiB. A directory's `changed` walks the tree without following links: each regular file is compared by bytes under the same cap, and a symlink or special file is compared by kind, so a link the agent wrote is a difference rather than unreadable evidence. `exists` answers for a regular file or a directory, the pattern predicates still require one regular file, and `changed` covers both. Nothing caps the number of entries; the check's `timeoutMs` bounds the walk. Unsafe/replaced roots, escaping/broken symlinks, non-regular files, oversized files and unreadable evidence are errors rather than passes. No content normalization or `includes` alias is provided. A `~/` path is rejected at load for a runner that gives the run no HOME, and `changed` compares against the case's own HOME placement, not against the agent file's or the login's content.
 
 ### Mock Checker (`$type: mock`)
 
@@ -388,7 +400,18 @@ A case is a test and its checks are its assertions: the case line carries the ve
 
 `report` prints the same session from retained records without running anything: `report <results-dir>...` walks each path — a results root, one run directory or a `result.json` is accepted — and groups records by the case document they came from. Records from several documents print as one session each plus a `total` line, so a sweep split across invocations still adds up; the command knows only what the records say, not which case files produced them.
 
-Overall statuses are `pass`, `fail`, `error`, `timeout`, and `cancelled`; individual checks are `pass`, `fail`, or `error`. Pass/fail summarizes satisfaction of the configured checks, not model/skill quality or an improvement claim. A normal negative judgment is `fail`; inability to execute or evaluate is `error`, with timeout/cancellation reported separately. Exit codes are 0 for pass, 1 for failed checks, and 2 for configuration/execution/checker/timeout/cancellation errors. Early configuration errors need not produce a run record.
+`report --matrix` prints the same records as one table per document instead of the session report: a row per declared check, a column per case, and a cell of `passes/judged` over that case's repetitions.
+
+```
+| # | Check | with-skill | without-skill | baseline (expect fail) |
+| --- | --- | --- | --- | --- |
+| 1 | file ~/mine/space unchanged since run start | 3/3 | 0/3 | 3/3 |
+| 2 | judge Asks which project owns the session | 3/3 | 0/3 | 0/3 |
+```
+
+The table exists only when every case declares the same check list, because a row has to mean the same thing in every column; otherwise the command is a configuration error naming the first differing position. A cell names errors (`2/2 (1 err)`) and runs that recorded no check (`2/2 (1 not judged)`) rather than folding them into the count, and a `|` inside a subject is escaped so it cannot open a column. `(expect fail)` marks a negative column from its records. The default report is unchanged; `--matrix` is the record-building view, and the session report is the run log.
+
+Overall statuses are `pass`, `fail`, `error`, `timeout`, and `cancelled`; individual checks are `pass`, `fail`, or `error`. Pass/fail summarizes satisfaction of the configured checks, not model/skill quality or an improvement claim. A normal negative judgment is `fail`; inability to execute or evaluate is `error`, with timeout/cancellation reported separately. Exit codes are 0 for pass, 1 for failed checks, and 2 for configuration/execution/checker/timeout/cancellation errors; a case that declares `expect: fail` swaps the meaning of 0 and 1 without touching 2. Early configuration errors need not produce a run record.
 
 ## Trusted Extensions
 

@@ -51,7 +51,7 @@ function caseLines(stdout: string): CaseLine[] {
     .split("\n")
     .filter((line) => line !== "")
     .map((line) => {
-      const match = /^(\S+): (pass|fail|error|timeout|cancelled) (.+)$/.exec(line);
+      const match = /^(\S+): (pass|fail|error|timeout|cancelled|expected-fail|unexpected-pass) (.+)$/.exec(line);
       assert.ok(match !== null, `unexpected output line: ${line}`);
       return { name: match[1]!, status: match[2]!, result: match[3]! };
     });
@@ -87,6 +87,48 @@ test("run without --case runs every case in order and a failure does not stop th
     assert.equal(record.status, line.status);
     assert.equal(record.case.name, line.name);
   }
+});
+
+test("a negative case that fails its checks exits zero and says the failure was expected", async (t) => {
+  const run = await runDocument(t, {
+    baseline: {
+      ...noopCase([{ $type: "file", path: "hello.txt", exists: true }]),
+      expect: "fail",
+    },
+  });
+
+  assert.equal(run.code, 0);
+  assert.deepEqual(
+    caseLines(run.stdout).map((line) => [line.name, line.status]),
+    [["baseline", "expected-fail"]],
+  );
+  assert.match(run.stdout, /^EXPECTED FAIL baseline/mu);
+  assert.match(run.stdout, /^1 run · 1 fail \(1 expected\)/mu);
+});
+
+test("a negative case that passes is an unexpected pass and exits nonzero", async (t) => {
+  const run = await runDocument(t, {
+    baseline: {
+      ...noopCase([{ $type: "file", path: "hello.txt", exists: false }]),
+      expect: "fail",
+    },
+  });
+
+  assert.equal(run.code, 1);
+  assert.deepEqual(
+    caseLines(run.stdout).map((line) => [line.name, line.status]),
+    [["baseline", "unexpected-pass"]],
+  );
+  assert.match(run.stdout, /^UNEXPECTED PASS baseline/mu);
+});
+
+test("expect accepts only pass or fail", async (t) => {
+  const run = await runDocument(t, {
+    first: { ...noopCase([{ $type: "file", path: "hello.txt", exists: false }]), expect: "maybe" },
+  });
+
+  assert.equal(run.code, 2);
+  assert.match(run.stderr, /expect must be "pass" or "fail"/);
 });
 
 test("run exits zero only when every case of the document passed", async (t) => {

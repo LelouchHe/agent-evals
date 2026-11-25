@@ -46,7 +46,7 @@ The workspace is the project the agent is asked to change. `HOME` is the user it
 
 A case that needs the harness's own settings changed places its own file over the agent-placed one: settings are an evaluation variable, and the case overlay runs last. It may not place over login state. A case that only needs `HOME` to resemble a user's home leaves the agent file's settings alone.
 
-A case that should need the agent can be checked for vacuity: run it with `runner: { $type: noop }` as a named case. Checks that pass there do not depend on what the agent did.
+A case that should need the agent can be checked for vacuity: run it with `runner: { $type: noop }` as a named case and declare `expect: fail`. Checks that pass there do not depend on what the agent did, and the declared expectation keeps the document's exit code meaningful instead of failing on every vacuity run.
 
 ## Choose the Behavior
 
