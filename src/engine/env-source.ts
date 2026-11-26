@@ -1,4 +1,4 @@
-import { execFile } from "node:child_process";
+import { spawn } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { parseEnv } from "node:util";
@@ -85,26 +85,102 @@ async function runLookupCommand(
   let stdout: string;
   try {
     stdout = await new Promise<string>((resolve, reject) => {
-      execFile(
-        "/bin/sh",
-        ["-c", command],
-        {
-          cwd,
-          env: process.env,
-          encoding: "utf8",
-          timeout: COMMAND_TIMEOUT_MS,
-          maxBuffer: COMMAND_MAX_OUTPUT_BYTES,
-          signal,
-          killSignal: "SIGKILL",
-        },
-        (error, output) => {
-          if (error === null) {
-            resolve(output);
-          } else {
-            reject(error);
+      // Spawn in its own process group so abort/timeout kills the shell and any direct child
+      // regardless of whether `/bin/sh` exec-optimizes simple commands (dash vs bash).
+      const child = spawn("/bin/sh", ["-c", command], {
+        cwd,
+        env: process.env,
+        stdio: ["ignore", "pipe", "pipe"],
+        detached: true,
+      });
+      const chunks: Buffer[] = [];
+      let bytes = 0;
+      let settled = false;
+      let terminating: Error | undefined;
+      let reapTimer: NodeJS.Timeout | undefined;
+
+      const finish = (fn: () => void): void => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        if (reapTimer !== undefined) clearTimeout(reapTimer);
+        signal?.removeEventListener("abort", onAbort);
+        fn();
+      };
+
+      const terminate = (reason: Error): void => {
+        if (terminating !== undefined) return;
+        terminating = reason;
+        clearTimeout(timer);
+        signal?.removeEventListener("abort", onAbort);
+        child.stdout.destroy();
+        child.stderr.destroy();
+        if (child.pid !== undefined) {
+          try {
+            process.kill(-child.pid, "SIGKILL");
+          } catch {
+            // Already exited.
           }
-        },
-      );
+        }
+        // Wait briefly for the direct child to be reaped, without hanging on detached
+        // descendants that may still hold inherited file descriptors.
+        reapTimer = setTimeout(() => finish(() => reject(reason)), 200);
+        reapTimer.unref();
+      };
+
+      const onAbort = (): void => {
+        terminate(Object.assign(new Error("aborted"), { code: "ABORT_ERR" }));
+      };
+
+      const timer = setTimeout(() => {
+        terminate(Object.assign(new Error("timed out"), { killed: true }));
+      }, COMMAND_TIMEOUT_MS);
+
+      signal?.addEventListener("abort", onAbort, { once: true });
+
+      const onData = (chunk: Buffer, collect: boolean): void => {
+        if (terminating !== undefined) return;
+        bytes += chunk.length;
+        if (bytes > COMMAND_MAX_OUTPUT_BYTES) {
+          terminate(Object.assign(new Error("maxBuffer exceeded"), { code: "ERR_CHILD_PROCESS_STDIO_MAXBUFFER" }));
+          return;
+        }
+        if (collect) chunks.push(chunk);
+      };
+
+      child.stdout.on("data", (chunk: Buffer) => onData(chunk, true));
+      child.stderr.on("data", (chunk: Buffer) => onData(chunk, false));
+      child.on("error", (error) => {
+        finish(() => reject(terminating ?? error));
+      });
+      child.on("exit", (code, exitSignal) => {
+        if (terminating !== undefined) {
+          const reason = terminating;
+          finish(() => reject(reason));
+          return;
+        }
+        if (code !== 0) {
+          const reason =
+            code !== null
+              ? Object.assign(new Error("non-zero exit"), { code })
+              : Object.assign(new Error("signalled"), { signal: exitSignal ?? "SIGKILL" });
+          terminate(reason);
+          finish(() => reject(reason));
+        }
+      });
+      child.on("close", (code, exitSignal) => {
+        finish(() => {
+          if (terminating !== undefined) {
+            reject(terminating);
+          } else if (code === 0) {
+            resolve(Buffer.concat(chunks).toString("utf8"));
+          } else if (code !== null) {
+            reject(Object.assign(new Error("non-zero exit"), { code }));
+          } else {
+            reject(Object.assign(new Error("signalled"), { signal: exitSignal ?? "SIGKILL" }));
+          }
+        });
+      });
     });
   } catch (error) {
     throw classifyCommandError(name, error, signal);

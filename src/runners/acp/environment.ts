@@ -1,14 +1,17 @@
 import { constants } from "node:fs";
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
 import { randomUUID } from "node:crypto";
-import { lstat, mkdir, open, realpath, rename, rm, symlink, stat, writeFile } from "node:fs/promises";
+import { lstat, mkdir, open, realpath, rename, rm, symlink, writeFile } from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
 import { ConfigError, errorMessage, expectPlacementDestination, expectRelativePath } from "../../engine/config.ts";
 import { copyPlacement, homePathOf, isHomeDestination, placedPaths, stageEntries } from "../../engine/files.ts";
 import type { MockWiring } from "../../engine/registry.ts";
 import { isMissing, isWithin, openRunRoot, resolveWorkspacePath, type RunRoot } from "../../engine/workspace.ts";
-import { assertSeatbeltAvailable, createSandboxPolicy, SYSTEM_PATH } from "../../platform/macos/policy.ts";
+import {
+  assertSandboxAvailable,
+  createSandboxPolicy,
+  resolveDeniedExecutables,
+  SYSTEM_PATH,
+} from "../../platform/index.ts";
 import type { AgentConfig } from "./agent.ts";
 
 /** Persistent login state: where it lives, which files compose it, and how to obtain it. */
@@ -38,7 +41,7 @@ export interface HarnessHome {
 
 /** Validate the caller-owned software, HOME content and login state without creating run state. */
 export async function resolveHarnessHome(agent: AgentConfig, declaringDir: string): Promise<HarnessHome> {
-  assertSeatbeltAvailable();
+  assertSandboxAvailable();
   let deps: string;
   try {
     deps = (await openRunRoot(resolve(declaringDir, agent.deps))).path;
@@ -218,12 +221,23 @@ export async function harnessEnvironment(
   const mocks = options.mocks;
   const depsLink = join(dirs.runRootDir, "deps");
   const pathEntries = [...source.path.map((path) => join(depsLink, path)), ...SYSTEM_PATH];
+  let denyExecutables: readonly string[] = [];
+  if (mocks !== undefined) {
+    denyExecutables = await resolveDeniedExecutables(mocks.denyTargets, pathEntries);
+    const runtimeNode = await realpath(process.execPath);
+    if (denyExecutables.includes(runtimeNode)) {
+      throw new ConfigError(
+        `cannot deny ${runtimeNode} while mocks are active because mock forwarders execute with this Node interpreter`,
+      );
+    }
+  }
   const policy = createSandboxPolicy({
     writableRoots: [dirs.home, dirs.workspace, dirs.tmp],
     // A mocked command's forwarder is readable and executable, never writable.
     readableRoots: mocks === undefined ? [depsLink] : [depsLink, mocks.forwarderDir],
-    denyExecutables:
-      mocks === undefined ? [] : await deniedBinaries(mocks.denyTargets, pathEntries, await activeDeveloperDir()),
+    ...(mocks?.readableFiles === undefined ? {} : { readableFiles: mocks.readableFiles }),
+    ...(mocks === undefined ? {} : { writableFiles: [mocks.socketPath] }),
+    denyExecutables,
     allowNetwork: true,
     interactive: options.interactive,
   });
@@ -265,44 +279,6 @@ async function persistLogin(login: HarnessLogin | undefined, selected: ReadonlyM
     } finally {
       await rm(temporary, { force: true });
     }
-  }
-}
-
-/**
- * The real binaries behind PATH targets whose rules never pass. Besides the first PATH match,
- * the active developer directory is included because `/usr/bin/make` and `/usr/bin/git` are
- * shims that start the toolchain's own copy.
- */
-export async function deniedBinaries(
-  targets: readonly string[],
-  pathEntries: readonly string[],
-  developerDir: string | undefined,
-): Promise<readonly string[]> {
-  const denied: string[] = [];
-  for (const target of targets) {
-    const candidates = [
-      ...pathEntries.map((entry) => join(entry, target)),
-      ...(developerDir === undefined ? [] : [join(developerDir, "usr", "bin", target)]),
-    ];
-    for (const candidate of candidates) {
-      try {
-        if ((await stat(candidate)).isFile()) denied.push(candidate, await realpath(candidate));
-      } catch {
-        // Not installed here.
-      }
-    }
-  }
-  return denied;
-}
-
-/** The directory the platform shims start tools from, when a developer directory is selected. */
-async function activeDeveloperDir(): Promise<string | undefined> {
-  try {
-    const { stdout } = await promisify(execFile)("/usr/bin/xcode-select", ["-p"]);
-    const path = stdout.trim();
-    return path.length === 0 ? undefined : path;
-  } catch {
-    return undefined;
   }
 }
 

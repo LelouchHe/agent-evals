@@ -3,7 +3,7 @@ import { z } from "zod";
 import { loadImplementationParameters } from "../../engine/authoring.ts";
 import { resolveAuthoringAsset } from "../../engine/config.ts";
 import type { Runner, RunnerContext, RunnerDefinition, RunnerOutcome } from "../../engine/registry.ts";
-import { spawnSupervised, type SupervisedProcess } from "../../platform/macos/supervise.ts";
+import { spawnSupervised, type SupervisedProcess } from "../../platform/index.ts";
 import { agentSchema } from "./agent.ts";
 import { harnessEnvironment, prepareHarnessHome, resolveHarnessHome, type HarnessHome } from "./environment.ts";
 import { withSession } from "./session.ts";

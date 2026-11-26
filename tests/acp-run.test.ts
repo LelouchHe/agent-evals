@@ -10,6 +10,7 @@ import { addChecker, addRunner, createRegistry } from "../src/engine/registry.ts
 import { runEvaluation } from "../src/engine/run.ts";
 import { acpRunner } from "../src/runners/acp/index.ts";
 import { makeAcpAgent } from "./helpers/acp-agent.ts";
+import { isSandboxPlatformSupported } from "../src/platform/index.ts";
 
 const INPUT = "Write the answer.";
 
@@ -52,7 +53,7 @@ async function runCase(
 
 test(
   "acp runner applies session config, prompts in the workspace and records the merged trace",
-  { skip: process.platform !== "darwin" },
+  { skip: !isSandboxPlatformSupported },
   async (t) => {
     const { fixture, record, requests } = await runCase(t, "success", () => ({
       agent: "agent.yml",
@@ -86,7 +87,7 @@ test(
 
 test(
   "the run sandbox puts deps on PATH and keeps engine, deps and HOME apart",
-  { skip: process.platform !== "darwin" },
+  { skip: !isSandboxPlatformSupported },
   async (t) => {
     const { fixture, record } = await runCase(t, "sandbox", () => ({
       agent: "agent.yml",
@@ -130,7 +131,7 @@ test(
 
 test(
   "acp runner rejects a session config value the agent does not offer before prompting",
-  { skip: process.platform !== "darwin" },
+  { skip: !isSandboxPlatformSupported },
   async (t) => {
     const { record, requests } = await runCase(t, "success", (fixture) => ({
       agent: fixture.config,
@@ -142,40 +143,36 @@ test(
   },
 );
 
-test(
-  "cancelling a hung ACP turn stops the sandbox and cleans up",
-  { skip: process.platform !== "darwin" },
-  async (t) => {
-    const abort = new AbortController();
-    let fixture: Awaited<ReturnType<typeof makeAcpAgent>> | undefined;
-    const prompted = (async () => {
-      // The peer writes answer.txt when the prompt arrives, then hangs.
-      for (;;) {
-        const [run] = fixture === undefined ? [] : await readdir(fixture.runtime);
-        const files = run === undefined ? [] : await readdir(join(fixture!.runtime, run, "workspace")).catch(() => []);
-        if (files.includes("answer.txt")) return abort.abort();
-        await delay(20, undefined, { signal: t.signal });
-      }
-    })();
-    const result = await runCase(
-      t,
-      "hang",
-      (created) => {
-        fixture = created;
-        return { agent: created.config };
-      },
-      abort.signal,
-    );
-    await prompted;
-    assert.equal(result.record.status, "cancelled");
-    assert.equal(result.requests.at(-1), "session/prompt");
-    assert.deepEqual(await readdir(result.fixture.runtime), []);
-  },
-);
+test("cancelling a hung ACP turn stops the sandbox and cleans up", { skip: !isSandboxPlatformSupported }, async (t) => {
+  const abort = new AbortController();
+  let fixture: Awaited<ReturnType<typeof makeAcpAgent>> | undefined;
+  const prompted = (async () => {
+    // The peer writes answer.txt when the prompt arrives, then hangs.
+    for (;;) {
+      const [run] = fixture === undefined ? [] : await readdir(fixture.runtime);
+      const files = run === undefined ? [] : await readdir(join(fixture!.runtime, run, "workspace")).catch(() => []);
+      if (files.includes("answer.txt")) return abort.abort();
+      await delay(20, undefined, { signal: t.signal });
+    }
+  })();
+  const result = await runCase(
+    t,
+    "hang",
+    (created) => {
+      fixture = created;
+      return { agent: created.config };
+    },
+    abort.signal,
+  );
+  await prompted;
+  assert.equal(result.record.status, "cancelled");
+  assert.equal(result.requests.at(-1), "session/prompt");
+  assert.deepEqual(await readdir(result.fixture.runtime), []);
+});
 
 test(
   "acp records context, cost and the unstable prompt usage in result.json",
-  { skip: process.platform !== "darwin" },
+  { skip: !isSandboxPlatformSupported },
   async (t) => {
     const { fixture, record } = await runCase(t, "usage", () => ({ agent: "agent.yml", config: { model: "model-b" } }));
     assert.equal(record.status, "pass", record.error);
@@ -200,7 +197,7 @@ test(
 
 test(
   "a null cost clears the last one and malformed prompt usage is dropped",
-  { skip: process.platform !== "darwin" },
+  { skip: !isSandboxPlatformSupported },
   async (t) => {
     const cleared = await runCase(t, "usage-cleared", () => ({
       agent: "agent.yml",
@@ -221,7 +218,7 @@ test(
 
 test(
   "a timed-out run still reports the context and cost it saw, without tokens",
-  { skip: process.platform !== "darwin" },
+  { skip: !isSandboxPlatformSupported },
   async (t) => {
     const { record } = await runCase(
       t,

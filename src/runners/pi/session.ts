@@ -5,8 +5,7 @@ import { fileURLToPath } from "node:url";
 import { ConfigError, errorMessage } from "../../engine/config.ts";
 import { truncate } from "../../engine/truncate.ts";
 import { siblingRuntimeModule } from "../../engine/runtime-assets.ts";
-import { spawnSandboxed } from "../../platform/macos/launch.ts";
-import { writeSeatbeltPolicy, type SandboxPolicy } from "../../platform/macos/policy.ts";
+import { createSandboxPolicy, spawnSandboxed, SYSTEM_PATH, type SandboxPolicy } from "../../platform/index.ts";
 import { PiProcess, PiRpcError } from "./rpc.ts";
 
 export const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
@@ -163,37 +162,24 @@ export async function createPiProcess(config: PiSessionConfig): Promise<PiProces
   }
 
   const policy = await buildPolicy(executable, config);
-  const policyPath = await writeSeatbeltPolicy(config.dirs.scratchDir, policy);
   const args = buildPiArgs(config);
   const env = buildEnvironment(config);
   const nodeExecutable = await realpath(process.execPath);
-  return new PiProcess({
-    spawn: () =>
-      spawnSandboxed({
-        policyPath,
-        command: nodeExecutable,
-        args: [supervisorPath, executable, ...args],
-        cwd: config.dirs.workspaceDir,
-        env,
-      }),
+  const child = await spawnSandboxed({
+    policy,
+    policyDirectory: config.dirs.scratchDir,
+    command: nodeExecutable,
+    args: [supervisorPath, executable, ...args],
+    cwd: config.dirs.workspaceDir,
+    env,
   });
+  return new PiProcess({ spawn: () => child });
 }
 
 export async function buildPolicy(executable: string, config: PiSessionConfig): Promise<SandboxPolicy> {
   const nodeExecutable = await realpath(process.execPath);
   const nodeDirectory = dirname(nodeExecutable);
-  const readableRoots = new Set<string>([
-    "/System",
-    "/usr",
-    "/bin",
-    "/sbin",
-    "/private/etc",
-    "/Library",
-    "/dev",
-    "/private/var/select",
-    "/private/var/db/timezone",
-    nodeDirectory,
-  ]);
+  const readableRoots = new Set<string>([nodeDirectory]);
   if (basename(nodeDirectory) === "bin") {
     readableRoots.add(dirname(nodeDirectory));
   }
@@ -211,14 +197,13 @@ export async function buildPolicy(executable: string, config: PiSessionConfig): 
   }
   readableRoots.add(shellToolsDirectory(config));
 
-  return {
+  return createSandboxPolicy({
     writableRoots: [config.dirs.workspaceDir, config.dirs.homeDir, config.dirs.configDir, config.dirs.scratchDir],
     readableRoots: [...readableRoots],
-    // The resolver's fallback stats `/etc` and `/var` (symlinks to `/private/...`) before it
-    // reads `/private/etc/resolv.conf`; without them a sandboxed Node fails DNS with ENOTFOUND.
-    readableFiles: [executable, "/etc", "/var"],
+    readableFiles: [executable],
     allowNetwork: config.allowNetwork,
-  };
+    interactive: false,
+  });
 }
 
 function buildPiArgs(config: PiSessionConfig): string[] {
@@ -246,7 +231,7 @@ function buildPiArgs(config: PiSessionConfig): string[] {
 function buildEnvironment(config: PiSessionConfig): NodeJS.ProcessEnv {
   const nodeDirectory = dirname(process.execPath);
   const env: NodeJS.ProcessEnv = {
-    PATH: [nodeDirectory, "/usr/bin", "/bin", "/usr/sbin", "/sbin"].join(":"),
+    PATH: [nodeDirectory, ...SYSTEM_PATH].join(":"),
     HOME: config.dirs.homeDir,
     TMPDIR: config.dirs.scratchDir,
     TMP: config.dirs.scratchDir,

@@ -165,7 +165,7 @@ printf '%s' $? >call-status
 publish '' x >call-binary 2>call-binary-err
 printf '%s' $? >call-binary-status
 od -An -tx1 call-binary >call-binary-hex
-ls "$root" >/dev/null 2>&1; printf '%s' $? >probe-list
+ls "$root/engine" >/dev/null 2>&1; printf '%s' $? >probe-list
 cat "$fwd" >/dev/null 2>&1; printf '%s' $? >probe-read
 printf x >"$(dirname "$fwd")/added" 2>/dev/null; printf '%s' $? >probe-write
 };

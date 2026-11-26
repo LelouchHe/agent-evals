@@ -6,7 +6,7 @@ import { stringify } from "yaml";
 import { loadImplementationParameters } from "../../engine/authoring.ts";
 import { ConfigError, errorMessage } from "../../engine/config.ts";
 import { createEnvSource } from "../../engine/env-source.ts";
-import { spawnSupervised, type SupervisedProcess } from "../../platform/macos/supervise.ts";
+import { spawnSupervised, type SupervisedProcess } from "../../platform/index.ts";
 import { agentSchema } from "./agent.ts";
 import { harnessEnvironment, prepareHarnessHome, resolveHarnessHome, saveLogin } from "./environment.ts";
 import { withSession } from "./session.ts";

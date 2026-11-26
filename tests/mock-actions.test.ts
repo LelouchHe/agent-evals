@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { mkdir, readFile, realpath, rm, stat, writeFile } from "node:fs/promises";
+import { type as osType } from "node:os";
 import { join } from "node:path";
 import type { Readable } from "node:stream";
 import { test } from "node:test";
@@ -419,7 +420,7 @@ test("a false rule refuses only its own calls while another rule can pass", asyn
 
   const passed = await call(join(server.wiring.forwarderDir, "uname"), ["-s"]);
   assert.equal(passed.status, 0);
-  assert.equal(passed.stdout.trim(), "Darwin");
+  assert.equal(passed.stdout.trim(), osType());
   await server.close();
 });
 
@@ -463,6 +464,52 @@ test("a false workspace rule hides the real script and does not require one", as
     ["scripts/real.sh", "scripts/absent.sh"],
   );
   assert.deepEqual(faults, []);
+});
+
+test("pass handles broken shebangs without aborting and preserves no-shebang shell fallback", async (t) => {
+  const root = await makeTempDir(t, "ae-mock-pass-exec-");
+  const workspaceDir = join(root, "workspace");
+  await mkdir(join(workspaceDir, "scripts"), { recursive: true });
+  await writeFile(join(workspaceDir, "scripts/broken.sh"), "#!/definitely/missing/interpreter\necho nope\n", {
+    mode: 0o755,
+  });
+  await writeFile(join(workspaceDir, "scripts/noshebang.sh"), "printf 'no-shebang-ok\\n'\n", {
+    mode: 0o755,
+  });
+  const { host: server } = await host(
+    t,
+    {
+      "scripts/broken.sh": [{ action: { kind: "pass" } }],
+      "scripts/noshebang.sh": [{ action: { kind: "pass" } }],
+    },
+    { workspaceDir },
+  );
+  t.after(async () => {
+    await server.close().catch(() => {});
+  });
+
+  const broken = await call(join(workspaceDir, "scripts/broken.sh"));
+  assert.ok(broken.status !== null && broken.status > 0, `expected non-zero exit code, got ${String(broken.status)}`);
+
+  const plain = await call(join(workspaceDir, "scripts/noshebang.sh"));
+  assert.equal(plain.status, 0, plain.stderr);
+  assert.equal(plain.stdout, "no-shebang-ok\n");
+  await server.close();
+});
+
+test("large stdout and stderr payloads flush completely through the forwarder", async (t) => {
+  const bigOut = "o".repeat(256 * 1024);
+  const bigErr = "e".repeat(256 * 1024);
+  const { host: server } = await host(t, {
+    bigtool: [{ action: { kind: "return", result: { exitCode: 3, stdout: bigOut, stderr: bigErr } } }],
+  });
+  const result = await call(join(server.wiring.forwarderDir, "bigtool"));
+  assert.equal(result.status, 3);
+  assert.equal(result.stdout.length, bigOut.length);
+  assert.equal(result.stderr.length, bigErr.length);
+  assert.equal(result.stdout, bigOut);
+  assert.equal(result.stderr, bigErr);
+  await server.close();
 });
 
 test("pass inherits standard input through the forwarder", async (t) => {

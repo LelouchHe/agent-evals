@@ -21,6 +21,7 @@ import {
 import { runEvaluation } from "../src/engine/run.ts";
 import { noopRunner } from "../src/runners/noop/index.ts";
 import { makeTempDir } from "./helpers/fake-pi-control.ts";
+import { isSandboxPlatformSupported } from "../src/platform/index.ts";
 
 const PASSING_TEST = `const assert = require("node:assert/strict");
 const { test } = require("node:test");
@@ -88,7 +89,7 @@ async function runCase(
 test(
   "a shell check runs in the live workspace and passes on exit 0",
   {
-    skip: process.platform !== "darwin",
+    skip: !isSandboxPlatformSupported,
   },
   async (t) => {
     const { record } = await runCase(t, {
@@ -111,7 +112,7 @@ test(
 test(
   "a shell check fails on a nonzero exit and keeps the output tail as its reason",
   {
-    skip: process.platform !== "darwin",
+    skip: !isSandboxPlatformSupported,
   },
   async (t) => {
     const { record } = await runCase(t, {
@@ -131,7 +132,7 @@ test(
 test(
   "a shell check that cannot start or overruns is an error, not a failed judgment",
   {
-    skip: process.platform !== "darwin",
+    skip: !isSandboxPlatformSupported,
   },
   async (t) => {
     const missing = await runCase(t, { checks: [{ $type: "shell", run: ["agent-evals-definitely-missing"] }] });
@@ -150,7 +151,7 @@ test(
 test(
   "mocked PATH commands and the closed mock host are gone at check time",
   {
-    skip: process.platform !== "darwin",
+    skip: !isSandboxPlatformSupported,
   },
   async (t) => {
     const { record } = await runCase(t, {
@@ -181,7 +182,7 @@ test(
 test(
   "a shell check that writes outside the workspace fails at the sandbox boundary",
   {
-    skip: process.platform !== "darwin",
+    skip: !isSandboxPlatformSupported,
   },
   async (t) => {
     const { record } = await runCase(t, (directory) => ({
@@ -190,14 +191,17 @@ test(
       ],
     }));
     assert.equal(record.status, "fail");
-    assert.match(record.checks[0]?.reason ?? "", /Operation not permitted/);
+    assert.match(
+      record.checks[0]?.reason ?? "",
+      /Operation not permitted|Read-only file system|Permission denied|Directory nonexistent|No such file or directory/,
+    );
   },
 );
 
 test(
   "cancelling the run during a shell check is reported as cancellation, not a deadline",
   {
-    skip: process.platform !== "darwin",
+    skip: !isSandboxPlatformSupported,
   },
   async (t) => {
     const directory = await makeTempDir(t, "ae-shell-cancel-case-");
@@ -252,7 +256,7 @@ test(
 test(
   "check-time files stay hidden until the shell check runs and reach later checks",
   {
-    skip: process.platform !== "darwin",
+    skip: !isSandboxPlatformSupported,
   },
   async (t) => {
     const { record, tempParent } = await runCase(
@@ -285,7 +289,7 @@ test(
 test(
   "check-time files replace a fixture's failing test before it runs",
   {
-    skip: process.platform !== "darwin",
+    skip: !isSandboxPlatformSupported,
   },
   async (t) => {
     const failing = `const assert = require("node:assert/strict");
@@ -349,7 +353,7 @@ test("a missing check-time file source is a configuration error before any run d
 test(
   "a symlink the agent left at a destination is replaced, not followed",
   {
-    skip: process.platform !== "darwin",
+    skip: !isSandboxPlatformSupported,
   },
   async (t) => {
     const outside = await makeTempDir(t, "ae-shell-files-outside-");
@@ -380,7 +384,7 @@ test(
 test(
   "an ancestor symlink the agent left is refused and the outside stays untouched",
   {
-    skip: process.platform !== "darwin",
+    skip: !isSandboxPlatformSupported,
   },
   async (t) => {
     const outside = await makeTempDir(t, "ae-shell-files-outside-");
@@ -411,7 +415,7 @@ test(
 test(
   "a custom checker gets engine files validation and sandbox staging",
   {
-    skip: process.platform !== "darwin",
+    skip: !isSandboxPlatformSupported,
   },
   async (t) => {
     const customChecker: CheckerDefinition<{ readonly files: Record<string, string>; readonly run: string[] }> = {

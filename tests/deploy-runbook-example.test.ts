@@ -23,6 +23,7 @@ import { noopRunner } from "../src/runners/noop/index.ts";
 import { makeTempDir } from "./helpers/fake-pi-control.ts";
 import { z } from "zod";
 import { implementationContext, unusedCheckSandbox } from "./helpers/implementation-context.ts";
+import { isSandboxPlatformSupported } from "../src/platform/index.ts";
 
 const EXAMPLE = join(import.meta.dirname, "..", "examples/cases/deploy-runbook");
 const CASE = join(EXAMPLE, "case.yml");
@@ -286,7 +287,7 @@ function deterministicRegistry() {
 test(
   "the worked example's baseline case fails positive checks and passes restraint checks under noop",
   {
-    skip: process.platform !== "darwin",
+    skip: !isSandboxPlatformSupported,
   },
   async (t) => {
     const loaded = await loadCase(CASE, { caseName: "baseline" });
@@ -323,7 +324,7 @@ test(
 test(
   "both shell checks pass on a valid diagnosis",
   {
-    skip: process.platform !== "darwin",
+    skip: !isSandboxPlatformSupported,
   },
   async (t) => {
     const loaded = await loadCase(CASE, { caseName: "baseline" });

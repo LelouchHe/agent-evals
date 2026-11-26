@@ -33,6 +33,8 @@ export interface MockWiring {
   readonly socketPath: string;
   /** `PATH` targets no rule can pass to the real command; their binaries stay denied. */
   readonly denyTargets: readonly string[];
+  /** Additional read-only files the forwarders need inside a deny-default sandbox (e.g. Node). */
+  readonly readableFiles?: readonly string[];
 }
 
 export interface RunnerOutcome {
