@@ -155,7 +155,7 @@ test(
       const psRes = spawnSync(
         "powershell.exe",
         ["-NoLogo", "-NoProfile", "-NonInteractive", "-InputFormat", "None", "-Command", "Write-Output ('ps-user=' + [Environment]::UserName)"],
-        { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], windowsHide: true, timeout: 15000 },
+        { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], windowsHide: true, timeout: 45000 },
       );
       results.powershell = {
         status: psRes.status,

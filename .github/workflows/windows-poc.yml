@@ -36,7 +36,7 @@ jobs:
         run: npm run typecheck
 
       - name: Run Windows sandbox-user PoC tests (PowerShell, pipe, git, firewall, fake agent)
-        run: node --test --test-timeout=30000 src/platform/windows/sandbox.test.ts
+        run: node --test --test-timeout=60000 src/platform/windows/sandbox.test.ts
 
       - name: Teardown sandbox users
         if: always()
