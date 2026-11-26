@@ -9,6 +9,7 @@ import { shellChecker } from "./checkers/shell/index.ts";
 import { traceChecker } from "./checkers/trace/index.ts";
 import { loadCase, loadCases } from "./engine/authoring.ts";
 import { ConfigError, errorMessage } from "./engine/config.ts";
+import { createEnvSource } from "./engine/env-source.ts";
 import { addChecker, addRunner, createRegistry, loadTrustedImplementations } from "./engine/registry.ts";
 import { executeEvaluation, prepareEvaluation, type PreparedEvaluation } from "./engine/run.ts";
 import { formatMatrix, formatReport } from "./engine/report.ts";
@@ -31,7 +32,8 @@ Commands:
 
 Options:
   --case <name>            Named case to select (required by view for files with cases)
-  --reps <n>               Repeat each selected case n times, serially (default: 1)
+  --reps <n>               Repeat each selected case n times (default: 1)
+  --jobs <n>               Maximum concurrent runs (default: 1)
   --results-dir <path>     Where run records are written (default: .agent-evals)
   --extension-dir <path>   Trusted extension root, one implementation per subdirectory (repeatable)
   --files                  With view: list every placed and excluded path
@@ -52,6 +54,7 @@ interface CliOptions {
   readonly showFiles: boolean;
   readonly matrix: boolean;
   readonly reps: number;
+  readonly jobs: number;
   /** Additional paths for `report`; the first one is `configPath`. */
   readonly extraPaths: readonly string[];
 }
@@ -144,10 +147,11 @@ async function runCommand(options: CliOptions): Promise<number> {
     });
     await loadTrustedImplementations(registry, { extensionDirs: options.extensionDirs });
     const resultsDir = options.resultsDir ?? resolve(".agent-evals");
+    const envSource = createEnvSource(process.cwd(), abort.signal);
     const prepared: PreparedEvaluation[] = [];
     for (let rep = 0; rep < options.reps; rep += 1) {
       for (const entry of cases) {
-        prepared.push(await prepareEvaluation({ case: entry, registry, resultsDir, signal: abort.signal }));
+        prepared.push(await prepareEvaluation({ case: entry, registry, resultsDir, signal: abort.signal, envSource }));
       }
     }
 
@@ -159,14 +163,27 @@ async function runCommand(options: CliOptions): Promise<number> {
       return exitCode(record);
     }
 
+    const slots: (EvaluationRecord | undefined)[] = new Array(prepared.length);
+    let nextIndex = 0;
+    const workerCount = Math.min(options.jobs, prepared.length);
+    await Promise.all(
+      Array.from({ length: workerCount }, async () => {
+        while (true) {
+          // Cancellation stops pulling new work; an error or a failed check does not.
+          if (abort.signal.aborted) return;
+          const index = nextIndex;
+          if (index >= prepared.length) return;
+          nextIndex += 1;
+          slots[index] = await executeEvaluation(prepared[index]!);
+        }
+      }),
+    );
+
     const records: EvaluationRecord[] = [];
-    for (const entry of prepared) {
-      // Cancellation stops the rest; an error or a failed check does not.
-      if (abort.signal.aborted) break;
-      records.push(await executeEvaluation(entry));
-    }
     const casesPerRep = cases.length;
-    for (const [index, record] of records.entries()) {
+    for (const [index, record] of slots.entries()) {
+      if (record === undefined) continue;
+      records.push(record);
       const repLabel = options.reps === 1 ? "" : `rep ${Math.floor(index / casesPerRep) + 1}/${options.reps} `;
       printCaseLine(record, resultsDir, repLabel);
     }
@@ -200,6 +217,7 @@ function parseArguments(argv: readonly string[]): CliOptions {
         files: { type: "boolean" },
         matrix: { type: "boolean" },
         reps: { type: "string" },
+        jobs: { type: "string" },
         help: { type: "boolean", short: "h" },
       },
     });
@@ -230,16 +248,20 @@ function parseArguments(argv: readonly string[]): CliOptions {
     (values.case !== undefined ||
       values["results-dir"] !== undefined ||
       values["extension-dir"] !== undefined ||
-      values.reps !== undefined)
+      values.reps !== undefined ||
+      values.jobs !== undefined)
   ) {
     throw new ConfigError(`${command} accepts only an agent configuration file, not case or run options`);
   }
   const extensionDirs = (values["extension-dir"] ?? []).map((directory) => resolve(directory));
   if (
     command === "view" &&
-    (values["results-dir"] !== undefined || extensionDirs.length > 0 || values.reps !== undefined)
+    (values["results-dir"] !== undefined ||
+      extensionDirs.length > 0 ||
+      values.reps !== undefined ||
+      values.jobs !== undefined)
   ) {
-    throw new ConfigError("view does not accept --results-dir, --extension-dir or --reps");
+    throw new ConfigError("view does not accept --results-dir, --extension-dir, --reps or --jobs");
   }
   if (command !== "view" && values.files === true) {
     throw new ConfigError("--files applies only to view");
@@ -252,11 +274,13 @@ function parseArguments(argv: readonly string[]): CliOptions {
     (values.case !== undefined ||
       values["results-dir"] !== undefined ||
       values["extension-dir"] !== undefined ||
-      values.reps !== undefined)
+      values.reps !== undefined ||
+      values.jobs !== undefined)
   ) {
     throw new ConfigError("report accepts only results directories");
   }
-  const reps = values.reps === undefined ? 1 : expectReps(values.reps);
+  const reps = values.reps === undefined ? 1 : expectPositiveInt(values.reps, "--reps");
+  const jobs = values.jobs === undefined ? 1 : expectPositiveInt(values.jobs, "--jobs");
 
   return {
     command,
@@ -267,15 +291,16 @@ function parseArguments(argv: readonly string[]): CliOptions {
     showFiles: values.files === true,
     matrix: values.matrix === true,
     reps,
+    jobs,
     extraPaths: unexpected.map((path) => resolve(path)),
   };
 }
 
-/** A repetition count is a positive integer written in decimal that a loop can count to. */
-function expectReps(value: string): number {
+/** A count flag is a positive integer written in decimal that a loop can count to. */
+function expectPositiveInt(value: string, flag: string): number {
   const count = Number(value);
   if (!/^[0-9]+$/.test(value) || !Number.isSafeInteger(count) || count < 1) {
-    throw new ConfigError(`--reps must be a positive integer, got ${JSON.stringify(value)}`);
+    throw new ConfigError(`${flag} must be a positive integer, got ${JSON.stringify(value)}`);
   }
   return count;
 }
