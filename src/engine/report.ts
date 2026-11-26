@@ -404,7 +404,7 @@ function harnessOf(runner: Readonly<Record<string, unknown>>): string {
   const agent = runner["agent"];
   if (typeof agent !== "string") return value(runner["$type"]);
   const name = basename(agent);
-  return name.includes(".") ? name.slice(0, name.lastIndexOf(".")) : name;
+  return value(name.includes(".") ? name.slice(0, name.lastIndexOf(".")) : name);
 }
 
 function modelOf(runner: Readonly<Record<string, unknown>>): string {
@@ -434,7 +434,7 @@ function judgeInstruments(runs: readonly EvaluationRecord[]): readonly string[] 
 
 function value(input: unknown): string {
   if (typeof input !== "string") return "—";
-  const singleLine = input.replace(/\r\n?|\n/g, " ").trim();
+  const singleLine = input.replace(/\r\n?|[\n\u0085\u2028\u2029]/gu, " ").trim();
   return singleLine === "" ? "—" : singleLine;
 }
 

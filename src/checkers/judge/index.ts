@@ -441,8 +441,19 @@ async function matchGlobFiles(
 /** True when a brace expression contains a path separator, so single-segment prefix pruning cannot apply. */
 function hasCrossSegmentBrace(pattern: string): boolean {
   let depth = 0;
-  for (const char of pattern) {
-    if (char === "{") depth += 1;
+  let inClass = false;
+  for (let index = 0; index < pattern.length; index += 1) {
+    const char = pattern[index];
+    if (char === "\\") {
+      index += 1;
+      continue;
+    }
+    if (inClass) {
+      if (char === "]") inClass = false;
+      continue;
+    }
+    if (char === "[") inClass = true;
+    else if (char === "{") depth += 1;
     else if (char === "}" && depth > 0) depth -= 1;
     else if (char === "/" && depth > 0) return true;
   }
