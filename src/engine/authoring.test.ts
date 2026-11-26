@@ -92,6 +92,7 @@ test("an ordinary document resolves one case and annotates every top-level field
     fixture: { file: path, line: 3, kind: "common" },
     checks: {
       kind: "list",
+      base: { file: path, line: 4, kind: "common" },
       items: [
         { file: path, line: 5, kind: "common" },
         { file: path, line: 8, kind: "common" },
@@ -132,6 +133,7 @@ test("named cases require explicit selection and preserve common versus case ori
   assert.deepEqual(withSkill.origins.input, { file: path, line: 1, kind: "common" });
   assert.deepEqual(withSkill.origins.checks, {
     kind: "list",
+    base: { file: path, line: 3, kind: "common" },
     items: [{ file: path, line: 4, kind: "common" }],
   });
   assert.deepEqual(withSkill.origins.runner, {
@@ -238,15 +240,27 @@ test("single-value fields replace common defaults whole, without partial nested 
   const timeoutCase = await loadCase(path, { caseName: "override-timeout" });
   assert.equal(timeoutCase.config.timeoutMs, 2500);
   assert.deepEqual(timeoutCase.config.runner, { $type: "pi", model: "p/m" });
-  assert.deepEqual(timeoutCase.origins.timeoutMs, { file: path, line: 12, kind: "case", caseName: "override-timeout" });
+  assert.deepEqual(timeoutCase.origins.timeoutMs, {
+    file: path,
+    line: 12,
+    kind: "case",
+    caseName: "override-timeout",
+    overrides: { file: path, line: 2, kind: "common" },
+  });
 
   const runnerCase = await loadCase(path, { caseName: "override-runner" });
   assert.deepEqual(runnerCase.config.runner, { $type: "noop" });
   assert.equal(runnerCase.config.timeoutMs, 1000);
-  assert.deepEqual(runnerCase.origins.runner, { file: path, line: 14, kind: "case", caseName: "override-runner" });
+  assert.deepEqual(runnerCase.origins.runner, {
+    file: path,
+    line: 14,
+    kind: "case",
+    caseName: "override-runner",
+    overrides: { file: path, line: 7, kind: "common" },
+  });
 });
 
-test("collection fields (files, checks, mocks) form additive unions and reject duplicate map keys", async (t) => {
+test("collection fields (files, checks, mocks) merge recursively and case leaf values override common", async (t) => {
   const { path: merged } = await writeDocument(t, [
     "input: task",
     "files:",
@@ -275,6 +289,14 @@ test("collection fields (files, checks, mocks) form additive unions and reject d
     "      - $type: trace",
     "        event: skill",
     "        name: handover",
+    "  overridden:",
+    "    files:",
+    "      .agents/skills: other",
+    "    mocks:",
+    "      shell:",
+    "        deployctl:",
+    "          return:",
+    "            stdout: custom",
   ]);
   const plain = await loadCase(merged, { caseName: "plain" });
   assert.deepEqual(plain.config.files, { ".agents/skills": "../.." });
@@ -293,6 +315,7 @@ test("collection fields (files, checks, mocks) form additive unions and reject d
   assert.deepEqual(Object.keys(extended.config.mocks?.shell ?? {}), ["deployctl", "make"]);
   assert.deepEqual(extended.origins.files, {
     kind: "map",
+    base: { file: merged, line: 2, kind: "common" },
     entries: {
       ".agents/skills": { file: merged, line: 3, kind: "common" },
       "~/mine/space": { file: merged, line: 19, kind: "case", caseName: "extended" },
@@ -300,16 +323,19 @@ test("collection fields (files, checks, mocks) form additive unions and reject d
   });
   assert.deepEqual(extended.origins.checks, {
     kind: "list",
+    base: { file: merged, line: 9, kind: "common" },
     items: [
       { file: merged, line: 10, kind: "common" },
       { file: merged, line: 25, kind: "case", caseName: "extended" },
     ],
   });
   assert.deepEqual(extended.origins.mocks, {
-    kind: "group",
+    kind: "map",
+    base: { file: merged, line: 4, kind: "common" },
     entries: {
       shell: {
         kind: "map",
+        base: { file: merged, line: 5, kind: "common" },
         entries: {
           deployctl: { file: merged, line: 6, kind: "common" },
           make: { file: merged, line: 22, kind: "case", caseName: "extended" },
@@ -318,57 +344,24 @@ test("collection fields (files, checks, mocks) form additive unions and reject d
     },
   });
 
-  const { path: duplicateFiles } = await writeDocument(
-    t,
-    [
-      "input: task",
-      "files:",
-      "  .agents/skills: ../..",
-      "checks:",
-      "  - $type: file",
-      "    path: hello.txt",
-      "    exists: false",
-      "runner:",
-      "  $type: noop",
-      "cases:",
-      "  overlap:",
-      "    files:",
-      "      .agents/skills: other",
-    ],
-    "duplicate-files.yml",
-  );
-  await expectConfigError(
-    () => loadCase(duplicateFiles, { caseName: "overlap" }),
-    /repeats files entry from the common part: \.agents\/skills/,
-  );
-
-  const { path: duplicateMocks } = await writeDocument(
-    t,
-    [
-      "input: task",
-      "mocks:",
-      "  shell:",
-      "    make:",
-      "      pass: false",
-      "checks:",
-      "  - $type: file",
-      "    path: hello.txt",
-      "    exists: false",
-      "runner:",
-      "  $type: noop",
-      "cases:",
-      "  overlap:",
-      "    mocks:",
-      "      shell:",
-      "        make:",
-      "          pass: true",
-    ],
-    "duplicate-mocks.yml",
-  );
-  await expectConfigError(
-    () => loadCase(duplicateMocks, { caseName: "overlap" }),
-    /repeats mocks\.shell entry from the common part: make/,
-  );
+  const overridden = await loadCase(merged, { caseName: "overridden" });
+  assert.deepEqual(overridden.config.files, { ".agents/skills": "other" });
+  assert.deepEqual(overridden.origins.files, {
+    kind: "map",
+    base: { file: merged, line: 2, kind: "common" },
+    entries: {
+      ".agents/skills": {
+        file: merged,
+        line: 30,
+        kind: "case",
+        caseName: "overridden",
+        overrides: { file: merged, line: 3, kind: "common" },
+      },
+    },
+  });
+  const deployRule = overridden.config.mocks?.shell.deployctl?.[0]?.action;
+  assert.equal(deployRule?.kind, "return");
+  assert.equal(deployRule.result.stdout, "custom");
 });
 
 test("incomplete common or case fragments are allowed only when the combination is complete", async (t) => {

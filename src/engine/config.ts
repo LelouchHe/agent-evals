@@ -86,25 +86,30 @@ export interface MocksConfig {
 }
 
 /**
- * Structural type of a top-level case field, which determines how common and case declarations compose:
- * - `"value"`: single value or atomic object; a case replaces the common default as a whole.
- * - `"list"`: ordered list; a case appends its items after the common items.
- * - `"map"`: keyed collection; common and case entries merge with disjoint keys.
- * - `{ kind: "group", child }`: named sub-groups whose values compose recursively using `child`.
+ * Structural YAML type of a top-level case field, which determines how common and case declarations compose:
+ * - `"value"`: scalar or atomic object; a case replaces the common default as a whole.
+ * - `"list"`: sequence; a case appends its items after the common items.
+ * - `{ kind: "map", child }`: mapping; keys merge recursively using `child` (when `child` is `"value"`,
+ *   a repeated key in the case replaces the common value).
  */
-export type FieldType = "value" | "list" | "map" | { readonly kind: "group"; readonly child: FieldType };
+export type FieldType = "value" | "list" | { readonly kind: "map"; readonly child: FieldType };
 
-/** Where a single declaration originated in a YAML document. */
+/** Where a single declaration originated in a YAML document, plus the declaration it overrode if any. */
 export type SourceOrigin =
-  | { readonly file: string; readonly line: number; readonly kind: "common" }
-  | { readonly file: string; readonly line: number; readonly kind: "case"; readonly caseName: string };
+  | { readonly file: string; readonly line: number; readonly kind: "common"; readonly overrides?: SourceOrigin }
+  | {
+      readonly file: string;
+      readonly line: number;
+      readonly kind: "case";
+      readonly caseName: string;
+      readonly overrides?: SourceOrigin;
+    };
 
-/** Origin annotation mirroring `FieldType`: a leaf origin, list items, map entries, or recursive groups. */
+/** Origin annotation mirroring `FieldType`: a leaf origin, list items, or recursive map entries. */
 export type FieldOrigin =
   | SourceOrigin
-  | { readonly kind: "list"; readonly items: readonly SourceOrigin[] }
-  | { readonly kind: "map"; readonly entries: Readonly<Record<string, SourceOrigin>> }
-  | { readonly kind: "group"; readonly entries: Readonly<Record<string, FieldOrigin>> };
+  | { readonly kind: "list"; readonly base: SourceOrigin; readonly items: readonly SourceOrigin[] }
+  | { readonly kind: "map"; readonly base: SourceOrigin; readonly entries: Readonly<Record<string, FieldOrigin>> };
 
 /** Basic environment-variable name grammar used by placeholders and declared variables. */
 export const ENV_NAME_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
@@ -120,13 +125,17 @@ export interface ResolvedCase {
   readonly origins: Readonly<Record<string, FieldOrigin>>;
 }
 
-/** Single source of truth for case fields and their structural types. */
+/**
+ * Single source of truth for case fields and their structural types.
+ * Naming convention: plural names (`files`, `checks`, `mocks`) are collections (`list` / `map`);
+ * singular names (`input`, `runner`, `fixture`, `timeoutMs`, `expect`) are atomic `value`s.
+ */
 export const CASE_FIELDS: Readonly<Record<keyof CaseConfig, FieldType>> = {
   input: "value",
   fixture: "value",
-  files: "map",
+  files: { kind: "map", child: "value" },
   timeoutMs: "value",
-  mocks: { kind: "group", child: "map" },
+  mocks: { kind: "map", child: { kind: "map", child: "value" } },
   expect: "value",
   checks: "list",
   runner: "value",

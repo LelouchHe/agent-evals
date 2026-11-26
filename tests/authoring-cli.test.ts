@@ -91,7 +91,7 @@ test("view succeeds without Pi or environment values and annotates common versus
   assert.match(result.stdout, /^case: "with-skill"$/m);
   assert.match(result.stdout, /^ {2}input: .* {2,}# case\.yml:1$/m);
   assert.match(result.stdout, /^ {2}timeoutMs: 120000 {2,}# case\.yml:2$/m);
-  assert.match(result.stdout, /^ {4}- \$type: file {2,}# case\.yml:4$/m);
+  assert.match(result.stdout, /^ {2}checks: {2,}# case\.yml:3$/m);
   assert.match(result.stdout, /^ {2}runner: {2,}# case\.yml:9$/m);
   assert.doesNotMatch(result.stdout, /view-secret-value/);
   assert.doesNotMatch(result.stdout, /CANARY-LAUNCHED/);
