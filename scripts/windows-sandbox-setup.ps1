@@ -63,8 +63,8 @@ function Ensure-SandboxUser([string]$Name, [string]$Description) {
   }
 }
 
-$online = Ensure-SandboxUser -Name $OnlineUser -Description "Unprivileged online sandbox account for @lelouchhe/agent-evals"
-$offline = Ensure-SandboxUser -Name $OfflineUser -Description "Unprivileged offline sandbox account for @lelouchhe/agent-evals"
+$online = Ensure-SandboxUser -Name $OnlineUser -Description "agent-evals online sandbox user"
+$offline = Ensure-SandboxUser -Name $OfflineUser -Description "agent-evals offline sandbox user"
 
 # Ensure Windows Defender Firewall is enabled so the offline user outbound block is enforced.
 Set-NetFirewallProfile -Profile Domain,Public,Private -Enabled True
