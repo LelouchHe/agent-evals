@@ -39,13 +39,13 @@ mod windows_impl {
         REVOKE_ACCESS, SET_ACCESS, SE_FILE_OBJECT, TRUSTEE_IS_SID, TRUSTEE_IS_UNKNOWN, TRUSTEE_W,
     };
     use windows_sys::Win32::Security::{
-        AllocateAndInitializeSid, CreateRestrictedToken, CreateWellKnownSid, FreeSid,
-        GetTokenInformation, SetTokenInformation, TokenDefaultDacl, TokenLogonSid,
-        WinBuiltinUsersSid, WinWorldSid, ACL, DACL_SECURITY_INFORMATION, DISABLE_MAX_PRIVILEGE,
-        LUA_TOKEN, NO_INHERITANCE, PSID, SID_AND_ATTRIBUTES, SID_IDENTIFIER_AUTHORITY,
-        SUB_CONTAINERS_AND_OBJECTS_INHERIT, TOKEN_ADJUST_DEFAULT, TOKEN_ADJUST_SESSIONID,
-        TOKEN_ASSIGN_PRIMARY, TOKEN_DEFAULT_DACL, TOKEN_DUPLICATE, TOKEN_GROUPS, TOKEN_QUERY,
-        WRITE_RESTRICTED,
+        AllocateAndInitializeSid, CopySid, CreateRestrictedToken, CreateWellKnownSid, FreeSid,
+        GetLengthSid, GetTokenInformation, SetTokenInformation, TokenDefaultDacl, TokenGroups,
+        TokenLinkedToken, WinBuiltinUsersSid, WinWorldSid, ACL, DACL_SECURITY_INFORMATION,
+        DISABLE_MAX_PRIVILEGE, LUA_TOKEN, NO_INHERITANCE, PSID, SID_AND_ATTRIBUTES,
+        SID_IDENTIFIER_AUTHORITY, SUB_CONTAINERS_AND_OBJECTS_INHERIT, TOKEN_ADJUST_DEFAULT,
+        TOKEN_ADJUST_SESSIONID, TOKEN_ASSIGN_PRIMARY, TOKEN_DEFAULT_DACL, TOKEN_DUPLICATE,
+        TOKEN_GROUPS, TOKEN_LINKED_TOKEN, TOKEN_QUERY, WRITE_RESTRICTED,
     };
     use windows_sys::Win32::Foundation::GENERIC_ALL;
     use windows_sys::Win32::Storage::FileSystem::{
@@ -298,7 +298,8 @@ mod windows_impl {
 
         let world_sid = well_known_sid(WinWorldSid)?;
         let users_sid = well_known_sid(WinBuiltinUsersSid)?;
-        let logon_buf = query_logon_sid_buf(base_token.0)?;
+        let logon_sid_buf = query_logon_sid_bytes(base_token.0)?;
+        let logon_sid = logon_sid_buf.as_ptr() as PSID;
 
         let mut sids_to_restrict: Vec<SID_AND_ATTRIBUTES> = vec![
             SID_AND_ATTRIBUTES {
@@ -307,6 +308,10 @@ mod windows_impl {
             },
             SID_AND_ATTRIBUTES {
                 Sid: synthetic_sid,
+                Attributes: 0,
+            },
+            SID_AND_ATTRIBUTES {
+                Sid: logon_sid,
                 Attributes: 0,
             },
         ];
@@ -319,19 +324,6 @@ mod windows_impl {
                 Sid: users_sid.as_ptr() as PSID,
                 Attributes: 0,
             });
-        }
-
-        let mut logon_sid: Option<PSID> = None;
-        if let Some(ref buf) = logon_buf {
-            let groups = unsafe { &*(buf.as_ptr() as *const TOKEN_GROUPS) };
-            if groups.GroupCount > 0 {
-                let first = unsafe { &*groups.Groups.as_ptr() };
-                logon_sid = Some(first.Sid);
-                sids_to_restrict.push(SID_AND_ATTRIBUTES {
-                    Sid: first.Sid,
-                    Attributes: 0,
-                });
-            }
         }
 
         let mut flags = DISABLE_MAX_PRIVILEGE | LUA_TOKEN;
@@ -358,9 +350,9 @@ mod windows_impl {
         }
 
         let restricted = SafeHandle(restricted_raw);
-        // Add logon SID (present in BOTH normal groups and restricted SIDs) and synthetic SID
-        // to TokenDefaultDacl so kernel objects created with default security (e.g. libuv's
-        // stdio named pipes) pass both access-check passes.
+        // Set TokenDefaultDacl to grant GENERIC_ALL to logon_sid (which is in BOTH normal groups
+        // and SidsToRestrict) and synthetic_sid so objects created with default security (such as
+        // libuv's stdio named pipes) pass both access-check passes.
         grant_default_dacl_sids(restricted.0, synthetic_sid, logon_sid)?;
 
         Ok(restricted)
@@ -369,33 +361,8 @@ mod windows_impl {
     fn grant_default_dacl_sids(
         token: HANDLE,
         synthetic_sid: PSID,
-        logon_sid: Option<PSID>,
+        logon_sid: PSID,
     ) -> Result<(), String> {
-        let mut len: u32 = 0;
-        let ok = unsafe { GetTokenInformation(token, TokenDefaultDacl, null_mut(), 0, &mut len) };
-        if ok == 0 && last_error() != ERROR_INSUFFICIENT_BUFFER {
-            return Err(format!(
-                "GetTokenInformation(TokenDefaultDacl) sizing failed: {}",
-                last_error()
-            ));
-        }
-        let mut buf = vec![0u8; len as usize];
-        let ok = unsafe {
-            GetTokenInformation(
-                token,
-                TokenDefaultDacl,
-                buf.as_mut_ptr() as *mut _,
-                len,
-                &mut len,
-            )
-        };
-        if ok == 0 {
-            return Err(format!(
-                "GetTokenInformation(TokenDefaultDacl) failed: {}",
-                last_error()
-            ));
-        }
-        let old_dacl = unsafe { (*(buf.as_ptr() as *const TOKEN_DEFAULT_DACL)).DefaultDacl };
         let make_ea = |sid: PSID| EXPLICIT_ACCESS_W {
             grfAccessPermissions: GENERIC_ALL,
             grfAccessMode: SET_ACCESS,
@@ -408,13 +375,10 @@ mod windows_impl {
                 ptstrName: sid as *mut u16,
             },
         };
-        let mut eas = vec![make_ea(synthetic_sid)];
-        if let Some(lsid) = logon_sid {
-            eas.push(make_ea(lsid));
-        }
+        let eas = [make_ea(logon_sid), make_ea(synthetic_sid)];
         let mut new_dacl: *mut ACL = null_mut();
         let status =
-            unsafe { SetEntriesInAclW(eas.len() as u32, eas.as_ptr(), old_dacl, &mut new_dacl) };
+            unsafe { SetEntriesInAclW(eas.len() as u32, eas.as_ptr(), null_mut(), &mut new_dacl) };
         if status != ERROR_SUCCESS {
             return Err(format!("SetEntriesInAclW(TokenDefaultDacl) error {status}"));
         }
@@ -455,32 +419,69 @@ mod windows_impl {
         Ok(buf)
     }
 
-    fn query_logon_sid_buf(token: HANDLE) -> Result<Option<Vec<u8>>, String> {
+    const SE_GROUP_LOGON_ID: u32 = 0xC000_0000;
+
+    fn scan_token_groups_for_logon(token: HANDLE) -> Option<Vec<u8>> {
         let mut len: u32 = 0;
-        let ok = unsafe { GetTokenInformation(token, TokenLogonSid, null_mut(), 0, &mut len) };
+        let ok = unsafe { GetTokenInformation(token, TokenGroups, null_mut(), 0, &mut len) };
         if ok == 0 && last_error() != ERROR_INSUFFICIENT_BUFFER {
-            return Ok(None);
+            return None;
         }
         if len == 0 {
-            return Ok(None);
+            return None;
         }
         let mut buf = vec![0u8; len as usize];
         let ok = unsafe {
-            GetTokenInformation(
-                token,
-                TokenLogonSid,
-                buf.as_mut_ptr() as *mut _,
-                len,
-                &mut len,
-            )
+            GetTokenInformation(token, TokenGroups, buf.as_mut_ptr() as *mut _, len, &mut len)
         };
         if ok == 0 {
-            return Err(format!(
-                "GetTokenInformation(TokenLogonSid) failed: {}",
-                last_error()
-            ));
+            return None;
         }
-        Ok(Some(buf))
+        let groups = unsafe { &*(buf.as_ptr() as *const TOKEN_GROUPS) };
+        let slice = unsafe {
+            std::slice::from_raw_parts(groups.Groups.as_ptr(), groups.GroupCount as usize)
+        };
+        for g in slice {
+            if (g.Attributes & SE_GROUP_LOGON_ID) == SE_GROUP_LOGON_ID {
+                let sid_len = unsafe { GetLengthSid(g.Sid) } as usize;
+                let mut out = vec![0u8; sid_len];
+                let copied = unsafe { CopySid(sid_len as u32, out.as_mut_ptr() as PSID, g.Sid) };
+                if copied != 0 {
+                    return Some(out);
+                }
+            }
+        }
+        None
+    }
+
+    fn query_logon_sid_bytes(token: HANDLE) -> Result<Vec<u8>, String> {
+        if let Some(sid) = scan_token_groups_for_logon(token) {
+            return Ok(sid);
+        }
+        let mut len: u32 = 0;
+        unsafe { GetTokenInformation(token, TokenLinkedToken, null_mut(), 0, &mut len) };
+        if len as usize >= size_of::<TOKEN_LINKED_TOKEN>() {
+            let mut buf = vec![0u8; len as usize];
+            let ok = unsafe {
+                GetTokenInformation(
+                    token,
+                    TokenLinkedToken,
+                    buf.as_mut_ptr() as *mut _,
+                    len,
+                    &mut len,
+                )
+            };
+            if ok != 0 {
+                let lt = unsafe { *(buf.as_ptr() as *const TOKEN_LINKED_TOKEN) };
+                if !lt.LinkedToken.is_null() {
+                    let linked = SafeHandle(lt.LinkedToken);
+                    if let Some(sid) = scan_token_groups_for_logon(linked.0) {
+                        return Ok(sid);
+                    }
+                }
+            }
+        }
+        Err("could not locate SE_GROUP_LOGON_ID in process token".to_string())
     }
 
     struct SyntheticSid {
