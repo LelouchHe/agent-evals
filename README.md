@@ -5,7 +5,7 @@
 
 A toolkit for evaluating AI agent systems on the real CLI and harness layer.
 
-Requirements: Node.js 24+ on macOS (`sandbox-exec`) or Linux (`bubblewrap` / `bwrap` with unprivileged user namespaces). The package declares `os: ["darwin", "linux"]`; the CLI is published as `@lelouchhe/agent-evals`, and a run additionally needs an invocation `.env` and prepared harness directories, per [Setup](https://github.com/LelouchHe/agent-evals/blob/main/docs/setup.md). [Roadmap](https://github.com/LelouchHe/agent-evals/blob/main/docs/roadmap.md) lists what is still open.
+Requirements: Node.js 24+ on macOS (`sandbox-exec`), Linux, or WSL2 (`bubblewrap` / `bwrap` with unprivileged user namespaces; native Windows and WSL1 are not supported). See [Platforms](https://github.com/LelouchHe/agent-evals/blob/main/docs/platforms.md) for backend details and [Setup](https://github.com/LelouchHe/agent-evals/blob/main/docs/setup.md) for `.env` and harness directories. [Roadmap](https://github.com/LelouchHe/agent-evals/blob/main/docs/roadmap.md) lists what is still open.
 
 > **Status: pre-1.0.** Breaking changes ship in a minor release until 1.0.
 
@@ -99,6 +99,7 @@ Additional examples showcase other angles of the toolkit:
 | [Configuration Reference](https://github.com/LelouchHe/agent-evals/blob/main/docs/configuration.md) | How do YAML files, placeholders, runners, checkers and result records work?          |
 | [Mocks](https://github.com/LelouchHe/agent-evals/blob/main/docs/mocks.md)                           | How do I substitute or spy on shell commands, and what does `mocks.json` contain?    |
 | [Extensions](https://github.com/LelouchHe/agent-evals/blob/main/docs/extensions.md)                 | How do I write and load a custom runner or checker?                                  |
+| [Platforms](https://github.com/LelouchHe/agent-evals/blob/main/docs/platforms.md)                   | Which host OSes are supported (macOS, Linux, WSL2) and how each sandbox works?       |
 | [Architecture](https://github.com/LelouchHe/agent-evals/blob/main/docs/architecture.md)             | How do the modules cooperate, and what runtime/development limits apply today?       |
 | [Roadmap](https://github.com/LelouchHe/agent-evals/blob/main/docs/roadmap.md)                       | What is planned next (M6 sandbox config, M7 MCP mocks), and where are past archives? |
 
@@ -115,7 +116,7 @@ Serialize checkout build/test/eval commands because `npm run build` replaces `di
 
 ## Releasing
 
-[CI](https://github.com/LelouchHe/agent-evals/blob/main/.github/workflows/ci.yml) runs the gate on macOS for every pull request and push to `main`. A release is a tag: push `vX.Y.Z` matching `package.json`'s version, and [publish](https://github.com/LelouchHe/agent-evals/blob/main/.github/workflows/publish.yml) re-runs that gate on macOS, publishes `@lelouchhe/agent-evals` to npm with provenance, and creates the GitHub release. The workflow needs the `NPM_TOKEN` repository secret: an npm token with publish rights for the `@lelouchhe` scope. A scoped package defaults to restricted, so the publish command passes `--access public`.
+[CI](https://github.com/LelouchHe/agent-evals/blob/main/.github/workflows/ci.yml) runs the gate on macOS and Linux for every pull request and push to `main`. A release is a tag: push `vX.Y.Z` matching `package.json`'s version, and [publish](https://github.com/LelouchHe/agent-evals/blob/main/.github/workflows/publish.yml) re-runs that gate, publishes `@lelouchhe/agent-evals` to npm with provenance, and creates the GitHub release. The workflow needs the `NPM_TOKEN` repository secret: an npm token with publish rights for the `@lelouchhe` scope. A scoped package defaults to restricted, so the publish command passes `--access public`.
 
 ## License
 

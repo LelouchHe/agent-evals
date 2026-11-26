@@ -1,6 +1,6 @@
 # Setup
 
-Requirements: Node.js 24+ on macOS (`/usr/bin/sandbox-exec`) or Linux (`bubblewrap` / `bwrap` with unprivileged user namespaces). `view` needs neither a harness nor credentials. `run` needs only what each declared runner needs: the native `pi` runner an installed `pi` CLI and provider key, the ACP runner its agent, `deps` and login prepared as below, and `noop` nothing. A `judge` adds no requirement of its own — it runs the runner it names, or the case's when it names none, so a case judged by an ACP runner needs no `pi` CLI.
+Requirements: Node.js 24+ on macOS (`/usr/bin/sandbox-exec`), Linux, or WSL2 (`bubblewrap` / `bwrap` with unprivileged user namespaces; native Windows and WSL1 are not supported — see [Platforms](platforms.md)). `view` needs neither a harness nor credentials. `run` needs only what each declared runner needs: the native `pi` runner an installed `pi` CLI and provider key, the ACP runner its agent, `deps` and login prepared as below, and `noop` nothing. A `judge` adds no requirement of its own — it runs the runner it names, or the case's when it names none, so a case judged by an ACP runner needs no `pi` CLI.
 
 ## Install the CLI
 
