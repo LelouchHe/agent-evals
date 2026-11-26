@@ -53,3 +53,94 @@ jobs:
       - name: Teardown Windows sandbox users
         if: always() && runner.os == 'Windows'
         run: pwsh -File scripts/windows-sandbox-setup.ps1 -Teardown
+
+  smoke:
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
+    needs: check
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - macos-latest
+          - ubuntu-latest
+          - windows-latest
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Check whether OPENCODE_API_KEY secret is configured
+        id: gate
+        shell: bash
+        env:
+          OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
+        run: |
+          if [ -n "$OPENCODE_API_KEY" ]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "OPENCODE_API_KEY secret is empty or not set; skipping live smoke."
+          fi
+
+      - uses: actions/checkout@v5
+        if: steps.gate.outputs.enabled == 'true'
+
+      - name: Install bubblewrap (Linux)
+        if: steps.gate.outputs.enabled == 'true' && runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y bubblewrap
+
+      - uses: Swatinem/rust-cache@v2
+        if: steps.gate.outputs.enabled == 'true' && runner.os == 'Windows'
+        with:
+          workspaces: native/win-sandbox
+
+      - name: Build win-sandbox.exe (Windows)
+        if: steps.gate.outputs.enabled == 'true' && runner.os == 'Windows'
+        working-directory: native/win-sandbox
+        run: cargo build --release
+
+      - name: Provision Windows sandbox users
+        if: steps.gate.outputs.enabled == 'true' && runner.os == 'Windows'
+        run: pwsh -File scripts/windows-sandbox-setup.ps1
+
+      - uses: actions/setup-node@v5
+        if: steps.gate.outputs.enabled == 'true'
+        with:
+          node-version: "24"
+          cache: npm
+
+      - name: Install dependencies and build
+        if: steps.gate.outputs.enabled == 'true'
+        run: npm ci && npm run build
+
+      - name: Install @earendil-works/pi-coding-agent
+        if: steps.gate.outputs.enabled == 'true'
+        run: npm install --global @earendil-works/pi-coding-agent
+
+      - name: Run live smoke (POSIX)
+        if: steps.gate.outputs.enabled == 'true' && runner.os != 'Windows'
+        shell: bash
+        env:
+          OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
+        run: |
+          umask 077
+          printf 'OPENCODE_API_KEY=%s\n' "$OPENCODE_API_KEY" > .env
+          trap 'rm -f .env' EXIT
+          node dist/cli.js run examples/cases/deploy-runbook-native/case.yml --case with-skill
+
+      - name: Run live smoke (Windows)
+        if: steps.gate.outputs.enabled == 'true' && runner.os == 'Windows'
+        shell: pwsh
+        env:
+          OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          try {
+            Set-Content -Path ".env" -Value "OPENCODE_API_KEY=$env:OPENCODE_API_KEY" -Encoding UTF8
+            $currentUser = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
+            icacls ".env" /inheritance:r /grant:r "${currentUser}:(F)" "SYSTEM:(F)" "Administrators:(F)" | Out-Null
+            node dist/cli.js run examples/cases/deploy-runbook-windows/case.yml --case with-skill
+          } finally {
+            Remove-Item -Force -ErrorAction SilentlyContinue ".env"
+          }
+
+      - name: Teardown Windows sandbox users
+        if: always() && steps.gate.outputs.enabled == 'true' && runner.os == 'Windows'
+        run: pwsh -File scripts/windows-sandbox-setup.ps1 -Teardown

@@ -19,6 +19,10 @@ export interface MockForwarderSpec {
   readonly templateName: string;
   readonly quote: (value: string) => string;
   readonly targetFileName: (target: string) => string;
+  readonly workspaceForwarder?: (target: string) => {
+    readonly assetName: "forwarder.sh" | "forwarder.cmd" | "forwarder.ps1";
+    readonly quote: (value: string) => string;
+  };
   readonly resolvePathTargetName: (selfPath: string, forwarderRoot: string) => string | undefined;
 }
 

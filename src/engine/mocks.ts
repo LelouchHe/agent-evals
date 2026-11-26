@@ -101,24 +101,35 @@ export async function startMockHost(options: MockHostOptions): Promise<MockHost>
   const endpoint = await listenMockServer(server, options.runRootDir);
   const { socketPath, expectedNonce } = endpoint;
 
-  const replacements: Readonly<Record<string, string>> = {
-    __NODE__: spec.quote(nodeExecutable),
-    __CLIENT__: spec.quote(clientPath),
-    __BINDIR__: spec.quote(forwarderRoot),
-    __SOCKET__: spec.quote(socketPath),
-    __FAULT__: spec.quote(faultPath),
+  const renderForwarder = async (
+    assetName: "forwarder.sh" | "forwarder.cmd" | "forwarder.ps1",
+    quoteFn: (value: string) => string,
+  ): Promise<string> => {
+    const replacements: Readonly<Record<string, string>> = {
+      __NODE__: quoteFn(nodeExecutable),
+      __CLIENT__: quoteFn(clientPath),
+      __BINDIR__: quoteFn(forwarderRoot),
+      __SOCKET__: quoteFn(socketPath),
+      __FAULT__: quoteFn(faultPath),
+    };
+    const asset = new URL(`./${assetName}`, import.meta.url);
+    return (await readFile(asset, "utf8")).replace(
+      /__NODE__|__CLIENT__|__BINDIR__|__SOCKET__|__FAULT__/g,
+      (token) => replacements[token]!,
+    );
   };
-  const forwarderAsset = new URL(`./${spec.assetName}`, import.meta.url);
-  const forwarder = (await readFile(forwarderAsset, "utf8")).replace(
-    /__NODE__|__CLIENT__|__BINDIR__|__SOCKET__|__FAULT__/g,
-    (token) => replacements[token]!,
-  );
+  const forwarder = await renderForwarder(spec.assetName, spec.quote);
   try {
     await writeFile(scriptPath, forwarder, { mode: 0o500, flag: "wx" });
 
     for (const target of Object.keys(options.shell).sort()) {
       if (target.includes("/")) {
-        await placeWorkspaceForwarder(workspaceRoot.path, options, target, forwarder);
+        const wsSpec = spec.workspaceForwarder?.(target);
+        const wsForwarder =
+          wsSpec === undefined || wsSpec.assetName === spec.assetName
+            ? forwarder
+            : await renderForwarder(wsSpec.assetName, wsSpec.quote);
+        await placeWorkspaceForwarder(workspaceRoot.path, options, target, wsForwarder);
       } else {
         await link(scriptPath, join(forwarderDir, spec.targetFileName(target)));
       }

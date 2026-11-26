@@ -92,9 +92,10 @@ test(
     skip: !isSandboxPlatformSupported,
   },
   async (t) => {
+    const makeArtifact = [process.execPath, "-e", "require('node:fs').writeFileSync('artifact.txt', 'made')"];
     const { record } = await runCase(t, {
       checks: [
-        { $type: "shell", run: ["/bin/sh", "-c", "printf made > artifact.txt"] },
+        { $type: "shell", run: makeArtifact },
         { $type: "file", path: "artifact.txt", matches: "/^made$/" },
       ],
     });
@@ -102,7 +103,7 @@ test(
     assert.deepEqual(
       record.checks.map((check) => [check.subject, check.status]),
       [
-        ["run /bin/sh -c printf made > artifact.txt", "pass"],
+        [`run ${makeArtifact.join(" ")}`, "pass"],
         ["artifact.txt matches /^made$/", "pass"],
       ],
     );
@@ -119,7 +120,7 @@ test(
       checks: [
         {
           $type: "shell",
-          run: ["/bin/sh", "-c", "printf 'first line\\nassertion failed\\n' >&2; exit 3"],
+          run: [process.execPath, "-e", "process.stderr.write('first line\\nassertion failed\\n'); process.exit(3)"],
         },
       ],
     });
@@ -141,7 +142,7 @@ test(
 
     const slow = await runCase(t, {
       timeoutMs: 1_000,
-      checks: [{ $type: "shell", run: ["/bin/sh", "-c", "sleep 30"] }],
+      checks: [{ $type: "shell", run: [process.execPath, "-e", "setTimeout(() => {}, 30000)"] }],
     });
     assert.equal(slow.record.status, "error");
     assert.match(slow.record.checks[0]?.reason ?? "", /did not finish before the check deadline/);
@@ -158,14 +159,27 @@ test(
       mocks: {
         shell: {
           "agent-evals-check-tool": { return: { stdout: "answered\n" } },
-          "./scripts/inspect.sh": { return: { stdout: "inspected\n" } },
+          [process.platform === "win32" ? "./scripts/inspect.cmd" : "./scripts/inspect.sh"]: {
+            return: { stdout: "inspected\n" },
+          },
         },
       },
       checks: [
         // The check sandbox gets the operator's PATH, not the runner's forwarder directory.
-        { $type: "shell", run: ["/bin/sh", "-c", "command -v agent-evals-check-tool"] },
+        {
+          $type: "shell",
+          run: [
+            process.execPath,
+            "-e",
+            "const { spawnSync } = require('node:child_process'); const r = spawnSync('agent-evals-check-tool'); process.exit(r.error ? 1 : 0);",
+          ],
+        },
         // The workspace forwarder is still at its path, but its host has closed.
-        { $type: "shell", run: ["./scripts/inspect.sh"] },
+        {
+          $type: "shell",
+          run:
+            process.platform === "win32" ? ["cmd.exe", "/d", "/c", "scripts\\inspect.cmd"] : ["./scripts/inspect.sh"],
+        },
         // Restraint holds because nothing ran.
         { $type: "mock", shell: ["agent-evals-check-tool"], times: 0 },
       ],
@@ -187,13 +201,21 @@ test(
   async (t) => {
     const { record } = await runCase(t, (directory) => ({
       checks: [
-        { $type: "shell", run: ["/bin/sh", "-c", 'printf outside > "$1"', "sh", join(directory, "escape.txt")] },
+        {
+          $type: "shell",
+          run: [
+            process.execPath,
+            "-e",
+            "try { require('node:fs').writeFileSync(process.argv[1], 'outside'); process.exit(0); } catch (e) { console.error(e.message); process.exit(1); }",
+            join(directory, "escape.txt"),
+          ],
+        },
       ],
     }));
     assert.equal(record.status, "fail");
     assert.match(
       record.checks[0]?.reason ?? "",
-      /Operation not permitted|Read-only file system|Permission denied|Directory nonexistent|No such file or directory/,
+      /Operation not permitted|EPERM|EACCES|Read-only file system|Permission denied|Directory nonexistent|No such file or directory/i,
     );
   },
 );
@@ -212,7 +234,16 @@ test(
         input: "task",
         timeoutMs: 60_000,
         runner: { $type: "noop" },
-        checks: [{ $type: "shell", run: ["/bin/sh", "-c", "printf started > started.txt; /bin/sleep 30"] }],
+        checks: [
+          {
+            $type: "shell",
+            run: [
+              process.execPath,
+              "-e",
+              "require('node:fs').writeFileSync('started.txt', 'started'); setTimeout(() => {}, 30000);",
+            ],
+          },
+        ],
       }),
     );
     const registry = createRegistry();
@@ -449,7 +480,11 @@ test(
           {
             $type: "custom-shell",
             files: { "tests/acceptance.txt": "checks/acceptance.txt" },
-            run: ["/bin/sh", "-c", 'test "$(cat tests/acceptance.txt)" = "custom body"'],
+            run: [
+              process.execPath,
+              "-e",
+              "process.exit(require('node:fs').readFileSync('tests/acceptance.txt', 'utf8').trim() === 'custom body' ? 0 : 1)",
+            ],
           },
         ],
       },

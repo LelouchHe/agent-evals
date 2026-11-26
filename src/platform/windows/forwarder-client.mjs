@@ -78,11 +78,18 @@ function runPass() {
     process.exitCode = 126;
     return;
   }
-  const res = spawnSync(target, args, {
-    stdio: "inherit",
-    shell: /\.(?:cmd|bat)$/iu.test(target),
-    windowsHide: true,
-  });
+  const isPs1 = target.toLowerCase().endsWith(".ps1");
+  const res = isPs1
+    ? spawnSync(
+        "powershell.exe",
+        ["-NoLogo", "-NoProfile", "-NonInteractive", "-InputFormat", "None", "-File", target, ...args],
+        { stdio: "inherit", windowsHide: true },
+      )
+    : spawnSync(target, args, {
+        stdio: "inherit",
+        shell: /\.(?:cmd|bat)$/iu.test(target),
+        windowsHide: true,
+      });
   if (res.error !== undefined) {
     process.stderr.write(`${name}: ${res.error.message}\n`);
     process.exitCode = 126;

@@ -72,6 +72,7 @@ test("package metadata and built runtime assets point at the sole CLI implementa
     "dist/engine/check-runner.js",
     "dist/engine/forwarder.sh",
     "dist/engine/forwarder.cmd",
+    "dist/engine/forwarder.ps1",
     "dist/engine/regex.js",
     "dist/engine/runtime-assets.js",
     "dist/platform/posix-forwarder-client.mjs",

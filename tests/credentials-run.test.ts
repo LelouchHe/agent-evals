@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { chmod, readFile, readdir, writeFile } from "node:fs/promises";
+import { readFile, readdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { test } from "node:test";
 import { stringify } from "yaml";
@@ -15,10 +15,21 @@ import { piRunner } from "../src/runners/pi/index.ts";
 import { runCliProcess } from "./helpers/cli-process.ts";
 import { createFakePi, makeTempDir } from "./helpers/fake-pi-control.ts";
 
-async function script(dir: string, name: string, body: string): Promise<void> {
+async function nodeKeyCommand(
+  dir: string,
+  name: string,
+  countFile: string | undefined,
+  value: string,
+): Promise<string> {
   const path = join(dir, name);
-  await writeFile(path, `#!/bin/sh\n${body}\n`);
-  await chmod(path, 0o755);
+  const lines = [
+    ...(countFile === undefined
+      ? []
+      : [`import { appendFileSync } from "node:fs"; appendFileSync(${JSON.stringify(countFile)}, "x");`]),
+    `process.stdout.write(${JSON.stringify(value + "\n")});`,
+  ];
+  await writeFile(path, lines.join("\n") + "\n");
+  return `"${process.execPath}" "${path}"`;
 }
 
 function registry() {
@@ -51,13 +62,13 @@ test("runner and judge share one cached environment value without leaking it", a
   const runner = await createFakePi(t, "runner-api-key");
   const judge = await createFakePi(t, "judge-api-key");
   const invocation = await makeTempDir(t, "ae-credentials-run-");
-  await script(invocation, "count-key.sh", "printf x >> count\nprintf 'synthetic-runner-key\\n'");
-  await script(invocation, "unused-key.sh", "touch unused-ran\nprintf 'unused-key\\n'");
+  const countKeyCmd = await nodeKeyCommand(invocation, "count-key.mjs", "count", "synthetic-runner-key");
+  const unusedKeyCmd = await nodeKeyCommand(invocation, "unused-key.mjs", "unused-ran", "unused-key");
   await writeFile(
     join(invocation, ".env"),
     [
-      'OPENCODE_API_KEY="!./count-key.sh"',
-      'DEEPSEEK_API_KEY="!./unused-key.sh"',
+      `OPENCODE_API_KEY='!${countKeyCmd}'`,
+      `DEEPSEEK_API_KEY='!${unusedKeyCmd}'`,
       "HOST_SECRET=dotenv-secret",
       "PATH=/dotenv/path",
       "HOME=/dotenv/home",
@@ -124,11 +135,11 @@ test("different environment values reach only their own runner and judge process
   const runner = await createFakePi(t, "runner-api-key-split");
   const judge = await createFakePi(t, "judge-api-key-split");
   const invocation = await makeTempDir(t, "ae-credentials-split-");
-  await script(invocation, "opencode.sh", "printf x >> opencode-count\nprintf 'synthetic-runner-key\\n'");
-  await script(invocation, "deepseek.sh", "printf x >> deepseek-count\nprintf 'synthetic-judge-key\\n'");
+  const opencodeCmd = await nodeKeyCommand(invocation, "opencode.mjs", "opencode-count", "synthetic-runner-key");
+  const deepseekCmd = await nodeKeyCommand(invocation, "deepseek.mjs", "deepseek-count", "synthetic-judge-key");
   await writeFile(
     join(invocation, ".env"),
-    ['OPENCODE_API_KEY="!./opencode.sh"', 'DEEPSEEK_API_KEY="!./deepseek.sh"'].join("\n") + "\n",
+    [`OPENCODE_API_KEY='!${opencodeCmd}'`, `DEEPSEEK_API_KEY='!${deepseekCmd}'`].join("\n") + "\n",
   );
 
   const directory = await makeTempDir(t, "ae-credentials-split-case-");
@@ -253,8 +264,8 @@ test("CLI resolves .env only from the invocation working directory", async (t) =
     }),
   );
   const invocation = await makeTempDir(t, "ae-credentials-cli-cwd-");
-  await script(invocation, "count-key.sh", "printf x >> count\nprintf 'synthetic-runner-key\\n'");
-  await writeFile(join(invocation, ".env"), 'OPENCODE_API_KEY="!./count-key.sh"\n');
+  const cliCountCmd = await nodeKeyCommand(invocation, "count-key.mjs", "count", "synthetic-runner-key");
+  await writeFile(join(invocation, ".env"), `OPENCODE_API_KEY='!${cliCountCmd}'\n`);
   const resultsDir = await makeTempDir(t, "ae-credentials-cli-results-");
   const tempParent = await makeTempDir(t, "ae-credentials-cli-tmp-");
 
@@ -360,11 +371,11 @@ test("an environment value that resembles a reference is not expanded again", as
 test("only the selected case's placeholders are resolved", async (t) => {
   const runner = await createFakePi(t, "runner-api-key-details");
   const invocation = await makeTempDir(t, "ae-credentials-selected-");
-  await script(invocation, "selected.sh", "printf x >> selected-count\nprintf 'synthetic-runner-key\n'");
-  await script(invocation, "unused.sh", "touch unused-ran\nprintf 'unused-key\n'");
+  const selectedCmd = await nodeKeyCommand(invocation, "selected.mjs", "selected-count", "synthetic-runner-key");
+  const unusedCmd = await nodeKeyCommand(invocation, "unused.mjs", "unused-ran", "unused-key");
   await writeFile(
     join(invocation, ".env"),
-    ['SELECTED_KEY="!./selected.sh"', 'UNUSED_KEY="!./unused.sh"'].join("\n") + "\n",
+    [`SELECTED_KEY='!${selectedCmd}'`, `UNUSED_KEY='!${unusedCmd}'`].join("\n") + "\n",
   );
   const directory = await makeTempDir(t, "ae-credentials-selected-case-");
   const configPath = join(directory, "case.yml");
@@ -412,8 +423,8 @@ test("only the selected case's placeholders are resolved", async (t) => {
 test("omitting apiKey performs no environment lookup", async (t) => {
   const runner = await createFakePi(t, "success");
   const invocation = await makeTempDir(t, "ae-credentials-none-");
-  await script(invocation, "count-key.sh", "printf x >> count\nprintf 'synthetic-unused-key\\n'");
-  await writeFile(join(invocation, ".env"), 'OPENCODE_API_KEY="!./count-key.sh"\n');
+  const unusedNoneCmd = await nodeKeyCommand(invocation, "count-key.mjs", "count", "synthetic-unused-key");
+  await writeFile(join(invocation, ".env"), `OPENCODE_API_KEY='!${unusedNoneCmd}'\n`);
   const directory = await makeTempDir(t, "ae-credentials-none-case-");
   const configPath = join(directory, "case.yml");
   await writeFile(

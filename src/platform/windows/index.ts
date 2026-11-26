@@ -150,6 +150,16 @@ export const windowsBackend: PlatformBackend = {
       templateName: "forward.cmd",
       quote: (value: string) => `"${value.replaceAll('"', '""').replaceAll("%", "%%")}"`,
       targetFileName: (target: string) => `${target}.cmd`,
+      workspaceForwarder: (target: string) =>
+        target.toLowerCase().endsWith(".ps1")
+          ? {
+              assetName: "forwarder.ps1",
+              quote: (value: string) => `'${value.replaceAll("'", "''")}'`,
+            }
+          : {
+              assetName: "forwarder.cmd",
+              quote: (value: string) => `"${value.replaceAll('"', '""').replaceAll("%", "%%")}"`,
+            },
       resolvePathTargetName: (selfPath: string, forwarderRoot: string) => {
         if (dirname(selfPath).toLowerCase() !== forwarderRoot.toLowerCase()) return undefined;
         const raw = basename(selfPath);
