@@ -2,6 +2,7 @@ node_modules/
 .agent-evals/
 
 dist/
+native/win-sandbox/target/
 *.tgz
 
 .env
