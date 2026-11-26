@@ -807,7 +807,13 @@ test("integration: CLI cancellation interrupts and cleans up", { skip: process.p
   child.stderr.on("data", (chunk: Buffer) => {
     stderr += chunk.toString("utf8");
   });
-  await new Promise((resolve) => setTimeout(resolve, 600));
+  const deadline = Date.now() + 10_000;
+  while (Date.now() < deadline) {
+    if ((await readdir(tempParent)).length > 0) break;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  assert.ok((await readdir(tempParent)).length > 0, `run directory did not appear before timeout:\n${stderr}`);
+  await new Promise((resolve) => setTimeout(resolve, 150));
   child.kill("SIGINT");
   const code = await new Promise<number | null>((resolve) => child.on("exit", (value) => resolve(value)));
 
