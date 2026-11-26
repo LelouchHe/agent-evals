@@ -431,6 +431,41 @@ test("file checker refuses to read files over the bounded size", async (t) => {
   assert.match(results[0]?.reason ?? "", /check limit/);
 });
 
+test("file checker supports glob paths with OR matches, AND notMatches, and fail-closed empty globs", async (t) => {
+  const dirs = await setup(t);
+  await mkdir(join(dirs.home, "mine", "space", "Plan", "Delta"), { recursive: true });
+  await writeFile(join(dirs.home, "mine", "space", "Plan", "Delta", "design.md"), "Architecture notes.\n");
+  await writeFile(join(dirs.home, "mine", "space", "Plan", "Delta", "dev.md"), "Pinned CA bundle for staging.\n");
+  await writeFile(join(dirs.workspace, "root.md"), "top level\n");
+  const ctx = await context(dirs.root, dirs.workspace, dirs.baseline);
+
+  // Brace glob in HOME: matches passes when any candidate matches; notMatches fails if any matches.
+  const braceResults = await checkRaw(
+    {
+      path: "~/mine/space/Plan/Delta/{design,dev}.md",
+      exists: true,
+      matches: ["/(?i)ca bundle/", "missing-text"],
+      notMatches: ["/(?i)secret/", "/(?i)ca bundle/"],
+    },
+    ctx,
+  );
+  assert.deepEqual(statuses(braceResults), ["pass", "pass", "fail", "pass", "fail"]);
+  assert.match(braceResults[1]?.reason ?? "", /~\/mine\/space\/Plan\/Delta\/dev\.md/);
+  assert.match(braceResults[4]?.reason ?? "", /~\/mine\/space\/Plan\/Delta\/dev\.md/);
+
+  // Root-level glob works without a static directory prefix.
+  const rootGlob = await checkRaw({ path: "*.md", exists: true, matches: "top level" }, ctx);
+  assert.deepEqual(statuses(rootGlob), ["pass", "pass"]);
+
+  // Zero matched files: exists:false passes, exists:true fails, and both matches/notMatches fail closed.
+  const emptyGlob = await checkRaw({ path: "nonexistent/*.md", exists: false, matches: "x", notMatches: "x" }, ctx);
+  assert.deepEqual(statuses(emptyGlob), ["pass", "fail", "fail"]);
+  assert.match(emptyGlob[2]?.reason ?? "", /no files matched/);
+
+  // changed rejects glob patterns at load time.
+  await assert.rejects(() => parse({ path: "Plan/*.md", changed: false }), /changed does not support glob patterns/);
+});
+
 test("a directory answers exists and changed, while the pattern predicates need a file", async (t) => {
   const dirs = await setup(t);
   for (const root of [dirs.workspace, dirs.baseline]) {

@@ -1,3 +1,4 @@
+import { posix } from "node:path";
 import { z } from "zod";
 import type { CheckResult, Checker, CheckerContext, CheckerDefinition } from "../../engine/registry.ts";
 import { patternListSchema, runRelativePathSchema } from "../../engine/params.ts";
@@ -12,6 +13,12 @@ import {
   type RunTree,
 } from "../../engine/workspace.ts";
 import { ConfigError, errorMessage, type PatternSyntax } from "../../engine/config.ts";
+
+const GLOB_META = /[*?[\]{}]/u;
+
+function isGlob(path: string): boolean {
+  return GLOB_META.test(path);
+}
 
 /** A workspace path, or `~/…` for a file in the run HOME. `~/` alone names HOME, not a file. */
 const filePathSchema = runRelativePathSchema.superRefine((value, context) => {
@@ -38,6 +45,13 @@ const fileCheckParamsSchema = z
       context.addIssue({
         code: "custom",
         message: "needs at least one of exists, changed, matches, or notMatches",
+      });
+    }
+    if (isGlob(params.path) && params.changed !== undefined) {
+      context.addIssue({
+        code: "custom",
+        path: ["changed"],
+        message: "changed does not support glob patterns; name a specific file or directory",
       });
     }
   })
@@ -82,6 +96,14 @@ class FileChecker implements Checker {
     const params = this.#params;
     const target = this.#target(context);
     const results: CheckResult[] = [];
+    const declared: DeclaredPattern[] = [
+      ...params.matches.map((pattern) => ({ kind: "matches" as const, pattern })),
+      ...params.notMatches.map((pattern) => ({ kind: "notMatches" as const, pattern })),
+    ];
+
+    if (isGlob(params.path)) {
+      return this.#checkGlob(target, declared);
+    }
 
     if (params.exists !== undefined) {
       const expected = params.exists;
@@ -100,16 +122,94 @@ class FileChecker implements Checker {
       results.push(await this.#changed(context, params.changed));
     }
 
-    const declared: DeclaredPattern[] = [
-      ...params.matches.map((pattern) => ({ kind: "matches" as const, pattern })),
-      ...params.notMatches.map((pattern) => ({ kind: "notMatches" as const, pattern })),
-    ];
     if (declared.length > 0) {
       results.push(...(await this.#patterns(context, declared)));
     }
 
     return results;
   };
+
+  async #checkGlob(
+    target: { readonly root: RunRoot; readonly relative: string },
+    declared: readonly DeclaredPattern[],
+  ): Promise<readonly CheckResult[]> {
+    const params = this.#params;
+    const results: CheckResult[] = [];
+    let matched: GlobMatches | undefined;
+    let globError: string | undefined;
+    try {
+      matched = await resolveGlobMatches(target.root, target.relative);
+    } catch (error) {
+      globError = errorMessage(error);
+    }
+
+    const prefix = params.path.startsWith("~/") ? "~/" : "";
+
+    if (params.exists !== undefined) {
+      const expected = params.exists;
+      const subject = `${params.path} ${expected ? "exists" : "does not exist"}`;
+      if (globError !== undefined || matched === undefined) {
+        results.push(errorResult(subject, globError ?? "glob resolution failed"));
+      } else {
+        const found = matched.all.length > 0;
+        const reason = found
+          ? `matched ${matched.all.length} path(s), e.g. ${prefix}${matched.all[0]}`
+          : `no paths matched ${params.path}`;
+        results.push({ ...(found === expected ? pass : fail)(reason), subject });
+      }
+    }
+
+    if (declared.length === 0) {
+      return results;
+    }
+
+    if (globError !== undefined || matched === undefined) {
+      for (const { kind, pattern } of declared) {
+        results.push(
+          errorResult(
+            `${params.path} ${kind === "matches" ? "matches" : "does not match"} ${display(pattern)}`,
+            globError ?? "glob resolution failed",
+          ),
+        );
+      }
+      return results;
+    }
+
+    if (matched.files.length === 0) {
+      for (const { kind, pattern } of declared) {
+        const subject = `${params.path} ${kind === "matches" ? "matches" : "does not match"} ${display(pattern)}`;
+        results.push({ ...fail(`no files matched ${params.path}`), subject });
+      }
+      return results;
+    }
+
+    const contents: { readonly path: string; readonly text: string }[] = [];
+    let readError: string | undefined;
+    try {
+      for (const rel of matched.files) {
+        const text = (await readRunFile(target.root, rel)).toString("utf8");
+        contents.push({ path: `${prefix}${rel}`, text });
+      }
+    } catch (error) {
+      readError = errorMessage(error);
+    }
+
+    for (const { kind, pattern } of declared) {
+      const subject = `${params.path} ${kind === "matches" ? "matches" : "does not match"} ${display(pattern)}`;
+      if (readError !== undefined) {
+        results.push(errorResult(subject, readError));
+        continue;
+      }
+      const hit = contents.find(({ text }) =>
+        pattern.regex ? searches(pattern.source, text) : text.includes(pattern.source),
+      );
+      const found = hit !== undefined;
+      const reason = found ? `pattern found in ${hit.path}` : `pattern not found in ${contents.length} matched file(s)`;
+      results.push({ ...(found === (kind === "matches") ? pass : fail)(reason), subject });
+    }
+
+    return results;
+  }
 
   async #changed(context: CheckerContext, expected: boolean): Promise<CheckResult> {
     const { path } = this.#params;
@@ -166,6 +266,40 @@ class FileChecker implements Checker {
       ? { root: context.home, baseline: context.homeBaseline, relative: path.slice(2) }
       : { root: context.workspace, baseline: context.baseline, relative: path };
   }
+}
+
+interface GlobMatches {
+  readonly all: readonly string[];
+  readonly files: readonly string[];
+}
+
+async function resolveGlobMatches(root: RunRoot, pattern: string): Promise<GlobMatches> {
+  const normalized = pattern.replaceAll("\\", "/").replace(/^(?:\.\/)+/u, "");
+  const segments = normalized.split("/");
+  const staticSegments: string[] = [];
+  for (const segment of segments) {
+    if (isGlob(segment)) break;
+    staticSegments.push(segment);
+  }
+  const baseDir = staticSegments.length === 0 ? "." : staticSegments.join("/");
+  const tree = await readRunTree(root, baseDir);
+  if (tree === undefined) {
+    return { all: [], files: [] };
+  }
+  const all: string[] = [];
+  const files: string[] = [];
+  for (const [key, entry] of tree) {
+    if (baseDir === "." && key === "") continue;
+    const relative = baseDir === "." ? key : key === "" ? baseDir : `${baseDir}/${key}`;
+    if (!posix.matchesGlob(relative, normalized)) continue;
+    all.push(relative);
+    if (entry.kind === "file") {
+      files.push(relative);
+    }
+  }
+  all.sort();
+  files.sort();
+  return { all, files };
 }
 
 /** One differing path between the run and its baseline. */
