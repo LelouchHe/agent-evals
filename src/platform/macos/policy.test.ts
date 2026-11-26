@@ -19,40 +19,48 @@ const systemRoots = [
   "/private/var/db/timezone",
 ];
 
-test("Seatbelt policy renders deny-default, scoped reads, writes, and network", () => {
-  const policy = renderSeatbeltPolicy({
-    writableRoots: ['/tmp/with "quote"'],
-    readableRoots: ["/usr"],
-    readableFiles: ["/opt/launcher"],
-    allowNetwork: true,
-  });
-  assert.match(policy, /^\(version 1\)\n\(deny default\)/);
-  assert.match(policy, /\(allow file-write\* \(subpath "\/tmp\/with \\"quote\\""\)/);
-  assert.match(policy, /\(allow file-read\* .*\(subpath "\/usr"\)/);
-  assert.match(policy, /\(literal "\/opt\/launcher"\)/);
-  assert.match(policy, /\(allow file-read-metadata/);
-  assert.match(policy, /\(allow network-outbound\)/);
-  assert.match(
-    policy,
-    /\(allow mach-lookup \(global-name "com\.apple\.SecurityServer" "com\.apple\.trustd\.agent" "com\.apple\.system\.opendirectoryd\.membership"\)\)/,
-  );
-  assert.doesNotMatch(policy, /\(allow default\)/);
-});
+test(
+  "Seatbelt policy renders deny-default, scoped reads, writes, and network",
+  { skip: process.platform === "win32" },
+  () => {
+    const policy = renderSeatbeltPolicy({
+      writableRoots: ['/tmp/with "quote"'],
+      readableRoots: ["/usr"],
+      readableFiles: ["/opt/launcher"],
+      allowNetwork: true,
+    });
+    assert.match(policy, /^\(version 1\)\n\(deny default\)/);
+    assert.match(policy, /\(allow file-write\* \(subpath "\/tmp\/with \\"quote\\""\)/);
+    assert.match(policy, /\(allow file-read\* .*\(subpath "\/usr"\)/);
+    assert.match(policy, /\(literal "\/opt\/launcher"\)/);
+    assert.match(policy, /\(allow file-read-metadata/);
+    assert.match(policy, /\(allow network-outbound\)/);
+    assert.match(
+      policy,
+      /\(allow mach-lookup \(global-name "com\.apple\.SecurityServer" "com\.apple\.trustd\.agent" "com\.apple\.system\.opendirectoryd\.membership"\)\)/,
+    );
+    assert.doesNotMatch(policy, /\(allow default\)/);
+  },
+);
 
-test("the check sandbox policy opens reads and keeps the write and network limits", () => {
-  const policy = renderSeatbeltPolicy({
-    writableRoots: ["/tmp/ws"],
-    readableRoots: [],
-    readAll: true,
-    allowNetwork: false,
-  });
-  assert.match(policy, /\(allow file-read\*\)/);
-  // No scoped read root or metadata clause is needed when reads are open.
-  assert.doesNotMatch(policy, /\(allow file-read\* \(/);
-  assert.doesNotMatch(policy, /file-read-metadata/);
-  assert.match(policy, /\(allow file-write\* \(subpath "\/tmp\/ws"\) \(literal "\/dev\/null"\)\)/);
-  assert.doesNotMatch(policy, /network/);
-});
+test(
+  "the check sandbox policy opens reads and keeps the write and network limits",
+  { skip: process.platform === "win32" },
+  () => {
+    const policy = renderSeatbeltPolicy({
+      writableRoots: ["/tmp/ws"],
+      readableRoots: [],
+      readAll: true,
+      allowNetwork: false,
+    });
+    assert.match(policy, /\(allow file-read\*\)/);
+    // No scoped read root or metadata clause is needed when reads are open.
+    assert.doesNotMatch(policy, /\(allow file-read\* \(/);
+    assert.doesNotMatch(policy, /file-read-metadata/);
+    assert.match(policy, /\(allow file-write\* \(subpath "\/tmp\/ws"\) \(literal "\/dev\/null"\)\)/);
+    assert.doesNotMatch(policy, /network/);
+  },
+);
 
 test("Seatbelt policy omits network when not requested", () => {
   const policy = renderSeatbeltPolicy({ writableRoots: ["/tmp/ws"], readableRoots: [], allowNetwork: false });

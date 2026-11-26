@@ -42,24 +42,28 @@ test("prepareBwrapLaunch unlinks backing files before returning so no credential
   assert.deepEqual(await readdir(dir), []);
 });
 
-test("resolveExternalSymlinkTarget handles multi-hop chains starting inside mounted directories", async (t) => {
-  const root = await makeTempDir(t, "ae-resolv-hops-");
-  const etcDir = join(root, "etc");
-  const runDir = join(root, "run");
-  const optDir = join(root, "opt");
-  await Promise.all([mkdir(etcDir), mkdir(runDir), mkdir(optDir)]);
-  const finalTarget = join(optDir, "resolv.conf");
-  const unmountedHop = join(runDir, "stub-resolv.conf");
-  const mountedHop = join(etcDir, "resolv-alias.conf");
-  const entry = join(etcDir, "resolv.conf");
-  await writeFile(finalTarget, "nameserver 1.1.1.1\n");
-  await symlink(finalTarget, unmountedHop);
-  await symlink(unmountedHop, mountedHop);
-  await symlink(mountedHop, entry);
+test(
+  "resolveExternalSymlinkTarget handles multi-hop chains starting inside mounted directories",
+  { skip: process.platform === "win32" },
+  async (t) => {
+    const root = await makeTempDir(t, "ae-resolv-hops-");
+    const etcDir = join(root, "etc");
+    const runDir = join(root, "run");
+    const optDir = join(root, "opt");
+    await Promise.all([mkdir(etcDir), mkdir(runDir), mkdir(optDir)]);
+    const finalTarget = join(optDir, "resolv.conf");
+    const unmountedHop = join(runDir, "stub-resolv.conf");
+    const mountedHop = join(etcDir, "resolv-alias.conf");
+    const entry = join(etcDir, "resolv.conf");
+    await writeFile(finalTarget, "nameserver 1.1.1.1\n");
+    await symlink(finalTarget, unmountedHop);
+    await symlink(unmountedHop, mountedHop);
+    await symlink(mountedHop, entry);
 
-  const resolved = resolveExternalSymlinkTarget(entry, (path) => path.startsWith(`${etcDir}/`));
-  assert.deepEqual(resolved, { source: await realpath(finalTarget), dest: unmountedHop });
-});
+    const resolved = resolveExternalSymlinkTarget(entry, (path) => path.startsWith(`${etcDir}/`));
+    assert.deepEqual(resolved, { source: await realpath(finalTarget), dest: unmountedHop });
+  },
+);
 
 test("bwrap policy enables PID cleanup and unshares network when denied", () => {
   const args = buildBwrapArgs(

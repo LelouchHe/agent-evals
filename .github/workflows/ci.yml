@@ -3,6 +3,7 @@ name: CI
 # Reused by the publish workflow, so a tag cannot publish a tree that the gate did not pass.
 on:
   workflow_call:
+  workflow_dispatch:
   pull_request:
   push:
     branches:
@@ -17,6 +18,7 @@ jobs:
         os:
           - macos-latest
           - ubuntu-latest
+          - windows-latest
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v5
@@ -24,6 +26,20 @@ jobs:
       - name: Install bubblewrap (Linux)
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y bubblewrap
+
+      - uses: Swatinem/rust-cache@v2
+        if: runner.os == 'Windows'
+        with:
+          workspaces: native/win-sandbox
+
+      - name: Build win-sandbox.exe (Windows)
+        if: runner.os == 'Windows'
+        working-directory: native/win-sandbox
+        run: cargo build --release
+
+      - name: Provision Windows sandbox users
+        if: runner.os == 'Windows'
+        run: pwsh -File scripts/windows-sandbox-setup.ps1
 
       - uses: actions/setup-node@v5
         with:
@@ -33,3 +49,7 @@ jobs:
       - run: npm ci
       - run: npm run check
       - run: npm run test:package
+
+      - name: Teardown Windows sandbox users
+        if: always() && runner.os == 'Windows'
+        run: pwsh -File scripts/windows-sandbox-setup.ps1 -Teardown
