@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -333,4 +334,88 @@ for await (const line of rl) {
   const reply = JSON.parse(stdout.trim()) as { id: number; ok: boolean; secretBlocked: boolean };
   assert.deepEqual(reply, { id: 1, ok: true, secretBlocked: true });
   assert.equal(await readFile(join(workspace, "hello.txt"), "utf8"), "Hello from Windows sandbox!\n");
+});
+
+test("Windows AppContainer allows child process with piped stdio (execFileSync)", { skip: !IS_WINDOWS }, async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "ae-win-pipe-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+
+  const workspace = join(root, "workspace");
+  const engine = join(root, "engine");
+  await Promise.all([mkdir(workspace), mkdir(engine)]);
+
+  const script = `
+    const { execFileSync } = require("node:child_process");
+    const cmd = process.env.ComSpec || "C:\\\\Windows\\\\System32\\\\cmd.exe";
+    const out = execFileSync(cmd, ["/d", "/c", "echo piped-ok"], { encoding: "utf8", windowsHide: true });
+    process.stdout.write(out.trim());
+  `;
+
+  const policy = createSandboxPolicy({
+    writableRoots: [workspace],
+    readableRoots: [],
+    readableFiles: [process.execPath],
+    allowNetwork: false,
+    interactive: false,
+  });
+
+  const proc = await spawnSupervised({
+    policy,
+    policyDirectory: engine,
+    command: [process.execPath, "-e", script],
+    cwd: workspace,
+    env: { TEMP: workspace, TMP: workspace },
+    interactive: false,
+  });
+
+  const [stdout, stderr, code] = await Promise.all([
+    collectOutput(proc.child.stdout),
+    collectOutput(proc.child.stderr),
+    proc.completion,
+  ]);
+
+  assert.equal(code, 0, `stderr: ${stderr}`);
+  assert.equal(stdout, "piped-ok");
+});
+
+test("Windows sandbox revokes NTFS ACLs on normal exit and graceful stop()", { skip: !IS_WINDOWS }, async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "ae-win-acl-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+
+  const workspace = join(root, "workspace");
+  const engine = join(root, "engine");
+  await Promise.all([mkdir(workspace), mkdir(engine)]);
+
+  const policy = createSandboxPolicy({
+    writableRoots: [workspace],
+    readableRoots: [],
+    readableFiles: [process.execPath],
+    allowNetwork: false,
+    interactive: false,
+  });
+
+  const proc = await spawnSupervised({
+    policy,
+    policyDirectory: engine,
+    command: [process.execPath, "-e", "process.stdout.write('ready\\n'); setTimeout(() => {}, 60000);"],
+    cwd: workspace,
+    env: { TEMP: workspace, TMP: workspace },
+    interactive: false,
+  });
+
+  // Wait until the workload prints "ready" so we know AppContainer + control pipe are active.
+  await new Promise<void>((resolveReady, rejectReady) => {
+    let seen = "";
+    proc.child.stdout?.on("data", (chunk: Buffer | string) => {
+      seen += chunk.toString();
+      if (seen.includes("ready")) resolveReady();
+    });
+    proc.child.once("exit", (code) => rejectReady(new Error(`exited early with code ${code}`)));
+  });
+
+  await proc.stop();
+
+  // Verify no ephemeral AppContainer SID (S-1-15-2-...) remains on workspace DACL.
+  const aclOutput = execFileSync("icacls", [workspace], { encoding: "utf8", windowsHide: true });
+  assert.doesNotMatch(aclOutput, /S-1-15-2-/u, `leftover AppContainer SID found in ACL:\n${aclOutput}`);
 });
