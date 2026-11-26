@@ -570,11 +570,14 @@ mod windows_impl {
     }
 
     fn build_env_block(env: &BTreeMap<String, String>) -> Vec<u16> {
+        let mut entries: Vec<(&String, &String)> = env
+            .iter()
+            .filter(|(k, v)| !k.contains('\0') && !k.contains('=') && !v.contains('\0'))
+            .collect();
+        // Win32 CreateProcessW requires environment blocks to be sorted case-insensitively.
+        entries.sort_by(|(a, _), (b, _)| a.to_uppercase().cmp(&b.to_uppercase()));
         let mut block = Vec::new();
-        for (k, v) in env {
-            if k.contains('\0') || k.contains('=') || v.contains('\0') {
-                continue;
-            }
+        for (k, v) in entries {
             let entry = format!("{k}={v}");
             block.extend(OsStr::new(&entry).encode_wide());
             block.push(0);
