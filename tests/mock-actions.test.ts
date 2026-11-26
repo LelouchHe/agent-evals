@@ -466,6 +466,37 @@ test("a false workspace rule hides the real script and does not require one", as
   assert.deepEqual(faults, []);
 });
 
+test("pass handles broken shebangs without aborting and preserves no-shebang shell fallback", async (t) => {
+  const root = await makeTempDir(t, "ae-mock-pass-exec-");
+  const workspaceDir = join(root, "workspace");
+  await mkdir(join(workspaceDir, "scripts"), { recursive: true });
+  await writeFile(join(workspaceDir, "scripts/broken.sh"), "#!/definitely/missing/interpreter\necho nope\n", {
+    mode: 0o755,
+  });
+  await writeFile(join(workspaceDir, "scripts/noshebang.sh"), "printf 'no-shebang-ok\\n'\n", {
+    mode: 0o755,
+  });
+  const { host: server } = await host(
+    t,
+    {
+      "scripts/broken.sh": [{ action: { kind: "pass" } }],
+      "scripts/noshebang.sh": [{ action: { kind: "pass" } }],
+    },
+    { workspaceDir },
+  );
+  t.after(async () => {
+    await server.close().catch(() => {});
+  });
+
+  const broken = await call(join(workspaceDir, "scripts/broken.sh"));
+  assert.ok(broken.status !== null && broken.status > 0, `expected non-zero exit code, got ${String(broken.status)}`);
+
+  const plain = await call(join(workspaceDir, "scripts/noshebang.sh"));
+  assert.equal(plain.status, 0, plain.stderr);
+  assert.equal(plain.stdout, "no-shebang-ok\n");
+  await server.close();
+});
+
 test("large stdout and stderr payloads flush completely through the forwarder", async (t) => {
   const bigOut = "o".repeat(256 * 1024);
   const bigErr = "e".repeat(256 * 1024);

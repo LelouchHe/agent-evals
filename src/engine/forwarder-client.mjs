@@ -1,17 +1,17 @@
-import { spawnSync } from "node:child_process";
-import { accessSync, appendFileSync, constants, realpathSync, statSync } from "node:fs";
+import { accessSync, appendFileSync, constants, realpathSync, statSync, writeSync } from "node:fs";
 import { createConnection } from "node:net";
 import { basename, dirname, join, resolve } from "node:path";
 
 /**
  * Cross-platform mock forwarder client.
  *
- * Invoked by a tiny POSIX shell wrapper as:
- *   node .forwarder-client.mjs <bindir> <socket> <fault> <self> [...args]
+ * Invoked by `forwarder.sh` as:
+ *   node forwarder-client.mjs <bindir> <socket> <fault> <self> [...args] 4>&1 1>&3
  *
  * Reports the canonicalised invocation path and arguments to the engine's host socket over
- * a half-closed Unix domain connection, then either replays the host's mocked result or execs
- * the real command in place on `pass`.
+ * a half-closed Unix domain connection. For mocked results, replays stdout/stderr directly to
+ * FDs 1/2 and exits with the mocked code. For `pass`, writes the resolved absolute target path
+ * to FD 4 so `forwarder.sh` replaces itself with `exec "$target" "$@"`.
  */
 
 const [bindir, socketPath, faultPath, rawSelf, ...args] = process.argv.slice(2);
@@ -77,25 +77,8 @@ function runPass() {
     process.exitCode = 126;
     return;
   }
-  if (typeof process.execve === "function") {
-    try {
-      process.execve(target, [target, ...args], process.env);
-    } catch {
-      process.stderr.write(`${name}: Operation not permitted\n`);
-      process.exitCode = 126;
-      return;
-    }
-  }
-  const result = spawnSync(target, args, { stdio: "inherit" });
-  if (result.error !== undefined) {
-    process.stderr.write(`${name}: Operation not permitted\n`);
-    process.exitCode = 126;
-    return;
-  }
-  if (result.signal !== null) {
-    process.kill(process.pid, result.signal);
-  }
-  process.exitCode = result.status ?? 1;
+  writeSync(4, target);
+  process.exitCode = 0;
 }
 
 const socket = createConnection(socketPath);

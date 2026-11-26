@@ -46,7 +46,7 @@ COPILOT_DEPS=/absolute/path/to/agent-evals-home/copilot/deps
 COPILOT_GITHUB_TOKEN="!security find-generic-password -w -s copilot-github-token"
 ```
 
-Lookup commands execute as trusted operator code from the invocation directory, with the operator environment. Node `execFile` applies a five-second timeout, a 64 KiB output limit and direct-process cancellation; descendants are operator-owned. Failures report entry names and exit status without printing raw command output, and are not retried.
+Lookup commands execute as trusted operator code from the invocation directory, with the operator environment. Each lookup runs in its own process group with a five-second timeout and a 64 KiB output limit; cancellation, timeout, output-limit and failure teardown signal that process group (`SIGKILL`) and close its pipes (intentionally detached sessions remain operator-owned). Failures report entry names and exit status without printing raw command output, and are not retried.
 
 `${env:NAME}` is a value source, not a secrecy flag: implementations own their outputs and the engine does not redact by field name. Always use placeholders rather than literal keys in YAML, because declared literals are retained in `result.json`. Keep `.env` private and out of Git, and never execute untrusted lookup commands.
 

@@ -1,5 +1,6 @@
 import { spawnSync } from "node:child_process";
-import { accessSync, constants, lstatSync, readlinkSync, realpathSync, statSync } from "node:fs";
+import { accessSync, closeSync, constants, lstatSync, openSync, readlinkSync, realpathSync, statSync } from "node:fs";
+import { writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import type { CreateSandboxPolicyOptions, SandboxPolicy } from "../types.ts";
 
@@ -9,6 +10,15 @@ export const SYSTEM_PATH = ["/usr/bin", "/bin", "/usr/sbin", "/sbin"] as const;
 const DISTRO_TOP_DIRS = ["/bin", "/sbin", "/lib", "/lib64"] as const;
 const NETWORK_ETC_FILES = ["/etc/resolv.conf", "/etc/hosts"] as const;
 const PROBE_TRUE_PATHS = ["/usr/bin/true", "/bin/true"] as const;
+
+/** Minimal trusted environment for host-side launcher processes (`bwrap`, `script`). */
+export function trustedHostEnv(includeTerm = false): NodeJS.ProcessEnv {
+  return {
+    PATH: "/usr/bin:/bin",
+    SHELL: "/bin/sh",
+    ...(includeTerm && process.env.TERM !== undefined ? { TERM: process.env.TERM } : {}),
+  };
+}
 
 let cachedBwrapPath: string | undefined;
 
@@ -42,7 +52,7 @@ export function assertBwrapAvailable(): void {
   const probe = spawnSync(
     bwrap,
     ["--ro-bind", "/", "/", "--unshare-pid", "--die-with-parent", "--new-session", "--", probeTrue],
-    { encoding: "utf8", timeout: 5_000 },
+    { env: trustedHostEnv(), encoding: "utf8", timeout: 5_000 },
   );
   if (probe.error !== undefined || probe.status !== 0) {
     const detail = (probe.stderr || probe.error?.message || `exit status ${String(probe.status)}`).trim();
@@ -58,9 +68,57 @@ export function bwrapExecutablePath(): string {
   return cachedBwrapPath!;
 }
 
-/** Build the `bwrap` argument list implementing `policy` around `command` and `args`. */
-export function buildBwrapArgs(policy: SandboxPolicy, command: string, args: readonly string[]): string[] {
-  const flags: string[] = ["--unshare-pid", "--die-with-parent", "--new-session"];
+/**
+ * Build a minimal cBPF seccomp filter that denies `connect(2)` with `EPERM`, blocking both
+ * pathname and abstract `AF_UNIX` sockets (which `--unshare-net` does not isolate) everywhere
+ * on the filesystem while keeping ordinary read-only files accessible.
+ */
+export function buildDenyConnectSeccomp(arch: string = process.arch): Buffer {
+  let auditArch: number;
+  let sysConnect: number;
+  if (arch === "arm64") {
+    auditArch = 0xc00000b7; // AUDIT_ARCH_AARCH64
+    sysConnect = 203;
+  } else if (arch === "x64") {
+    auditArch = 0xc000003e; // AUDIT_ARCH_X86_64
+    sysConnect = 42;
+  } else {
+    throw new Error(`unsupported Linux architecture for seccomp network isolation: ${arch}`);
+  }
+  const SECCOMP_RET_ERRNO_EPERM = 0x00050001;
+  const SECCOMP_RET_ALLOW = 0x7fff0000;
+  const insn = (code: number, jt: number, jf: number, k: number): Buffer => {
+    const buf = Buffer.alloc(8);
+    buf.writeUInt16LE(code, 0);
+    buf.writeUInt8(jt, 2);
+    buf.writeUInt8(jf, 3);
+    buf.writeUInt32LE(k >>> 0, 4);
+    return buf;
+  };
+  return Buffer.concat([
+    insn(0x20, 0, 0, 4), // LD seccomp_data.arch
+    insn(0x15, 1, 0, auditArch), // JEQ auditArch -> +1
+    insn(0x06, 0, 0, SECCOMP_RET_ERRNO_EPERM), // unknown arch: fail closed
+    insn(0x20, 0, 0, 0), // LD seccomp_data.nr
+    insn(0x15, 0, 1, sysConnect), // JEQ SYS_connect -> next else +1
+    insn(0x06, 0, 0, SECCOMP_RET_ERRNO_EPERM),
+    insn(0x06, 0, 0, SECCOMP_RET_ALLOW),
+  ]);
+}
+
+/** Build the `bwrap` option list (everything before `-- <command>`) implementing `policy`. */
+export function buildBwrapOptions(
+  policy: SandboxPolicy,
+  options: {
+    readonly env?: NodeJS.ProcessEnv;
+    readonly newSession?: boolean;
+    readonly seccompFd?: number;
+  } = {},
+): string[] {
+  const flags: string[] = ["--unshare-pid", "--die-with-parent"];
+  if (options.newSession !== false) {
+    flags.push("--new-session");
+  }
   if (!policy.allowNetwork) {
     flags.push("--unshare-net");
   }
@@ -79,31 +137,8 @@ export function buildBwrapArgs(policy: SandboxPolicy, command: string, args: rea
     flags.push("--symlink", target, dest);
   };
 
-  const remountRo: string[] = [];
   if (policy.readAll === true) {
     flags.push("--ro-bind", "/", "/", "--dev", "/dev", "--proc", "/proc");
-    if (!policy.allowNetwork) {
-      // Mask host runtime/temp directories so pathname AF_UNIX sockets in /tmp and /run
-      // cannot be reached when network access is denied; explicit readable/writable roots
-      // beneath /tmp are re-mounted below, then the tmpfs parents are remounted read-only.
-      flags.push("--tmpfs", "/tmp");
-      remountRo.push("/tmp");
-      if (safeLstat("/run") !== undefined) {
-        flags.push("--tmpfs", "/run");
-        remountRo.push("/run");
-      }
-      const varRun = safeLstat("/var/run");
-      if (varRun !== undefined && varRun.isDirectory() && !varRun.isSymbolicLink()) {
-        flags.push("--tmpfs", "/var/run");
-        remountRo.push("/var/run");
-      }
-      for (const root of policy.readableRoots) {
-        mountReadablePath(root, addRoBind, addSymlink);
-      }
-      for (const file of policy.readableFiles ?? []) {
-        mountReadablePath(file, addRoBind, addSymlink);
-      }
-    }
   } else {
     addRoBind("/usr");
     for (const dir of DISTRO_TOP_DIRS) {
@@ -120,17 +155,9 @@ export function buildBwrapArgs(policy: SandboxPolicy, command: string, args: rea
     }
     if (policy.allowNetwork) {
       for (const file of NETWORK_ETC_FILES) {
-        const info = safeLstat(file);
-        if (info === undefined || !info.isSymbolicLink()) continue;
-        const real = safeRealpath(file);
-        if (real === undefined) continue;
-        // Mount the final resolved target at the first symlink hop so multi-hop resolver
-        // chains (systemd-resolved, OrbStack, WSL2) resolve inside the read-only /etc bind.
-        const firstHop = resolve(dirname(file), readlinkSync(file));
-        if (!firstHop.startsWith("/etc/") && !firstHop.startsWith("/usr/")) {
-          addRoBind(real, firstHop);
-        } else if (!real.startsWith("/etc/") && !real.startsWith("/usr/")) {
-          addRoBind(real);
+        const mount = resolveExternalSymlinkTarget(file);
+        if (mount !== undefined) {
+          addRoBind(mount.source, mount.dest);
         }
       }
     }
@@ -173,9 +200,6 @@ export function buildBwrapArgs(policy: SandboxPolicy, command: string, args: rea
   for (const file of policy.writableFiles ?? []) {
     mountWritablePath(file);
   }
-  for (const dir of remountRo) {
-    flags.push("--remount-ro", dir);
-  }
 
   // Denied executables come last, masking each real binary with non-executable /dev/null.
   const masked = new Set<string>();
@@ -189,8 +213,117 @@ export function buildBwrapArgs(policy: SandboxPolicy, command: string, args: rea
     flags.push("--ro-bind", "/dev/null", target);
   }
 
-  flags.push("--", command, ...args);
+  if (options.env !== undefined) {
+    flags.push("--clearenv");
+    for (const [key, value] of Object.entries(options.env)) {
+      if (value !== undefined) {
+        flags.push("--setenv", key, value);
+      }
+    }
+  }
+
+  if (options.seccompFd !== undefined) {
+    flags.push("--seccomp", String(options.seccompFd));
+  }
+
   return flags;
+}
+
+/** Build the full `bwrap` argument list implementing `policy` around `command` and `args`. */
+export function buildBwrapArgs(policy: SandboxPolicy, command: string, args: readonly string[]): string[] {
+  return [...buildBwrapOptions(policy), "--", command, ...args];
+}
+
+export interface PreparedBwrapLaunch {
+  readonly argsFd: number;
+  readonly seccompFd?: number;
+  readonly closeFds: () => void;
+}
+
+/**
+ * Write `bwrap` options (including `--clearenv`/`--setenv` workload env) and optional seccomp
+ * BPF program into `policyDirectory` and return open read-only file descriptors for FDs 3 & 4.
+ * Host launchers (`bwrap`, `script`) thus never receive workload env vars or secrets on argv.
+ */
+export async function prepareBwrapLaunch(
+  policyDirectory: string,
+  policy: SandboxPolicy,
+  env: NodeJS.ProcessEnv,
+  options: { readonly newSession?: boolean } = {},
+): Promise<PreparedBwrapLaunch> {
+  const needsSeccomp = !policy.allowNetwork;
+  const seccompFd = needsSeccomp ? 4 : undefined;
+  const bwrapOptions = buildBwrapOptions(policy, {
+    env,
+    ...(options.newSession === undefined ? {} : { newSession: options.newSession }),
+    ...(seccompFd === undefined ? {} : { seccompFd }),
+  });
+
+  const argsPath = join(policyDirectory, "bwrap.args");
+  await writeFile(argsPath, bwrapOptions.join("\0") + "\0", { mode: 0o600 });
+  const openArgsFd = openSync(argsPath, constants.O_RDONLY);
+
+  let openSeccompFd: number | undefined;
+  if (needsSeccomp) {
+    try {
+      const bpfPath = join(policyDirectory, "bwrap.seccomp");
+      await writeFile(bpfPath, buildDenyConnectSeccomp(), { mode: 0o600 });
+      openSeccompFd = openSync(bpfPath, constants.O_RDONLY);
+    } catch (error) {
+      closeSync(openArgsFd);
+      throw error;
+    }
+  }
+
+  let closed = false;
+  const closeFds = (): void => {
+    if (closed) return;
+    closed = true;
+    try {
+      closeSync(openArgsFd);
+    } catch {
+      // Already closed.
+    }
+    if (openSeccompFd !== undefined) {
+      try {
+        closeSync(openSeccompFd);
+      } catch {
+        // Already closed.
+      }
+    }
+  };
+
+  return {
+    argsFd: openArgsFd,
+    ...(openSeccompFd === undefined ? {} : { seccompFd: openSeccompFd }),
+    closeFds,
+  };
+}
+
+/**
+ * Walk a symlink chain starting inside `/etc` until the first hop outside `/etc` and `/usr`.
+ * Mounting the final resolved target at that first unmounted hop keeps multi-hop resolver
+ * chains working inside the read-only `/etc` bind.
+ */
+export function resolveExternalSymlinkTarget(
+  file: string,
+  isMounted: (path: string) => boolean = (path) => path.startsWith("/etc/") || path.startsWith("/usr/"),
+): { readonly source: string; readonly dest: string } | undefined {
+  let current = file;
+  let firstUnmounted: string | undefined;
+  for (let depth = 0; depth < 16; depth++) {
+    const info = safeLstat(current);
+    if (info === undefined || !info.isSymbolicLink()) break;
+    const next = resolve(dirname(current), readlinkSync(current));
+    if (firstUnmounted === undefined && !isMounted(next)) {
+      firstUnmounted = next;
+    }
+    current = next;
+  }
+  if (firstUnmounted === undefined) return undefined;
+  const finalReal = safeRealpath(file);
+  if (finalReal === undefined) return undefined;
+  return { source: finalReal, dest: firstUnmounted };
 }
 
 function mountReadablePath(

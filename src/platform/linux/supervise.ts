@@ -3,39 +3,57 @@ import { accessSync, constants } from "node:fs";
 import type { Readable } from "node:stream";
 import { setTimeout as delay } from "node:timers/promises";
 import type { SpawnSupervisedOptions, SupervisedProcess } from "../types.ts";
-import { buildBwrapArgs, bwrapExecutablePath } from "./policy.ts";
+import { bwrapExecutablePath, prepareBwrapLaunch, trustedHostEnv } from "./policy.ts";
 
 const SCRIPT_BINARY = "/usr/bin/script";
 
 /**
- * Start a command inside a bubblewrap PID namespace (`--unshare-pid --die-with-parent --new-session`).
- * When the workload exits or `bwrap` is terminated, the kernel tears down the PID namespace
- * and sends SIGKILL to every remaining descendant automatically. Interactive runs allocate a
- * sandbox-owned PTY via `util-linux` `script` so the workload never holds the operator's terminal.
+ * Start a command inside a bubblewrap PID namespace (`--unshare-pid --die-with-parent`).
+ * Workload environment is installed via `--args` on FD 3 so host launchers (`bwrap`, `script`)
+ * run with a minimal trusted environment. When interactive on a real TTY, `util-linux` `script`
+ * allocates a sandbox-owned PTY so `/dev/tty` works without exposing the operator's terminal.
  */
 export async function spawnSupervised(options: SpawnSupervisedOptions): Promise<SupervisedProcess> {
   const executable = bwrapExecutablePath();
   const [program, ...args] = options.command;
-  const bwrapArgs = buildBwrapArgs(options.policy, program, args);
-  const mode = options.interactive ? "inherit" : "pipe";
-  const stdio: Array<"inherit" | "pipe" | "ignore"> = [mode, mode, mode];
-  // Optional private report pipe at FD 5 (FD 3 and 4 unused on Linux).
-  if (options.report === true) stdio.push("ignore", "ignore", "pipe");
-
-  let launchCommand = executable;
-  let launchArgs = bwrapArgs;
-  if (options.interactive) {
+  const usePty = options.interactive && process.stdin.isTTY === true;
+  if (usePty) {
     assertScriptAvailable();
-    const quoted = [executable, ...bwrapArgs].map(shellQuote).join(" ");
+  }
+  const launch = await prepareBwrapLaunch(options.policyDirectory, options.policy, options.env, {
+    // When `script` allocates a private PTY, it already starts a new session with that PTY as
+    // controlling terminal; omit `--new-session` so `/dev/tty` stays attached to the private PTY.
+    newSession: !usePty,
+  });
+  const mode = options.interactive ? "inherit" : "pipe";
+  // FD 3 = bwrap --args, FD 4 = optional --seccomp, FD 5 = optional check-runner report pipe.
+  const stdio: Array<"inherit" | "pipe" | "ignore" | number> = [mode, mode, mode, launch.argsFd];
+  if (launch.seccompFd !== undefined) {
+    stdio.push(launch.seccompFd);
+  } else if (options.report === true) {
+    stdio.push("ignore");
+  }
+  if (options.report === true) stdio.push("pipe");
+
+  const bwrapCommand = [executable, "--args", "3", "--", program, ...args];
+  let launchCommand = executable;
+  let launchArgs = bwrapCommand.slice(1);
+  if (usePty) {
+    const quoted = bwrapCommand.map(shellQuote).join(" ");
     launchCommand = SCRIPT_BINARY;
     launchArgs = ["-q", "-e", "-f", "-c", quoted, "/dev/null"];
   }
 
-  const child = spawn(launchCommand, launchArgs, {
-    cwd: options.cwd,
-    env: options.env,
-    stdio,
-  });
+  let child;
+  try {
+    child = spawn(launchCommand, launchArgs, {
+      cwd: options.cwd,
+      env: trustedHostEnv(usePty),
+      stdio,
+    });
+  } finally {
+    launch.closeFds();
+  }
   const report =
     options.report === true
       ? ((child.stdio as unknown as Array<Readable | null | undefined>)[5] as Readable)
@@ -63,10 +81,11 @@ export async function spawnSupervised(options: SpawnSupervisedOptions): Promise<
   // need not await its native exit result. Rejections remain observable to login.
   completion.catch(() => {});
 
-  const waitForExit = async (): Promise<boolean> => {
+  const stopGraceMs = usePty ? 2_500 : 1_000;
+  const waitForExit = async (ms = stopGraceMs): Promise<boolean> => {
     const deadline = new AbortController();
     try {
-      return await Promise.race([exit.then(() => true), delay(1000, false, { signal: deadline.signal })]);
+      return await Promise.race([exit.then(() => true), delay(ms, false, { signal: deadline.signal })]);
     } finally {
       deadline.abort();
     }
@@ -81,7 +100,7 @@ export async function spawnSupervised(options: SpawnSupervisedOptions): Promise<
           child.kill("SIGTERM");
           if (!(await waitForExit())) {
             child.kill("SIGKILL");
-            const reaped = await waitForExit();
+            const reaped = await waitForExit(1_000);
             if (!reaped) {
               throw new Error("sandbox supervisor did not exit after SIGKILL");
             }

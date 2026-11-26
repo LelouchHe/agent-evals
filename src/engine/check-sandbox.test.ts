@@ -139,7 +139,15 @@ test(
     assert.equal(outcome.kind === "exited" ? outcome.exitCode : 1, 0, outcome.output);
     assert.match(outcome.output.trim(), /^(?:EPERM|ECONNREFUSED|ENETUNREACH)$/);
 
-    // Host pathname AF_UNIX sockets in /tmp must also be unreachable.
+    // Host pathname AF_UNIX sockets must be unreachable both in /tmp and outside /tmp,
+    // while ordinary files in /tmp remain readable under the open-read check contract.
+    const tmpReadable = join(dirs.outside, "readable-in-tmp.txt");
+    await writeFile(tmpReadable, "visible-in-check\n");
+    const tmpReadOutcome = await dirs.run(["/bin/cat", tmpReadable]);
+    assert.equal(tmpReadOutcome.kind, "exited", tmpReadOutcome.output);
+    assert.equal(tmpReadOutcome.kind === "exited" ? tmpReadOutcome.exitCode : 1, 0, tmpReadOutcome.output);
+    assert.equal(tmpReadOutcome.output, "visible-in-check\n");
+
     const socketPath = join(dirs.outside, "host.sock");
     const unixServer = createServer(() => {});
     await new Promise<void>((resolve) => unixServer.listen(socketPath, resolve));

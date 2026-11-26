@@ -160,13 +160,12 @@ async function runLookupCommand(
           return;
         }
         if (code !== 0) {
-          finish(() => {
-            if (code !== null) {
-              reject(Object.assign(new Error("non-zero exit"), { code }));
-            } else {
-              reject(Object.assign(new Error("signalled"), { signal: exitSignal ?? "SIGKILL" }));
-            }
-          });
+          const reason =
+            code !== null
+              ? Object.assign(new Error("non-zero exit"), { code })
+              : Object.assign(new Error("signalled"), { signal: exitSignal ?? "SIGKILL" });
+          terminate(reason);
+          finish(() => reject(reason));
         }
       });
       child.on("close", (code, exitSignal) => {
