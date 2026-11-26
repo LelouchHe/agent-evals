@@ -3,12 +3,18 @@ import { createHash, randomUUID } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import { mkdir, readFile, readdir, realpath, rm, stat, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
-import { dirname, join, sep } from "node:path";
+import { delimiter, dirname, join, sep } from "node:path";
 import { test } from "node:test";
 import { parse, stringify } from "yaml";
 import { runCliProcess } from "./helpers/cli-process.ts";
 import { createFakePi, makeTempDir } from "./helpers/fake-pi-control.ts";
-import { isSandboxPlatformSupported } from "../src/platform/index.ts";
+import {
+  checkChildEnv,
+  dirEnv,
+  isSandboxPlatformSupported,
+  SYSTEM_PATH,
+  wrapExecutableCommand,
+} from "../src/platform/index.ts";
 import { makeAcpAgent } from "./helpers/acp-agent.ts";
 
 // Deliberately separate from *.test.ts: npm run test:package performs an actual
@@ -23,12 +29,22 @@ test("the packed CLI installs and runs without source or development dependencie
   const cwd = join(root, "invocation");
   const runtime = join(root, "runtime");
   await Promise.all([home, prefix, cwd, runtime].map((path) => mkdir(path)));
-  const env = {
-    PATH: [dirname(process.execPath), "/usr/bin", "/bin", "/usr/sbin", "/sbin"].join(":"),
-    HOME: home,
-    TMPDIR: root,
-    npm_config_userconfig: "/dev/null",
+  const env: NodeJS.ProcessEnv = {
+    ...checkChildEnv(process.env),
+    ...dirEnv({ home, tmp: root }),
+    PATH: [dirname(process.execPath), ...SYSTEM_PATH].join(delimiter),
+    npm_config_userconfig: process.platform === "win32" ? "NUL" : "/dev/null",
     npm_config_update_notifier: "false",
+    ...(process.platform === "win32"
+      ? {
+          AGENT_EVALS_WIN_SANDBOX_BIN: join(project, "native", "win-sandbox", "target", "release", "win-sandbox.exe"),
+          AGENT_EVALS_WIN_SANDBOX_CREDENTIALS: join(
+            process.env.LOCALAPPDATA ?? "",
+            "agent-evals",
+            "sandbox-users.json",
+          ),
+        }
+      : {}),
   };
   const npmCommand = async (args: readonly string[], directory: string) => {
     const result = await runCliProcess(t, npm, args, { cwd: directory, env, timeoutMs: 60_000 });
@@ -60,7 +76,7 @@ test("the packed CLI installs and runs without source or development dependencie
     cwd,
   );
   const installed = join(prefix, "node_modules", "@lelouchhe", "agent-evals");
-  const bin = join(prefix, "node_modules", ".bin", "agent-evals");
+  const bin = join(prefix, "node_modules", ".bin", process.platform === "win32" ? "agent-evals.cmd" : "agent-evals");
   const require = createRequire(join(installed, "package.json"));
   const installRoot = (await realpath(prefix)) + sep;
   for (const dependency of ["@agentclientprotocol/sdk", "ignore", "re2js", "yaml", "zod"]) {
@@ -82,8 +98,11 @@ test("the packed CLI installs and runs without source or development dependencie
       .update(await readFile(path))
       .digest("hex");
   assert.equal(await hash(join(installed, "dist/cli.js")), await hash(join(project, "dist/cli.js")));
-  assert.notEqual((await stat(bin)).mode & 0o111, 0);
-  const help = spawnSync(bin, ["--help"], { cwd, env, encoding: "utf8", timeout: 5_000 });
+  if (process.platform !== "win32") {
+    assert.notEqual((await stat(bin)).mode & 0o111, 0);
+  }
+  const [helpCmd, ...helpArgs] = wrapExecutableCommand(bin, ["--help"]);
+  const help = spawnSync(helpCmd, helpArgs, { cwd, env, encoding: "utf8", timeout: 5_000, windowsHide: true });
   assert.equal(help.error, undefined);
   assert.equal(help.status, 0, help.stderr);
   assert.match(help.stdout, /Usage: agent-evals/);
@@ -117,7 +136,12 @@ test("the packed CLI installs and runs without source or development dependencie
   };
   const configPath = join(cwd, "case.yml");
   await writeFile(configPath, stringify(config));
-  await writeFile(join(cwd, ".env"), 'MY_KEY="!printf x >> count; printf synthetic-runner-key"\n');
+  const keyScript = join(cwd, "emit-key.mjs");
+  await writeFile(
+    keyScript,
+    'import { appendFileSync } from "node:fs"; appendFileSync("count", "x"); process.stdout.write("synthetic-runner-key\\n");\n',
+  );
+  await writeFile(join(cwd, ".env"), `MY_KEY='!"${process.execPath}" "${keyScript}"'\n`);
   const invoke = async (entry: string, args: readonly string[]) =>
     runCliProcess(t, entry, args, {
       cwd,
