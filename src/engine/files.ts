@@ -135,7 +135,8 @@ export async function placedPaths(
       return;
     }
     for (const name of await readdir(source)) {
-      await walk(join(source, name), join(target, name), join(destination, name), [...segments, name], root);
+      const childTarget = target === "" ? name : `${target}/${name}`;
+      await walk(join(source, name), childTarget, `${destination}/${name}`, [...segments, name], root);
     }
   };
   for (const entry of entries) {
