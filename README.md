@@ -71,7 +71,9 @@ npm install -g @lelouchhe/agent-evals   # or: npx @lelouchhe/agent-evals
 agent-evals --help
 ```
 
-Running a case supports macOS, Linux, WSL2, and native Windows ([Platforms](https://github.com/LelouchHe/agent-evals/blob/main/docs/platforms.md)) and needs an invocation `.env` plus a prepared harness directory ([Setup](https://github.com/LelouchHe/agent-evals/blob/main/docs/setup.md)). The worked example below runs from a checkout, because its fixtures and agent files live in the repository.
+> **Note on the bundled Windows binary:** Published npm packages include a small prebuilt Windows helper (`dist/platform/windows/win-sandbox.exe`, ~400 KB), compiled from [`native/win-sandbox/`](https://github.com/LelouchHe/agent-evals/tree/main/native/win-sandbox) in CI with npm provenance so native Windows installs work without Rust. It is **only used on native Windows** (`win32`) and is never executed on macOS or Linux.
+
+Running a case supports macOS, Linux, WSL2, and native Windows ([Platforms](https://github.com/LelouchHe/agent-evals/blob/main/docs/platforms.md)) and needs an invocation `.env` plus a prepared harness directory ([Setup](https://github.com/LelouchHe/agent-evals/blob/main/docs/setup.md)). On native Windows, run `agent-evals setup sandbox` once from an Administrator prompt before your first evaluation. The worked example below runs from a checkout, because its fixtures and agent files live in the repository.
 
 Follow [Setup](https://github.com/LelouchHe/agent-evals/blob/main/docs/setup.md) once to configure `.env` and prepare the harness directories you want to run, then inspect and run the worked example ([`examples/cases/deploy-runbook-posix`](https://github.com/LelouchHe/agent-evals/blob/main/examples/cases/deploy-runbook-posix/case.yml) — seven named cases across Pi, Claude Code, Copilot CLI and `noop`, exercising project skills, `~/` HOME placement, every `mocks.shell` action, hidden check-time `shell` acceptance scripts and all five checkers):
 
