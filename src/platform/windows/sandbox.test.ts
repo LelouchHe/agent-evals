@@ -211,12 +211,20 @@ test("Windows Job Object kills backgrounded descendants on exit", { skip: !IS_WI
   const script = `
     const { spawn } = require("node:child_process");
     const cmd = process.env.ComSpec || "C:\\\\Windows\\\\System32\\\\cmd.exe";
-    const child = spawn(cmd, ["/d", "/c", "ping -n 60 127.0.0.1 >nul"], {
-      stdio: "ignore",
-      windowsHide: true,
-    });
-    child.unref();
-    process.stdout.write(String(child.pid));
+    for (const mode of ["inherit", "pipe", "ignore"]) {
+      try {
+        const child = spawn(cmd, ["/d", "/c", "ping -n 60 127.0.0.1 >nul"], {
+          stdio: mode,
+          windowsHide: true,
+        });
+        child.unref();
+        process.stdout.write(JSON.stringify({ mode, pid: child.pid }));
+        process.exit(0);
+      } catch (e) {
+        process.stderr.write("mode=" + mode + " err=" + (e.code || e.message) + "\\n");
+      }
+    }
+    process.exit(1);
   `;
 
   const policy = createSandboxPolicy({
@@ -243,7 +251,8 @@ test("Windows Job Object kills backgrounded descendants on exit", { skip: !IS_WI
   ]);
 
   assert.equal(code, 0, `stderr: ${stderr}`);
-  const childPid = Number(stdout.trim());
+  const parsed = JSON.parse(stdout.trim()) as { mode: string; pid: number };
+  const childPid = parsed.pid;
   assert.ok(Number.isInteger(childPid) && childPid > 0, `expected valid child pid, got: ${stdout}`);
 
   await delay(200);
