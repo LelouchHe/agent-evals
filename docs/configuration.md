@@ -111,7 +111,7 @@ A multi-case document is one invocation, but every case is an ordinary run: it v
 - **Output is one line per executed case:** `<case name>: <status> <result.json path>`. `--case` keeps the single-run report instead.
 - **Exit status is 0 only when every case passed**, 1 when checks failed, and 2 when a case ended as `error`, `timeout` or `cancelled`. A cancelled sweep also prints how many cases did not run.
 
-**Composition is a disjoint top-level union.** A field repeated between common fields and the selected entry is an error, even with equal values or different nested fields. Common `runner` and case-local `runner` cannot coexist. Siblings are independent; put the complete varying field in each case. There is no recursive merge, override, array append or deletion operator. Names have no built-in skill/comparison behavior and are never result-directory paths.
+**Composition is a disjoint top-level union (with `files` merged by disjoint destination keys).** Any other field repeated between common fields and the selected entry is an error, even with equal values or different nested fields. Common `runner` and case-local `runner` cannot coexist; common `files` and case-local `files` may coexist when they declare disjoint destination keys (repeating the same destination key is an error). Siblings are independent; put the complete varying field in each case. There is no recursive merge, override, array append or deletion operator. Names have no built-in skill/comparison behavior and are never result-directory paths.
 
 ## Common Fields and Parsing
 

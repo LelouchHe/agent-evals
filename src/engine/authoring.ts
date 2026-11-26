@@ -87,7 +87,9 @@ function buildCase(document: CaseDocument, selected: CaseEntry | undefined): Res
   const { file, common } = document;
   if (selected !== undefined) {
     const commonKeys = new Set(common.map((field) => field.key));
-    const shared = selected.fields.filter((field) => commonKeys.has(field.key)).map((field) => field.key);
+    const shared = selected.fields
+      .filter((field) => commonKeys.has(field.key) && field.key !== "files")
+      .map((field) => field.key);
     if (shared.length > 0) {
       throw new ConfigError(
         `case "${selected.name}" in ${file} repeats top-level field${shared.length === 1 ? "" : "s"} from the common part: ${shared.join(", ")}; common and selected fields must be disjoint`,
@@ -103,7 +105,11 @@ function buildCase(document: CaseDocument, selected: CaseEntry | undefined): Res
   }
   if (selected !== undefined) {
     for (const field of selected.fields) {
-      final[field.key] = fieldValue(field);
+      if (field.key === "files" && Object.hasOwn(final, "files")) {
+        final.files = mergeDisjointFiles(final.files, fieldValue(field), selected.name, file);
+      } else {
+        final[field.key] = fieldValue(field);
+      }
       origins[field.key] = { file, line: field.line, kind: "case", caseName: selected.name };
     }
   }
@@ -122,6 +128,24 @@ function buildCase(document: CaseDocument, selected: CaseEntry | undefined): Res
     config,
     origins,
   };
+}
+
+function mergeDisjointFiles(commonFiles: unknown, caseFiles: unknown, caseName: string, file: string): unknown {
+  if (!isPlainRecord(commonFiles) || !isPlainRecord(caseFiles)) {
+    // Let expectCaseConfig report malformed `files` values consistently.
+    return isPlainRecord(commonFiles) ? caseFiles : commonFiles;
+  }
+  const duplicates = Object.keys(caseFiles).filter((key) => Object.hasOwn(commonFiles, key));
+  if (duplicates.length > 0) {
+    throw new ConfigError(
+      `case "${caseName}" in ${file} repeats files destination${duplicates.length === 1 ? "" : "s"} from the common part: ${duplicates.join(", ")}; common and case files entries must be disjoint`,
+    );
+  }
+  return { ...commonFiles, ...caseFiles };
+}
+
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 /** Load a standalone implementation object using the same YAML and placeholder rules as cases. */

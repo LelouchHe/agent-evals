@@ -246,6 +246,57 @@ test("common and selected case fields are disjoint at the top level", async (t) 
   await expectConfigError(() => loadCase(nestedRunner, { caseName: "one" }), /disjoint/);
 });
 
+test("top-level and case files merge when their destinations are disjoint and reject duplicate keys", async (t) => {
+  const { path: merged } = await writeDocument(t, [
+    "input: task",
+    "files:",
+    "  .agents/skills: ../..",
+    "checks:",
+    "  - $type: file",
+    "    path: hello.txt",
+    "    exists: false",
+    "runner:",
+    "  $type: noop",
+    "cases:",
+    "  plain: {}",
+    "  with-vault:",
+    "    files:",
+    "      ~/mine/space: fixtures/vault",
+  ]);
+  const plain = await loadCase(merged, { caseName: "plain" });
+  assert.deepEqual(plain.config.files, { ".agents/skills": "../.." });
+
+  const withVault = await loadCase(merged, { caseName: "with-vault" });
+  assert.deepEqual(withVault.config.files, {
+    ".agents/skills": "../..",
+    "~/mine/space": "fixtures/vault",
+  });
+
+  const { path: duplicate } = await writeDocument(
+    t,
+    [
+      "input: task",
+      "files:",
+      "  .agents/skills: ../..",
+      "checks:",
+      "  - $type: file",
+      "    path: hello.txt",
+      "    exists: false",
+      "runner:",
+      "  $type: noop",
+      "cases:",
+      "  overlap:",
+      "    files:",
+      "      .agents/skills: other",
+    ],
+    "duplicate-files.yml",
+  );
+  await expectConfigError(
+    () => loadCase(duplicate, { caseName: "overlap" }),
+    /repeats files destination from the common part: \.agents\/skills/,
+  );
+});
+
 test("incomplete common or case fragments are allowed only when the combination is complete", async (t) => {
   const { path: completeCombination } = await writeDocument(t, [
     "input: task",
