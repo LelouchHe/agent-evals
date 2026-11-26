@@ -29,7 +29,7 @@ mod windows_impl {
     use std::time::{SystemTime, UNIX_EPOCH};
 
     use windows_sys::Win32::Foundation::{
-        CloseHandle, GetLastError, LocalFree, BOOL, ERROR_SUCCESS, FALSE, HANDLE, HLOCAL,
+        CloseHandle, GetLastError, LocalFree, BOOL, ERROR_SUCCESS, HANDLE, HLOCAL,
         INVALID_HANDLE_VALUE, S_OK, TRUE, WAIT_OBJECT_0,
     };
     use windows_sys::Win32::Security::Authorization::{
@@ -42,7 +42,7 @@ mod windows_impl {
     };
     use windows_sys::Win32::Security::{
         CreateWellKnownSid, FreeSid, WinCapabilityInternetClientSid, ACL,
-        DACL_SECURITY_INFORMATION, NO_INHERITANCE, PSID, SECURITY_CAPABILITIES, SE_GROUP_ENABLED,
+        DACL_SECURITY_INFORMATION, NO_INHERITANCE, PSID, SECURITY_CAPABILITIES,
         SID_AND_ATTRIBUTES, SUB_CONTAINERS_AND_OBJECTS_INHERIT,
     };
     use windows_sys::Win32::Storage::FileSystem::{
@@ -66,6 +66,7 @@ mod windows_impl {
     };
 
     const HRESULT_ALREADY_EXISTS: i32 = 0x8007_00B7u32 as i32;
+    const SE_GROUP_ENABLED: u32 = 0x0000_0004;
 
     static ACTIVE_JOB: AtomicIsize = AtomicIsize::new(0);
 
