@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto";
-import { cp, lstat, mkdir, realpath, rm, stat } from "node:fs/promises";
+import { copyFile, cp, lstat, mkdir, readdir, realpath, rm, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { assertSeatbeltAvailable } from "../platform/macos/policy.ts";
@@ -28,10 +28,12 @@ import {
   type TraceEntry,
 } from "./registry.ts";
 import {
+  classifyOutcome,
   createResultDirectory,
   newRunId,
   writeResult,
   type EvaluationRecord,
+  type RetainArtifacts,
   type RunStatus,
   type RunnerStatus,
 } from "./results.ts";
@@ -61,6 +63,7 @@ export interface RunRequest {
   readonly case: ResolvedCase;
   readonly registry: Registry;
   readonly resultsDir: string;
+  readonly retain?: RetainArtifacts;
   readonly signal?: AbortSignal;
   /** Parent directory for the temporary run root. Tests use this to inspect cleanup. */
   readonly tempParent?: string;
@@ -181,6 +184,9 @@ export async function executeEvaluation(prepared: PreparedEvaluation): Promise<E
 
   let runner: Runner | undefined;
   let cleanup: EvaluationRecord["cleanup"] = { status: "removed" };
+  let artifacts: EvaluationRecord["artifacts"] | undefined;
+  let protectedPaths: readonly string[] = registered.runner.homeFiles ?? [];
+  const protectedIdentities: string[] = [];
   let runnerRecord: EvaluationRecord["runner"] = {
     type: registered.runnerType,
     status: "error",
@@ -195,10 +201,11 @@ export async function executeEvaluation(prepared: PreparedEvaluation): Promise<E
   let mockFailed = false;
   const diagnostics: string[] = [];
   let error: string | undefined;
-  let status: RunStatus;
+  let status: RunStatus = "error";
   let timedOut = false;
   let stopFailed = false;
   let timer: NodeJS.Timeout | undefined;
+  let paths: Awaited<ReturnType<typeof createResultDirectory>> | undefined;
 
   try {
     await Promise.all([
@@ -236,10 +243,10 @@ export async function executeEvaluation(prepared: PreparedEvaluation): Promise<E
       signal: abort.signal,
     };
     runner = registered.runner;
-    const protectedPaths = (await runner.prepareHome?.(context)) ?? [];
+    const preparedProtected = (await runner.prepareHome?.(context)) ?? [];
+    protectedPaths = [...new Set([...protectedPaths, ...preparedProtected])];
     // Login state is protected by the file the filesystem actually holds at each declared
     // path, so a differently-cased or otherwise normalised spelling cannot alias it.
-    const protectedIdentities: string[] = [];
     for (const path of protectedPaths) {
       try {
         const info = await lstat(join(homeDir, path), { bigint: true });
@@ -406,6 +413,21 @@ export async function executeEvaluation(prepared: PreparedEvaluation): Promise<E
         diagnostics.push(`failed to close mock host: ${errorMessage(caught)}`);
       }
     }
+    if (shouldRetain(request.retain ?? "none", status, request.case.config.expect)) {
+      try {
+        paths = await createResultDirectory(request.resultsDir, runId);
+        const artifactsDir = join(paths.directory, "artifacts");
+        await retainRunArtifacts(workspaceDir, homeDir, artifactsDir, {
+          paths: protectedPaths,
+          identities: protectedIdentities,
+        });
+        artifacts = { status: "retained", path: "artifacts" };
+      } catch (caught) {
+        const message = errorMessage(caught);
+        artifacts = { status: "failed", error: message };
+        diagnostics.push(`failed to retain artifacts: ${message}`);
+      }
+    }
     try {
       await rm(root, { recursive: true, force: true, maxRetries: 3 });
     } catch (caught) {
@@ -434,11 +456,84 @@ export async function executeEvaluation(prepared: PreparedEvaluation): Promise<E
     ...(error === undefined ? {} : { error }),
     diagnostics: boundedDiagnostics(diagnostics),
     cleanup,
+    ...(artifacts === undefined ? {} : { artifacts }),
   };
 
-  const paths = await createResultDirectory(request.resultsDir, runId);
+  paths ??= await createResultDirectory(request.resultsDir, runId);
   await writeResult(paths, record, trace, mockRecords);
   return record;
+}
+
+function shouldRetain(retain: RetainArtifacts, status: RunStatus, expect: ResolvedCase["config"]["expect"]): boolean {
+  if (retain === "all") return true;
+  if (retain === "none") return false;
+  const outcome = classifyOutcome(status, expect);
+  return outcome !== "pass" && outcome !== "expected-fail" && outcome !== "cancelled";
+}
+
+interface HomeExclusion {
+  readonly paths: readonly string[];
+  readonly identities: readonly string[];
+}
+
+async function retainRunArtifacts(
+  workspaceDir: string,
+  homeDir: string,
+  artifactsDir: string,
+  excludeHome: HomeExclusion,
+): Promise<void> {
+  await mkdir(artifactsDir, { recursive: true, mode: 0o700 });
+  await retainTree(workspaceDir, join(artifactsDir, "workspace"));
+  await retainTree(homeDir, join(artifactsDir, "home"), excludeHome);
+}
+
+async function retainTree(sourceDir: string, destinationDir: string, exclude?: HomeExclusion): Promise<void> {
+  const excludedPaths = (exclude?.paths ?? []).map((entry) => normalizeExcludedPath(entry));
+  const excludedIdentities = new Set(exclude?.identities ?? []);
+
+  const walk = async (currentSource: string, currentDest: string, relPrefix: string): Promise<void> => {
+    let entries;
+    try {
+      entries = await readdir(currentSource, { withFileTypes: true });
+    } catch (caught) {
+      if (isMissing(caught)) return;
+      throw caught;
+    }
+    await mkdir(currentDest, { recursive: true, mode: 0o700 });
+    for (const entry of entries) {
+      const rel = relPrefix.length === 0 ? entry.name : `${relPrefix}/${entry.name}`;
+      if (isExcludedPath(rel, excludedPaths)) continue;
+      const srcPath = join(currentSource, entry.name);
+      let info;
+      try {
+        info = await lstat(srcPath, { bigint: true });
+      } catch (caught) {
+        if (isMissing(caught)) continue;
+        throw caught;
+      }
+      if (info.isFile()) {
+        if (excludedIdentities.has(fileIdentity(info))) continue;
+        await copyFile(srcPath, join(currentDest, entry.name));
+      } else if (info.isDirectory()) {
+        await walk(srcPath, join(currentDest, entry.name), rel);
+      }
+      // Symlinks, sockets, FIFOs and devices are skipped so an agent-created link can never
+      // pull host files into the retained results directory.
+    }
+  };
+
+  await walk(sourceDir, destinationDir, "");
+}
+
+function normalizeExcludedPath(path: string): string {
+  const trimmed = path.replaceAll("\\", "/").replace(/^\/+/u, "").replace(/\/+$/u, "");
+  return process.platform === "darwin" ? trimmed.toLowerCase() : trimmed;
+}
+
+function isExcludedPath(relativePath: string, excludedPaths: readonly string[]): boolean {
+  if (excludedPaths.length === 0) return false;
+  const candidate = process.platform === "darwin" ? relativePath.toLowerCase() : relativePath;
+  return excludedPaths.some((excluded) => candidate === excluded || candidate.startsWith(`${excluded}/`));
 }
 
 async function prepareImplementations(

@@ -13,7 +13,7 @@ import { createEnvSource } from "./engine/env-source.ts";
 import { addChecker, addRunner, createRegistry, loadTrustedImplementations } from "./engine/registry.ts";
 import { executeEvaluation, prepareEvaluation, type PreparedEvaluation } from "./engine/run.ts";
 import { formatMatrix, formatReport } from "./engine/report.ts";
-import { runOutcome, type EvaluationRecord } from "./engine/results.ts";
+import { runOutcome, type EvaluationRecord, type RetainArtifacts } from "./engine/results.ts";
 import { describePlacement } from "./engine/placement.ts";
 import { formatResolvedCase } from "./engine/view.ts";
 import { piRunner } from "./runners/pi/index.ts";
@@ -34,6 +34,7 @@ Options:
   --case <name>            Named case to select (required by view for files with cases)
   --reps <n>               Repeat each selected case n times (default: 1)
   --jobs <n>               Maximum concurrent runs (default: 1)
+  --retain <mode>          Retain workspace and home (excluding login): none, on-failure, all (default: none)
   --results-dir <path>     Where run records are written (default: .agent-evals)
   --extension-dir <path>   Trusted extension root, one implementation per subdirectory (repeatable)
   --files                  With view: list every placed and excluded path
@@ -55,6 +56,7 @@ interface CliOptions {
   readonly matrix: boolean;
   readonly reps: number;
   readonly jobs: number;
+  readonly retain: RetainArtifacts;
   /** Additional paths for `report`; the first one is `configPath`. */
   readonly extraPaths: readonly string[];
 }
@@ -151,7 +153,16 @@ async function runCommand(options: CliOptions): Promise<number> {
     const prepared: PreparedEvaluation[] = [];
     for (let rep = 0; rep < options.reps; rep += 1) {
       for (const entry of cases) {
-        prepared.push(await prepareEvaluation({ case: entry, registry, resultsDir, signal: abort.signal, envSource }));
+        prepared.push(
+          await prepareEvaluation({
+            case: entry,
+            registry,
+            resultsDir,
+            retain: options.retain,
+            signal: abort.signal,
+            envSource,
+          }),
+        );
       }
     }
 
@@ -218,6 +229,7 @@ function parseArguments(argv: readonly string[]): CliOptions {
         matrix: { type: "boolean" },
         reps: { type: "string" },
         jobs: { type: "string" },
+        retain: { type: "string" },
         help: { type: "boolean", short: "h" },
       },
     });
@@ -249,7 +261,8 @@ function parseArguments(argv: readonly string[]): CliOptions {
       values["results-dir"] !== undefined ||
       values["extension-dir"] !== undefined ||
       values.reps !== undefined ||
-      values.jobs !== undefined)
+      values.jobs !== undefined ||
+      values.retain !== undefined)
   ) {
     throw new ConfigError(`${command} accepts only an agent configuration file, not case or run options`);
   }
@@ -259,9 +272,10 @@ function parseArguments(argv: readonly string[]): CliOptions {
     (values["results-dir"] !== undefined ||
       extensionDirs.length > 0 ||
       values.reps !== undefined ||
-      values.jobs !== undefined)
+      values.jobs !== undefined ||
+      values.retain !== undefined)
   ) {
-    throw new ConfigError("view does not accept --results-dir, --extension-dir, --reps or --jobs");
+    throw new ConfigError("view does not accept --results-dir, --extension-dir, --reps, --jobs or --retain");
   }
   if (command !== "view" && values.files === true) {
     throw new ConfigError("--files applies only to view");
@@ -275,12 +289,14 @@ function parseArguments(argv: readonly string[]): CliOptions {
       values["results-dir"] !== undefined ||
       values["extension-dir"] !== undefined ||
       values.reps !== undefined ||
-      values.jobs !== undefined)
+      values.jobs !== undefined ||
+      values.retain !== undefined)
   ) {
     throw new ConfigError("report accepts only results directories");
   }
   const reps = values.reps === undefined ? 1 : expectPositiveInt(values.reps, "--reps");
   const jobs = values.jobs === undefined ? 1 : expectPositiveInt(values.jobs, "--jobs");
+  const retain = values.retain === undefined ? "none" : expectRetain(values.retain);
 
   return {
     command,
@@ -292,6 +308,7 @@ function parseArguments(argv: readonly string[]): CliOptions {
     matrix: values.matrix === true,
     reps,
     jobs,
+    retain,
     extraPaths: unexpected.map((path) => resolve(path)),
   };
 }
@@ -303,6 +320,13 @@ function expectPositiveInt(value: string, flag: string): number {
     throw new ConfigError(`${flag} must be a positive integer, got ${JSON.stringify(value)}`);
   }
   return count;
+}
+
+function expectRetain(value: string): RetainArtifacts {
+  if (value !== "none" && value !== "on-failure" && value !== "all") {
+    throw new ConfigError(`--retain must be "none", "on-failure", or "all", got ${JSON.stringify(value)}`);
+  }
+  return value;
 }
 
 /**
@@ -371,6 +395,9 @@ function printRecord(record: EvaluationRecord, resultsDir: string): void {
   }
   if (record.error !== undefined) {
     lines.push(`  error: ${record.error}`);
+  }
+  if (record.artifacts?.status === "retained" && record.artifacts.path !== undefined) {
+    lines.push(`  artifacts: ${join(resultsDir, record.runId, record.artifacts.path)}`);
   }
   lines.push(`  results: ${join(resultsDir, record.runId, "result.json")}`);
   process.stdout.write(lines.join("\n") + "\n");
