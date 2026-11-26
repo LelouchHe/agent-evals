@@ -72,15 +72,31 @@ export function createSandboxPolicy(options: CreateSandboxPolicyOptions): Sandbo
 
 export function buildWindowsWorkloadEnv(env: NodeJS.ProcessEnv): Record<string, string> {
   const result: Record<string, string> = {};
+  const seenLower = new Set<string>();
   for (const [key, value] of Object.entries(env)) {
     if (value === undefined) continue;
     if (key.includes("\0") || key.includes("=") || value.includes("\0")) {
       throw new Error(`invalid environment variable "${key}": NUL bytes and '=' in keys are not allowed`);
     }
     result[key] = value;
+    seenLower.add(key.toLowerCase());
   }
-  if (!Object.keys(result).some((k) => k.toLowerCase() === "systemroot")) {
-    result.SystemRoot = SYSTEM_ROOT;
-  }
+  const setDefault = (key: string, value: string): void => {
+    if (!seenLower.has(key.toLowerCase())) {
+      result[key] = value;
+      seenLower.add(key.toLowerCase());
+    }
+  };
+  const systemDrive = process.env.SystemDrive ?? SYSTEM_ROOT.slice(0, 2);
+  const userProfile = result.USERPROFILE ?? result.HOME ?? result.TEMP ?? result.TMP ?? SYSTEM_ROOT;
+  setDefault("SystemRoot", SYSTEM_ROOT);
+  setDefault("WINDIR", SYSTEM_ROOT);
+  setDefault("SystemDrive", systemDrive);
+  setDefault("ComSpec", join(SYSTEM_ROOT, "System32", "cmd.exe"));
+  setDefault("PATHEXT", ".COM;.EXE;.BAT;.CMD");
+  setDefault("USERPROFILE", userProfile);
+  setDefault("LOCALAPPDATA", join(userProfile, "AppData", "Local"));
+  setDefault("APPDATA", join(userProfile, "AppData", "Roaming"));
+  setDefault("PATH", SYSTEM_PATH.join(";"));
   return result;
 }
