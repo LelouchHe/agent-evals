@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { delimiter, dirname, join } from "node:path";
 import { test, type TestContext } from "node:test";
 import { setTimeout as delay } from "node:timers/promises";
 import { stringify } from "yaml";
@@ -10,7 +10,7 @@ import { addChecker, addRunner, createRegistry } from "../src/engine/registry.ts
 import { runEvaluation } from "../src/engine/run.ts";
 import { acpRunner } from "../src/runners/acp/index.ts";
 import { makeAcpAgent } from "./helpers/acp-agent.ts";
-import { isSandboxPlatformSupported } from "../src/platform/index.ts";
+import { isSandboxPlatformSupported, SYSTEM_PATH } from "../src/platform/index.ts";
 
 const INPUT = "Write the answer.";
 
@@ -80,7 +80,7 @@ test(
     // The agent file's environment reaches the process; ${TMPDIR} is the process's TMPDIR.
     const [declared, tmpdir] = (await readFile(join(fixture.login, ".auth/environment"), "utf8")).split("|");
     assert.equal(declared, `${tmpdir}/declared`);
-    assert.match(tmpdir ?? "", /\/run-[0-9a-f]{12}\/tmp$/);
+    assert.match(tmpdir ?? "", /[/\\]run-[0-9a-f]{12}[/\\]tmp$/);
     assert.deepEqual(await readdir(fixture.runtime), []);
   },
 );
@@ -108,8 +108,9 @@ test(
     };
     const runRoot = dirname(probe.home);
     // PATH goes through the run-root link, so the agent sees a run-root path and no HOME bin.
-    assert.ok(probe.path.startsWith(`${runRoot}/deps/bin:/usr/bin:/bin:`), probe.path);
-    assert.equal(probe.agent_bin, `${runRoot}/deps/bin/agent`);
+    const expectedPathPrefix = [join(runRoot, "deps", "bin"), ...SYSTEM_PATH].join(delimiter);
+    assert.equal(probe.path, expectedPathPrefix);
+    assert.equal(probe.agent_bin, join(runRoot, "deps", "bin", process.platform === "win32" ? "agent.cmd" : "agent"));
     // Writes reach the three agent-writable directories only.
     assert.equal(probe.home_write, 1);
     assert.equal(probe.workspace_write, 1);

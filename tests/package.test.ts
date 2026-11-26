@@ -235,7 +235,9 @@ test(
     const packageRoot = join(packDir, "package");
     const mocksModule = pathToFileURL(join(packageRoot, "dist", "engine", "mocks.js"));
     const platformModule = pathToFileURL(join(packageRoot, "dist", "platform", "index.js"));
-    const { mockForwarderSpec } = (await import(platformModule.href)) as typeof import("../src/platform/index.ts");
+    const { mockForwarderSpec, wrapExecutableCommand } = (await import(
+      platformModule.href
+    )) as typeof import("../src/platform/index.ts");
     const spec = mockForwarderSpec();
     const { realpath } = await import("node:fs/promises");
     const expectedPlatformDir = await realpath(join(packageRoot, "dist", "platform"));
@@ -281,7 +283,11 @@ test(
 
     const calls = [];
     for (const args of [["--now", ""], ["next"]]) {
-      calls.push(await callForwarder(join(host.wiring.forwarderDir, "release"), args));
+      const [cmd, ...cmdArgs] = wrapExecutableCommand(
+        join(host.wiring.forwarderDir, spec.targetFileName("release")),
+        args,
+      );
+      calls.push(await callForwarder(cmd, cmdArgs));
     }
     const { records: mockRecords } = await closeHost();
 

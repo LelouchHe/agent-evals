@@ -114,11 +114,12 @@ export const windowsBackend: PlatformBackend = {
   },
 
   spawnShellLookup(command: string, cwd: string): ShellLookupHandle {
-    const child = spawn(process.env.ComSpec ?? "cmd.exe", ["/d", "/c", command], {
+    const child = spawn(process.env.ComSpec ?? "cmd.exe", ["/d", "/c", `"${command}"`], {
       cwd,
       env: process.env,
       stdio: ["ignore", "pipe", "pipe"],
       windowsHide: true,
+      windowsVerbatimArguments: true,
     });
     return {
       child,

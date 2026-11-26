@@ -105,6 +105,7 @@ test(
       {
         type: "win-mock-probe",
         params: z.strictObject({}),
+        mocks: true,
         async create() {
           return {
             async run(ctx) {

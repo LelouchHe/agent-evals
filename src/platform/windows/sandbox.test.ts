@@ -113,7 +113,7 @@ test(
 
 test(
   "Windows sandbox-user supports piped & ignored child stdio (cmd.exe & PowerShell)",
-  { skip: !IS_WINDOWS },
+  { skip: !IS_WINDOWS, timeout: 60_000 },
   async (t) => {
     const root = await makeNeutralRunRoot("ae-win-pipe-");
     t.after(() => rm(root, { recursive: true, force: true }));
