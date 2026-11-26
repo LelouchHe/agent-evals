@@ -6,7 +6,12 @@ import { join, resolve } from "node:path";
 import { PassThrough } from "node:stream";
 import { setTimeout as delay } from "node:timers/promises";
 import type { SpawnSupervisedOptions, SupervisedProcess } from "../types.ts";
-import { buildWindowsWorkloadEnv, winSandboxCredentialsPath, winSandboxExecutablePath } from "./policy.ts";
+import {
+  buildWindowsWorkloadEnv,
+  resolveWindowsCommand,
+  winSandboxCredentialsPath,
+  winSandboxExecutablePath,
+} from "./policy.ts";
 
 export async function spawnSupervised(options: SpawnSupervisedOptions): Promise<SupervisedProcess> {
   const helper = winSandboxExecutablePath();
@@ -54,12 +59,14 @@ export async function spawnSupervised(options: SpawnSupervisedOptions): Promise<
     });
   }
 
+  const workloadEnv = buildWindowsWorkloadEnv(options.env);
+  const resolvedCmd = resolveWindowsCommand(program, args, workloadEnv);
   const configPath = join(options.policyDirectory, `win-sandbox-${randomUUID()}.json`);
   const config = {
-    command: program,
-    args,
+    command: resolvedCmd.command,
+    args: [...resolvedCmd.args],
     cwd: resolve(options.cwd),
-    env: buildWindowsWorkloadEnv(options.env),
+    env: workloadEnv,
     writableRoots: options.policy.writableRoots,
     readableRoots: options.policy.readableRoots,
     writableFiles: options.policy.writableFiles ?? [],

@@ -1,6 +1,6 @@
 import { execFileSync } from "node:child_process";
-import { accessSync, constants } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { accessSync, constants, statSync } from "node:fs";
+import { delimiter, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { CreateSandboxPolicyOptions, SandboxPolicy } from "../types.ts";
 
@@ -121,4 +121,44 @@ export function buildWindowsWorkloadEnv(env: NodeJS.ProcessEnv): Record<string, 
   setDefault("APPDATA", join(userProfile, "AppData", "Roaming"));
   setDefault("PATH", SYSTEM_PATH.join(";"));
   return result;
+}
+
+/**
+ * Resolve a bare program name against the workload's PATH (including `.exe`/`.cmd`/`.bat`)
+ * and wrap `.cmd`/`.bat` shims with `cmd.exe /d /c` because Win32 `CreateProcessAsUserW`
+ * cannot execute batch files directly.
+ */
+export function resolveWindowsCommand(
+  program: string,
+  args: readonly string[],
+  env: Readonly<Record<string, string>>,
+): { readonly command: string; readonly args: readonly string[] } {
+  const comSpec = env.ComSpec ?? join(SYSTEM_ROOT, "System32", "cmd.exe");
+  const isRegular = (p: string): boolean => {
+    try {
+      return statSync(p).isFile();
+    } catch {
+      return false;
+    }
+  };
+  let resolved = program;
+  if (!program.includes("\\") && !program.includes("/")) {
+    const pathKey = Object.keys(env).find((k) => k.toLowerCase() === "path");
+    const pathVal = pathKey === undefined ? "" : (env[pathKey] ?? "");
+    const exts = /\.[a-z0-9]+$/iu.test(program) ? [""] : [".exe", ".cmd", ".bat", ".com", ""];
+    outer: for (const dir of pathVal.split(delimiter)) {
+      if (dir.length === 0) continue;
+      for (const ext of exts) {
+        const candidate = join(dir, `${program}${ext}`);
+        if (isRegular(candidate)) {
+          resolved = candidate;
+          break outer;
+        }
+      }
+    }
+  }
+  if (/\.(?:cmd|bat)$/iu.test(resolved)) {
+    return { command: comSpec, args: ["/d", "/c", resolved, ...args] };
+  }
+  return { command: resolved, args };
 }
