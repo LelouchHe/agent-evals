@@ -1,0 +1,31 @@
+name: Windows Sandbox PoC
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - "poc/windows-sandbox"
+
+jobs:
+  windows-poc:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "24"
+          cache: npm
+
+      - name: Build win-sandbox.exe (Rust)
+        working-directory: native/win-sandbox
+        run: cargo build --release
+
+      - name: Install Node dependencies
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Run Windows sandbox PoC & fake agent tests
+        run: node --test --test-timeout=30000 src/platform/windows/sandbox.test.ts
