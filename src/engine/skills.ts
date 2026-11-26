@@ -1,5 +1,6 @@
 import { realpath } from "node:fs/promises";
-import { basename, dirname, isAbsolute, join, resolve } from "node:path";
+import { basename, dirname, isAbsolute, join, parse as parsePath, resolve } from "node:path";
+import { caseInsensitivePaths } from "../platform/index.ts";
 import { parse } from "yaml";
 import type { TraceEntry } from "./registry.ts";
 import { readRunFile, type RunRoot } from "./workspace.ts";
@@ -231,16 +232,23 @@ async function canonicalExternalPath(target: string): Promise<string> {
  * Walking from `/` downward finds the host's root before entering any of its children.
  */
 async function relativeWithin(rootPath: string, target: string): Promise<string | undefined> {
-  const segments = resolve(target).split("/").filter(Boolean);
-  let probe = "/";
+  const resolved = resolve(target);
+  const root = parsePath(resolved).root;
+  const segments = resolved
+    .slice(root.length)
+    .split(/[\\/]+/)
+    .filter(Boolean);
+  const matchesRoot = (candidate: string): boolean =>
+    caseInsensitivePaths ? candidate.toLowerCase() === rootPath.toLowerCase() : candidate === rootPath;
+  let probe = root;
   for (const [index, segment] of segments.entries()) {
     probe = join(probe, segment);
     const rest = segments.slice(index + 1);
-    if (probe === rootPath) {
+    if (matchesRoot(probe)) {
       return rest.length === 0 ? undefined : join(...rest);
     }
     try {
-      if ((await realpath(probe)) === rootPath) {
+      if (matchesRoot(await realpath(probe))) {
         return rest.length === 0 ? undefined : join(...rest);
       }
     } catch {

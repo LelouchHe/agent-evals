@@ -64,7 +64,10 @@ export interface MockHostOptions {
 export async function startMockHost(options: MockHostOptions): Promise<MockHost> {
   const forwarderDir = options.mocksDir;
   // A Unix socket path is limited to about 100 bytes, so it cannot live under the run root.
-  const socketPath = join(tmpdir(), `${basename(options.runRootDir)}.sock`);
+  const socketPath =
+    process.platform === "win32"
+      ? `\\\\.\\pipe\\agent-evals-mock-${basename(options.runRootDir)}`
+      : join(tmpdir(), `${basename(options.runRootDir)}.sock`);
   const faultPath = join(options.tmpDir, ".forward-fault");
   // The template lives in engine-private state; only its hard links are runnable in mocks/.
   const scriptPath = join(options.engineDir, "forward");
@@ -198,7 +201,9 @@ export async function startMockHost(options: MockHostOptions): Promise<MockHost>
     }
     for (const socket of sockets) socket.destroy();
     await closed;
-    await rm(socketPath, { force: true });
+    if (process.platform !== "win32") {
+      await rm(socketPath, { force: true });
+    }
     faults.push(...(await transportFaults(faultPath)));
     return { records: [...records], faults: [...faults] };
   }
