@@ -146,6 +146,60 @@ test("Windows AppContainer blocks outbound network when allowNetwork is false", 
   assert.ok(stdout.startsWith("ERROR:"), `expected network denial error, got: ${stdout}`);
 });
 
+test("Windows AppContainer allows outbound network when allowNetwork is true", { skip: !IS_WINDOWS }, async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "ae-win-net-allow-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+
+  const workspace = join(root, "workspace");
+  const engine = join(root, "engine");
+  await Promise.all([mkdir(workspace), mkdir(engine)]);
+
+  const script = `
+    const net = require("node:net");
+    const socket = net.connect({ host: "1.1.1.1", port: 443, timeout: 5000 });
+    socket.on("connect", () => {
+      process.stdout.write("CONNECTED");
+      socket.destroy();
+      process.exit(0);
+    });
+    socket.on("error", (err) => {
+      process.stdout.write("ERROR:" + (err.code || err.message));
+      process.exit(0);
+    });
+    socket.on("timeout", () => {
+      process.stdout.write("TIMEOUT");
+      socket.destroy();
+      process.exit(0);
+    });
+  `;
+
+  const policy = createSandboxPolicy({
+    writableRoots: [workspace],
+    readableRoots: [],
+    readableFiles: [process.execPath],
+    allowNetwork: true,
+    interactive: false,
+  });
+
+  const proc = await spawnSupervised({
+    policy,
+    policyDirectory: engine,
+    command: [process.execPath, "-e", script],
+    cwd: workspace,
+    env: { TEMP: workspace, TMP: workspace },
+    interactive: false,
+  });
+
+  const [stdout, stderr, code] = await Promise.all([
+    collectOutput(proc.child.stdout),
+    collectOutput(proc.child.stderr),
+    proc.completion,
+  ]);
+
+  assert.equal(code, 0, `stderr: ${stderr}`);
+  assert.equal(stdout, "CONNECTED", `expected outbound TCP connection, got: ${stdout}`);
+});
+
 test("Windows Job Object kills backgrounded descendants on exit", { skip: !IS_WINDOWS }, async (t) => {
   const root = await mkdtemp(join(tmpdir(), "ae-win-job-"));
   t.after(() => rm(root, { recursive: true, force: true }));
@@ -156,8 +210,10 @@ test("Windows Job Object kills backgrounded descendants on exit", { skip: !IS_WI
 
   const script = `
     const { spawn } = require("node:child_process");
-    const child = spawn(process.execPath, ["-e", "setTimeout(() => {}, 60000)"], {
+    const cmd = process.env.ComSpec || "C:\\\\Windows\\\\System32\\\\cmd.exe";
+    const child = spawn(cmd, ["/d", "/c", "ping -n 60 127.0.0.1 >nul"], {
       stdio: "ignore",
+      windowsHide: true,
     });
     child.unref();
     process.stdout.write(String(child.pid));
