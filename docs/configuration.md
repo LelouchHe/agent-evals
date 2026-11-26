@@ -111,21 +111,26 @@ A multi-case document is one invocation, but every case is an ordinary run: it v
 - **Output is one line per executed case:** `<case name>: <status> <result.json path>`. `--case` keeps the single-run report instead.
 - **Exit status is 0 only when every case passed**, 1 when checks failed, and 2 when a case ended as `error`, `timeout` or `cancelled`. A cancelled sweep also prints how many cases did not run.
 
-**Composition is a disjoint top-level union (with `files` merged by disjoint destination keys).** Any other field repeated between common fields and the selected entry is an error, even with equal values or different nested fields. Common `runner` and case-local `runner` cannot coexist; common `files` and case-local `files` may coexist when they declare disjoint destination keys (repeating the same destination key is an error). Siblings are independent; put the complete varying field in each case. There is no recursive merge, override, array append or deletion operator. Names have no built-in skill/comparison behavior and are never result-directory paths.
+**Composition follows one rule based on field type: collection fields form an additive union (never overwriting), and single-value fields are replaced whole by the case.**
+
+- **Collection fields** (`files`, `checks`, `mocks`): common and case entries combine additively — `checks` appends case checks after common checks, while keyed collections (`files` destinations, `mocks.shell` targets) require disjoint keys and reject duplicates as configuration errors.
+- **Single-value fields** (`input`, `runner`, `fixture`, `timeoutMs`, `expect`): the top-level value is the default for every case, and a case that declares the field replaces it as a whole (no partial nested merge).
+
+Siblings are independent, and there is no recursive merge or deletion operator. `agent-evals view` prints the resolved YAML with inline `# <file>:<line>` comments showing each single-value field's or collection entry's exact source line. Names have no built-in skill/comparison behavior and are never result-directory paths.
 
 ## Common Fields and Parsing
 
-| Field       | Contract                                                                                                                                                |
-| ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `input`     | Required non-empty initial user message.                                                                                                                |
-| `runner`    | Required implementation record.                                                                                                                         |
-| `checks`    | Required non-empty list of implementation records.                                                                                                      |
-| `fixture`   | Optional directory relative to this YAML, copied into the workspace root. Omission starts an empty workspace.                                           |
-| `files`     | Optional mapping from a destination to an authoring file or directory, placed after the fixture; a `~/` destination places into the run HOME.           |
-| `timeoutMs` | Optional positive integer milliseconds; defaults to 300000. Bounds runner execution and is also each check's budget, not the whole run's wall time.     |
-| `mocks`     | Optional declared collaborator substitutes; see [Mocks](#mocks).                                                                                        |
-| `expect`    | Optional `pass` (default) or `fail`: whether the checks are expected to fail, as a vacuity or negative baseline. See [negative cases](#negative-cases). |
-| `cases`     | Optional document-level selection control; not passed to execution.                                                                                     |
+| Field       | Type       | In `cases`               | Contract                                                                                                                                                |
+| ----------- | ---------- | ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `input`     | value      | replaces common          | Required non-empty initial user message.                                                                                                                |
+| `runner`    | value      | replaces common (whole)  | Required implementation record.                                                                                                                         |
+| `fixture`   | value      | replaces common          | Optional directory relative to this YAML, copied into the workspace root. Omission starts an empty workspace.                                           |
+| `timeoutMs` | value      | replaces common          | Optional positive integer milliseconds; defaults to 300000. Bounds runner execution and is also each check's budget, not the whole run's wall time.     |
+| `expect`    | value      | replaces common          | Optional `pass` (default) or `fail`: whether the checks are expected to fail, as a vacuity or negative baseline. See [negative cases](#negative-cases). |
+| `files`     | collection | union (disjoint keys)    | Optional mapping from a destination to an authoring file or directory, placed after the fixture; a `~/` destination places into the run HOME.           |
+| `checks`    | collection | union (append)           | Required non-empty list of implementation records.                                                                                                      |
+| `mocks`     | collection | union (disjoint targets) | Optional declared collaborator substitutes; see [Mocks](#mocks).                                                                                        |
+| `cases`     | document   | n/a                      | Optional document-level selection control; not passed to execution.                                                                                     |
 
 Unknown common fields, invalid shapes and duplicate YAML keys are errors. There is one document/file: no `extends`, imported collections or nested `cases`. Implementation parameters may contain [placeholders](#placeholders). Null is a value, not omission or deletion.
 

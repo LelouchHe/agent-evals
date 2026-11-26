@@ -10,18 +10,24 @@ import { makeTempDir } from "./helpers/fake-pi-control.ts";
 const CLI = join(import.meta.dirname, "..", "src", "cli.ts");
 const CASE = join(import.meta.dirname, "..", "examples/cases/notes-home/case.yml");
 
-test("notes-home example resolves merged disjoint files across all arms", async () => {
+test("notes-home example resolves merged collections and runner replacement across all arms", async () => {
   const withSkill = await loadCase(CASE, { caseName: "pi-with-skill" });
   assert.deepEqual(withSkill.config.files, {
     "~/notes": "home-notes",
     ".agents/skills/notes-policy": "skill",
   });
+  assert.equal(withSkill.config.runner.$type, "acp");
+  assert.equal(withSkill.config.checks.length, 6);
+  assert.equal(withSkill.config.checks.at(-1)?.$type, "trace");
 
   const withoutSkill = await loadCase(CASE, { caseName: "pi-without-skill" });
   assert.deepEqual(withoutSkill.config.files, { "~/notes": "home-notes" });
+  assert.equal(withoutSkill.config.runner.$type, "acp");
+  assert.equal(withoutSkill.config.checks.length, 5);
 
   const baseline = await loadCase(CASE, { caseName: "baseline" });
   assert.equal(baseline.config.expect, "fail");
+  assert.equal(baseline.config.runner.$type, "noop");
   assert.deepEqual(baseline.config.files, { "~/notes": "home-notes" });
 });
 

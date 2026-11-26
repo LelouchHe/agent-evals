@@ -41,7 +41,7 @@ async function createCanaryPi(fake: FakePi): Promise<string> {
 function extractResolvedYaml(stdout: string): unknown {
   const lines = stdout.split("\n");
   const start = lines.indexOf("resolved configuration:");
-  const end = lines.indexOf("field origins:");
+  const end = lines.indexOf("placement:");
   assert.ok(start >= 0 && end > start, `unexpected view output:\n${stdout}`);
   const body = lines
     .slice(start + 1, end)
@@ -89,10 +89,10 @@ test("view succeeds without Pi or environment values and annotates common versus
   });
   assert.equal(result.code, 0, result.stderr);
   assert.match(result.stdout, /^case: "with-skill"$/m);
-  assert.match(result.stdout, new RegExp(`^  input: common ${escapeRegExp(configPath)}:1$`, "m"));
-  assert.match(result.stdout, new RegExp(`^  timeoutMs: common ${escapeRegExp(configPath)}:2$`, "m"));
-  assert.match(result.stdout, new RegExp(`^  checks: common ${escapeRegExp(configPath)}:3$`, "m"));
-  assert.match(result.stdout, new RegExp(`^  runner: case "with-skill" ${escapeRegExp(configPath)}:9$`, "m"));
+  assert.match(result.stdout, /^ {2}input: .* # case\.yml:1$/m);
+  assert.match(result.stdout, /^ {2}timeoutMs: 120000 # case\.yml:2$/m);
+  assert.match(result.stdout, /^ {4}- \$type: file # case\.yml:4$/m);
+  assert.match(result.stdout, /^ {2}runner: # case\.yml:9$/m);
   assert.doesNotMatch(result.stdout, /view-secret-value/);
   assert.doesNotMatch(result.stdout, /CANARY-LAUNCHED/);
   await assert.rejects(() => access(lookupMarker), /ENOENT/);
@@ -146,11 +146,7 @@ test("view escapes control characters in selected case labels", async (t) => {
   const expected = JSON.stringify(name);
   const lines = result.stdout.split("\n");
   assert.ok(lines.includes(`case: ${expected}`), result.stdout);
-  assert.ok(
-    lines.some((line) => line.startsWith(`  runner: case ${expected} ${configPath}:`)),
-    result.stdout,
-  );
-  assert.equal(lines.filter((line) => line === "field origins:").length, 1);
+  assert.ok(lines.includes("  runner: # case.yml:8"), result.stdout);
   assert.ok(!lines.includes("  spoof: yes"), result.stdout);
   assert.ok(!result.stdout.includes("\u0007"));
 });

@@ -85,10 +85,20 @@ export interface MocksConfig {
   readonly shell: ShellMocks;
 }
 
-/** Where one final top-level case field was declared. Nested values share this origin. */
-export type FieldOrigin =
+/** How a top-level case field composes when declared in both the common part and a named case. */
+export type FieldComposition = "replace" | "union-list" | "union-map" | "union-nested-map";
+
+/** Where a single declaration originated in a YAML document. */
+export type SourceOrigin =
   | { readonly file: string; readonly line: number; readonly kind: "common" }
   | { readonly file: string; readonly line: number; readonly kind: "case"; readonly caseName: string };
+
+/** Origin annotation matching the field's composition kind: scalar/object, list items, or map entries. */
+export type FieldOrigin =
+  | SourceOrigin
+  | { readonly kind: "list"; readonly items: readonly SourceOrigin[] }
+  | { readonly kind: "map"; readonly entries: Readonly<Record<string, SourceOrigin>> }
+  | { readonly kind: "nested-map"; readonly groups: Readonly<Record<string, Readonly<Record<string, SourceOrigin>>>> };
 
 /** Basic environment-variable name grammar used by placeholders and declared variables. */
 export const ENV_NAME_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
@@ -104,17 +114,24 @@ export interface ResolvedCase {
   readonly origins: Readonly<Record<string, FieldOrigin>>;
 }
 
+/**
+ * Single source of truth for case fields and their composition behavior:
+ * - Single-value fields (`replace`): a case replaces the common default as a whole.
+ * - Collection fields (`union-*`): common and case entries form an additive union (duplicate keys are errors).
+ */
+export const CASE_FIELDS: Readonly<Record<keyof CaseConfig, FieldComposition>> = {
+  input: "replace",
+  fixture: "replace",
+  files: "union-map",
+  timeoutMs: "replace",
+  mocks: "union-nested-map",
+  expect: "replace",
+  checks: "union-list",
+  runner: "replace",
+};
+
 /** Top-level fields allowed in a complete resolved case. */
-export const CASE_FIELD_KEYS: ReadonlySet<string> = new Set([
-  "input",
-  "fixture",
-  "files",
-  "timeoutMs",
-  "mocks",
-  "expect",
-  "checks",
-  "runner",
-]);
+export const CASE_FIELD_KEYS: ReadonlySet<string> = new Set(Object.keys(CASE_FIELDS));
 
 /** The document-level authoring control for named cases. */
 export const CASES_KEY = "cases";

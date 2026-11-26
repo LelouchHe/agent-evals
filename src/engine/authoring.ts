@@ -6,12 +6,16 @@ import { checkPlaceholders, substituteValues, type ValueSource } from "./values.
 import { isAlias, isMap, isNode, isScalar, isSeq, parseDocument, type Node, type Pair, type YAMLMap } from "yaml";
 import {
   CASES_KEY,
+  CASE_FIELDS,
   CASE_FIELD_KEYS,
   ConfigError,
   errorMessage,
   expectCaseConfig,
+  type CaseConfig,
+  type FieldComposition,
   type FieldOrigin,
   type ResolvedCase,
+  type SourceOrigin,
 } from "./config.ts";
 
 export interface CaseSelection {
@@ -60,6 +64,7 @@ export async function loadCases(path: string, selection: CaseSelection = {}): Pr
 
 interface CaseDocument {
   readonly file: string;
+  readonly text: string;
   readonly common: readonly FieldEntry[];
   readonly cases?: ReadonlyMap<string, CaseEntry>;
 }
@@ -80,37 +85,35 @@ async function readCaseDocument(path: string): Promise<CaseDocument> {
   }
 
   const cases = casesField === undefined ? undefined : parseCases(casesField, file, text);
-  return { file, common, ...(cases === undefined ? {} : { cases }) };
+  return { file, text, common, ...(cases === undefined ? {} : { cases }) };
 }
 
 function buildCase(document: CaseDocument, selected: CaseEntry | undefined): ResolvedCase {
-  const { file, common } = document;
-  if (selected !== undefined) {
-    const commonKeys = new Set(common.map((field) => field.key));
-    const shared = selected.fields
-      .filter((field) => commonKeys.has(field.key) && field.key !== "files")
-      .map((field) => field.key);
-    if (shared.length > 0) {
-      throw new ConfigError(
-        `case "${selected.name}" in ${file} repeats top-level field${shared.length === 1 ? "" : "s"} from the common part: ${shared.join(", ")}; common and selected fields must be disjoint`,
-      );
-    }
-  }
-
+  const { file, text, common } = document;
   const final: Record<string, unknown> = {};
   const origins: Record<string, FieldOrigin> = {};
   for (const field of common) {
+    const composition = fieldComposition(field.key);
     final[field.key] = fieldValue(field);
-    origins[field.key] = { file, line: field.line, kind: "common" };
+    origins[field.key] = extractFieldOrigin(composition, field, { file, line: field.line, kind: "common" }, text);
   }
   if (selected !== undefined) {
     for (const field of selected.fields) {
-      if (field.key === "files" && Object.hasOwn(final, "files")) {
-        final.files = mergeDisjointFiles(final.files, fieldValue(field), selected.name, file);
+      const composition = fieldComposition(field.key);
+      const nextValue = fieldValue(field);
+      const nextOrigin = extractFieldOrigin(
+        composition,
+        field,
+        { file, line: field.line, kind: "case", caseName: selected.name },
+        text,
+      );
+      if (Object.hasOwn(final, field.key)) {
+        final[field.key] = composeFieldValue(composition, field.key, final[field.key], nextValue, selected.name, file);
+        origins[field.key] = composeFieldOrigin(composition, origins[field.key]!, nextOrigin);
       } else {
-        final[field.key] = fieldValue(field);
+        final[field.key] = nextValue;
+        origins[field.key] = nextOrigin;
       }
-      origins[field.key] = { file, line: field.line, kind: "case", caseName: selected.name };
     }
   }
 
@@ -130,18 +133,133 @@ function buildCase(document: CaseDocument, selected: CaseEntry | undefined): Res
   };
 }
 
-function mergeDisjointFiles(commonFiles: unknown, caseFiles: unknown, caseName: string, file: string): unknown {
-  if (!isPlainRecord(commonFiles) || !isPlainRecord(caseFiles)) {
-    // Let expectCaseConfig report malformed `files` values consistently.
-    return isPlainRecord(commonFiles) ? caseFiles : commonFiles;
+function fieldComposition(key: string): FieldComposition {
+  return CASE_FIELDS[key as keyof CaseConfig];
+}
+
+function composeFieldValue(
+  composition: FieldComposition,
+  key: string,
+  commonValue: unknown,
+  caseValue: unknown,
+  caseName: string,
+  file: string,
+): unknown {
+  switch (composition) {
+    case "replace":
+      return caseValue;
+    case "union-list":
+      if (!Array.isArray(commonValue) || !Array.isArray(caseValue)) {
+        return Array.isArray(commonValue) ? caseValue : commonValue;
+      }
+      return [...commonValue, ...caseValue];
+    case "union-map":
+      return mergeDisjointMap(commonValue, caseValue, key, caseName, file);
+    case "union-nested-map": {
+      if (!isPlainRecord(commonValue) || !isPlainRecord(caseValue)) {
+        return isPlainRecord(commonValue) ? caseValue : commonValue;
+      }
+      const merged: Record<string, unknown> = { ...commonValue };
+      for (const [group, caseGroup] of Object.entries(caseValue)) {
+        merged[group] = Object.hasOwn(merged, group)
+          ? mergeDisjointMap(merged[group], caseGroup, `${key}.${group}`, caseName, file)
+          : caseGroup;
+      }
+      return merged;
+    }
   }
-  const duplicates = Object.keys(caseFiles).filter((key) => Object.hasOwn(commonFiles, key));
+}
+
+function mergeDisjointMap(
+  commonMap: unknown,
+  caseMap: unknown,
+  label: string,
+  caseName: string,
+  file: string,
+): unknown {
+  if (!isPlainRecord(commonMap) || !isPlainRecord(caseMap)) {
+    return isPlainRecord(commonMap) ? caseMap : commonMap;
+  }
+  const duplicates = Object.keys(caseMap).filter((entry) => Object.hasOwn(commonMap, entry));
   if (duplicates.length > 0) {
     throw new ConfigError(
-      `case "${caseName}" in ${file} repeats files destination${duplicates.length === 1 ? "" : "s"} from the common part: ${duplicates.join(", ")}; common and case files entries must be disjoint`,
+      `case "${caseName}" in ${file} repeats ${label} ${duplicates.length === 1 ? "entry" : "entries"} from the common part: ${duplicates.join(", ")}; common and case entries must be disjoint`,
     );
   }
-  return { ...commonFiles, ...caseFiles };
+  return { ...commonMap, ...caseMap };
+}
+
+function extractFieldOrigin(
+  composition: FieldComposition,
+  field: FieldEntry,
+  base: SourceOrigin,
+  text: string,
+): FieldOrigin {
+  switch (composition) {
+    case "replace":
+      return base;
+    case "union-list": {
+      if (!isSeq(field.node)) return base;
+      const items = field.node.items.map((item) => ({
+        ...base,
+        line: isNode(item) ? lineAt(item, text) : base.line,
+      }));
+      return { kind: "list", items };
+    }
+    case "union-map": {
+      if (!isMap(field.node)) return base;
+      return { kind: "map", entries: mapEntryOrigins(field.node, base, text) };
+    }
+    case "union-nested-map": {
+      if (!isMap(field.node)) return base;
+      const groups: Record<string, Readonly<Record<string, SourceOrigin>>> = {};
+      for (const pair of field.node.items) {
+        if (!isScalar(pair.key) || typeof pair.key.value !== "string") continue;
+        if (!isMap(pair.value)) continue;
+        groups[pair.key.value] = mapEntryOrigins(pair.value, base, text);
+      }
+      return { kind: "nested-map", groups };
+    }
+  }
+}
+
+function mapEntryOrigins(node: YAMLMap, base: SourceOrigin, text: string): Readonly<Record<string, SourceOrigin>> {
+  const entries: Record<string, SourceOrigin> = {};
+  for (const pair of node.items) {
+    if (!isScalar(pair.key) || typeof pair.key.value !== "string") continue;
+    entries[pair.key.value] = {
+      ...base,
+      line: isNode(pair.key) ? lineAt(pair.key, text) : base.line,
+    };
+  }
+  return entries;
+}
+
+function composeFieldOrigin(composition: FieldComposition, common: FieldOrigin, next: FieldOrigin): FieldOrigin {
+  switch (composition) {
+    case "replace":
+      return next;
+    case "union-list":
+      if (common.kind === "list" && next.kind === "list") {
+        return { kind: "list", items: [...common.items, ...next.items] };
+      }
+      return next;
+    case "union-map":
+      if (common.kind === "map" && next.kind === "map") {
+        return { kind: "map", entries: { ...common.entries, ...next.entries } };
+      }
+      return next;
+    case "union-nested-map": {
+      if (common.kind === "nested-map" && next.kind === "nested-map") {
+        const groups: Record<string, Readonly<Record<string, SourceOrigin>>> = { ...common.groups };
+        for (const [group, entries] of Object.entries(next.groups)) {
+          groups[group] = Object.hasOwn(groups, group) ? { ...groups[group], ...entries } : entries;
+        }
+        return { kind: "nested-map", groups };
+      }
+      return next;
+    }
+  }
 }
 
 function isPlainRecord(value: unknown): value is Record<string, unknown> {

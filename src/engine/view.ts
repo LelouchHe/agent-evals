@@ -1,5 +1,6 @@
-import { stringify } from "yaml";
-import type { ResolvedCase } from "./config.ts";
+import { basename } from "node:path";
+import { Document, isMap, isNode, isScalar, isSeq, type Pair, type YAMLMap } from "yaml";
+import type { FieldOrigin, ResolvedCase, SourceOrigin } from "./config.ts";
 import type { PlacementSummary } from "./placement.ts";
 
 export interface ViewOptions {
@@ -9,20 +10,15 @@ export interface ViewOptions {
   readonly files: boolean;
 }
 
-/** Render the declared configuration, its field origins and what it would place. */
+/** Render the resolved configuration with inline `# <file>:<line>` origins and placement. */
 export function formatResolvedCase(resolved: ResolvedCase, options: ViewOptions): string {
   const lines = [
     `configuration: ${resolved.path}`,
     `case: ${resolved.name === undefined ? "(ordinary)" : JSON.stringify(resolved.name)}`,
     "resolved configuration:",
   ];
-  for (const line of stringify(resolved.config).trimEnd().split("\n")) {
+  for (const line of formatAnnotatedConfig(resolved).trimEnd().split("\n")) {
     lines.push(`  ${line}`);
-  }
-  lines.push("field origins:");
-  for (const [field, origin] of Object.entries(resolved.origins)) {
-    const source = origin.kind === "common" ? "common" : `case ${JSON.stringify(origin.caseName)}`;
-    lines.push(`  ${field}: ${source} ${origin.file}:${origin.line}`);
   }
   lines.push("placement:");
   if (options.placement.length === 0) {
@@ -44,6 +40,78 @@ export function formatResolvedCase(resolved: ResolvedCase, options: ViewOptions)
     }
   }
   return lines.join("\n") + "\n";
+}
+
+function formatAnnotatedConfig(resolved: ResolvedCase): string {
+  const doc = new Document(resolved.config);
+  if (isMap(doc.contents)) {
+    for (const pair of doc.contents.items) {
+      if (!isScalar(pair.key) || typeof pair.key.value !== "string") continue;
+      const origin = resolved.origins[pair.key.value];
+      if (origin === undefined) continue;
+      applyOrigin(pair, origin);
+    }
+  }
+  return doc.toString();
+}
+
+function applyOrigin(pair: Pair, origin: FieldOrigin): void {
+  switch (origin.kind) {
+    case "common":
+    case "case":
+      annotatePair(pair, formatSource(origin));
+      return;
+    case "list":
+      if (!isSeq(pair.value)) return;
+      for (const [index, item] of pair.value.items.entries()) {
+        const entryOrigin = origin.items[index];
+        if (entryOrigin === undefined) continue;
+        const comment = formatSource(entryOrigin);
+        if (isMap(item) && item.items[0] !== undefined) {
+          annotatePair(item.items[0], comment);
+        } else if (isNode(item)) {
+          item.comment = comment;
+        }
+      }
+      return;
+    case "map":
+      if (!isMap(pair.value)) return;
+      annotateMap(pair.value, origin.entries);
+      return;
+    case "nested-map":
+      if (!isMap(pair.value)) return;
+      for (const groupPair of pair.value.items) {
+        if (!isScalar(groupPair.key) || typeof groupPair.key.value !== "string") continue;
+        if (!isMap(groupPair.value)) continue;
+        const entries = origin.groups[groupPair.key.value];
+        if (entries !== undefined) {
+          annotateMap(groupPair.value, entries);
+        }
+      }
+      return;
+  }
+}
+
+function annotateMap(map: YAMLMap, entries: Readonly<Record<string, SourceOrigin>>): void {
+  for (const entryPair of map.items) {
+    if (!isScalar(entryPair.key) || typeof entryPair.key.value !== "string") continue;
+    const entryOrigin = entries[entryPair.key.value];
+    if (entryOrigin !== undefined) {
+      annotatePair(entryPair, formatSource(entryOrigin));
+    }
+  }
+}
+
+function annotatePair(pair: Pair, comment: string): void {
+  if (isScalar(pair.value)) {
+    pair.value.comment = comment;
+  } else if (isNode(pair.key)) {
+    pair.key.comment = comment;
+  }
+}
+
+function formatSource(origin: SourceOrigin): string {
+  return ` ${basename(origin.file)}:${origin.line}`;
 }
 
 function count(value: number, label: string): string {

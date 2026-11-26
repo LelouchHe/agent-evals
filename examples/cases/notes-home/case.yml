@@ -1,11 +1,19 @@
-# Demonstrates HOME (`~/`) placement, disjoint top-level and case `files`
-# merging, directory-level `changed: false` restraints, and glob `path` checks.
+# Demonstrates HOME (`~/`) placement, top-level defaults with case replacement
+# (`runner`), additive collection unions (`files` and `checks`), directory-level
+# `changed: false` restraints, and glob `path` checks.
 #
 # Run with `--jobs 3 --retain on-failure` to execute all arms concurrently and
 # keep `workspace/` and `home/` (excluding login files) for any failed run.
 input: Organize today's session-notes.md into my notes directory at $HOME/notes.
 fixture: fixture
 timeoutMs: 180000
+
+# Default runner for every case; `baseline` replaces it with `$type: noop`.
+runner:
+  $type: acp
+  agent: ../../agents/pi.yml
+  config:
+    model: opencode-go/deepseek-v4.1-flash
 
 # Common `files` places user notes into the run's isolated HOME; the with-skill
 # case adds its own disjoint `.agents/skills/...` entry without repeating this.
@@ -34,22 +42,17 @@ checks:
 
 cases:
   pi-with-skill:
-    runner:
-      $type: acp
-      agent: ../../agents/pi.yml
-      config:
-        model: opencode-go/deepseek-v4.1-flash
     files:
       .agents/skills/notes-policy: skill
+    # Appended after the common checks (arm-integrity assertion).
+    checks:
+      - $type: trace
+        event: skill
+        name: notes-policy
 
-  pi-without-skill:
-    runner:
-      $type: acp
-      agent: ../../agents/pi.yml
-      config:
-        model: opencode-go/deepseek-v4.1-flash
+  pi-without-skill: {}
 
-  # Vacuity guard: runs no agent and expects the content checks to fail.
+  # Vacuity guard: replaces the default runner with `noop` and expects failure.
   baseline:
     runner:
       $type: noop
