@@ -373,7 +373,7 @@ test(
 
 test("Windows Job Object kills backgrounded descendants on exit", { skip: !IS_WINDOWS }, async (t) => {
   const root = await makeNeutralRunRoot("ae-win-job-");
-  t.after(() => rm(root, { recursive: true, force: true }));
+  t.after(() => rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }));
 
   const workspace = join(root, "workspace");
   const engine = join(root, "engine");
