@@ -6,17 +6,23 @@ import type { MockRecord, RecordedCheckResult, RunnerUsage, TraceEntry } from ".
 
 export type RunStatus = "pass" | "fail" | "error" | "timeout" | "cancelled";
 
+export type RetainArtifacts = "none" | "on-failure" | "all";
+
 /** A run read against its case's expectation; the only place `expect` changes a status's meaning. */
 export type RunOutcome = RunStatus | "expected-fail" | "unexpected-pass";
 
+export function classifyOutcome(status: RunStatus, expect: CaseConfig["expect"]): RunOutcome {
+  if (status === "pass") {
+    return expect === "fail" ? "unexpected-pass" : "pass";
+  }
+  if (status === "fail") {
+    return expect === "fail" ? "expected-fail" : "fail";
+  }
+  return status;
+}
+
 export function runOutcome(run: EvaluationRecord): RunOutcome {
-  if (run.status === "pass") {
-    return run.resolvedConfig.expect === "fail" ? "unexpected-pass" : "pass";
-  }
-  if (run.status === "fail") {
-    return run.resolvedConfig.expect === "fail" ? "expected-fail" : "fail";
-  }
-  return run.status;
+  return classifyOutcome(run.status, run.resolvedConfig.expect);
 }
 export type RunnerStatus = "completed" | "error" | "timeout" | "cancelled";
 
@@ -43,6 +49,7 @@ export interface EvaluationRecord {
   readonly error?: string;
   readonly diagnostics: readonly string[];
   readonly cleanup: { readonly status: "removed" | "failed"; readonly error?: string };
+  readonly artifacts?: { readonly status: "retained" | "failed"; readonly path?: string; readonly error?: string };
 }
 
 export interface ResultPaths {

@@ -6,12 +6,16 @@ import { checkPlaceholders, substituteValues, type ValueSource } from "./values.
 import { isAlias, isMap, isNode, isScalar, isSeq, parseDocument, type Node, type Pair, type YAMLMap } from "yaml";
 import {
   CASES_KEY,
+  CASE_FIELDS,
   CASE_FIELD_KEYS,
   ConfigError,
   errorMessage,
   expectCaseConfig,
+  type CaseConfig,
   type FieldOrigin,
+  type FieldType,
   type ResolvedCase,
+  type SourceOrigin,
 } from "./config.ts";
 
 export interface CaseSelection {
@@ -60,6 +64,7 @@ export async function loadCases(path: string, selection: CaseSelection = {}): Pr
 
 interface CaseDocument {
   readonly file: string;
+  readonly text: string;
   readonly common: readonly FieldEntry[];
   readonly cases?: ReadonlyMap<string, CaseEntry>;
 }
@@ -80,31 +85,35 @@ async function readCaseDocument(path: string): Promise<CaseDocument> {
   }
 
   const cases = casesField === undefined ? undefined : parseCases(casesField, file, text);
-  return { file, common, ...(cases === undefined ? {} : { cases }) };
+  return { file, text, common, ...(cases === undefined ? {} : { cases }) };
 }
 
 function buildCase(document: CaseDocument, selected: CaseEntry | undefined): ResolvedCase {
-  const { file, common } = document;
-  if (selected !== undefined) {
-    const commonKeys = new Set(common.map((field) => field.key));
-    const shared = selected.fields.filter((field) => commonKeys.has(field.key)).map((field) => field.key);
-    if (shared.length > 0) {
-      throw new ConfigError(
-        `case "${selected.name}" in ${file} repeats top-level field${shared.length === 1 ? "" : "s"} from the common part: ${shared.join(", ")}; common and selected fields must be disjoint`,
-      );
-    }
-  }
-
+  const { file, text, common } = document;
   const final: Record<string, unknown> = {};
   const origins: Record<string, FieldOrigin> = {};
   for (const field of common) {
+    const type = fieldType(field.key);
     final[field.key] = fieldValue(field);
-    origins[field.key] = { file, line: field.line, kind: "common" };
+    origins[field.key] = extractFieldOrigin(type, field, { file, line: field.line, kind: "common" }, text);
   }
   if (selected !== undefined) {
     for (const field of selected.fields) {
-      final[field.key] = fieldValue(field);
-      origins[field.key] = { file, line: field.line, kind: "case", caseName: selected.name };
+      const type = fieldType(field.key);
+      const nextValue = fieldValue(field);
+      const nextOrigin = extractFieldOrigin(
+        type,
+        field,
+        { file, line: field.line, kind: "case", caseName: selected.name },
+        text,
+      );
+      if (Object.hasOwn(final, field.key)) {
+        final[field.key] = composeFieldValue(type, final[field.key], nextValue);
+        origins[field.key] = composeFieldOrigin(type, origins[field.key]!, nextOrigin);
+      } else {
+        final[field.key] = nextValue;
+        origins[field.key] = nextOrigin;
+      }
     }
   }
 
@@ -122,6 +131,114 @@ function buildCase(document: CaseDocument, selected: CaseEntry | undefined): Res
     config,
     origins,
   };
+}
+
+function fieldType(key: string): FieldType {
+  return CASE_FIELDS[key as keyof CaseConfig];
+}
+
+function composeFieldValue(type: FieldType, commonValue: unknown, caseValue: unknown): unknown {
+  if (typeof type !== "string") {
+    if (!isPlainRecord(commonValue) || !isPlainRecord(caseValue)) {
+      return isPlainRecord(commonValue) ? caseValue : commonValue;
+    }
+    const merged: Record<string, unknown> = {};
+    for (const [entryKey, value] of Object.entries(commonValue)) {
+      defineOwn(merged, entryKey, value);
+    }
+    for (const [entryKey, caseEntry] of Object.entries(caseValue)) {
+      defineOwn(
+        merged,
+        entryKey,
+        Object.hasOwn(merged, entryKey) ? composeFieldValue(type.child, merged[entryKey], caseEntry) : caseEntry,
+      );
+    }
+    return merged;
+  }
+  switch (type) {
+    case "value":
+      return caseValue;
+    case "list":
+      if (!Array.isArray(commonValue) || !Array.isArray(caseValue)) {
+        return Array.isArray(commonValue) ? caseValue : commonValue;
+      }
+      return [...commonValue, ...caseValue];
+  }
+}
+
+function extractFieldOrigin(
+  type: FieldType,
+  field: { readonly node: unknown },
+  base: SourceOrigin,
+  text: string,
+): FieldOrigin {
+  if (typeof type !== "string") {
+    if (!isMap(field.node)) return base;
+    const entries: Record<string, FieldOrigin> = {};
+    for (const pair of field.node.items) {
+      if (!isScalar(pair.key) || typeof pair.key.value !== "string") continue;
+      const entryBase: SourceOrigin = {
+        ...base,
+        line: isNode(pair.key) ? lineAt(pair.key, text) : base.line,
+      };
+      defineOwn(entries, pair.key.value, extractFieldOrigin(type.child, { node: pair.value }, entryBase, text));
+    }
+    return { kind: "map", base, entries };
+  }
+  switch (type) {
+    case "value":
+      return base;
+    case "list": {
+      if (!isSeq(field.node)) return base;
+      const items = field.node.items.map((item) => ({
+        ...base,
+        line: isNode(item) ? lineAt(item, text) : base.line,
+      }));
+      return { kind: "list", base, items };
+    }
+  }
+}
+
+function composeFieldOrigin(type: FieldType, common: FieldOrigin, next: FieldOrigin): FieldOrigin {
+  if (typeof type !== "string") {
+    if (common.kind === "map" && next.kind === "map") {
+      const entries: Record<string, FieldOrigin> = {};
+      for (const [entryKey, entryOrigin] of Object.entries(common.entries)) {
+        defineOwn(entries, entryKey, entryOrigin);
+      }
+      for (const [entryKey, entryOrigin] of Object.entries(next.entries)) {
+        defineOwn(
+          entries,
+          entryKey,
+          Object.hasOwn(entries, entryKey)
+            ? composeFieldOrigin(type.child, entries[entryKey]!, entryOrigin)
+            : entryOrigin,
+        );
+      }
+      return { kind: "map", base: common.base, entries };
+    }
+    return next;
+  }
+  switch (type) {
+    case "value":
+      if ((common.kind === "common" || common.kind === "case") && (next.kind === "common" || next.kind === "case")) {
+        return { ...next, overrides: common };
+      }
+      return next;
+    case "list":
+      if (common.kind === "list" && next.kind === "list") {
+        return { kind: "list", base: common.base, items: [...common.items, ...next.items] };
+      }
+      return next;
+  }
+}
+
+function defineOwn<T>(target: Record<string, T>, key: string, value: T): void {
+  Object.defineProperty(target, key, { value, enumerable: true, writable: true, configurable: true });
+}
+
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 /** Load a standalone implementation object using the same YAML and placeholder rules as cases. */

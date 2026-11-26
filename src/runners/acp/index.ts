@@ -43,6 +43,7 @@ class AcpRunner implements Runner {
   readonly #command: readonly [string, ...string[]];
   readonly #home: HarnessHome;
   readonly homeFiles: readonly string[];
+  readonly concurrencyKey?: string;
   readonly #config: SessionConfig;
   #process: SupervisedProcess | undefined;
   #copyBack: (() => Promise<void>) | undefined;
@@ -54,6 +55,9 @@ class AcpRunner implements Runner {
     this.#command = command;
     this.#home = home;
     this.homeFiles = home.login?.files ?? [];
+    if (home.login !== undefined) {
+      this.concurrencyKey = home.login.dir;
+    }
     this.#config = config;
   }
 

@@ -81,6 +81,22 @@ test("package metadata and built runtime assets point at the sole CLI implementa
   }
 });
 
+test("--version and -V print the package version from both source and built CLI", async (t) => {
+  const pkg = JSON.parse(await readFile(join(root, "package.json"), "utf8")) as { version: string };
+  const cwd = await makeTempDir(t, "ae-version-cwd-");
+  const tempParent = await makeTempDir(t, "ae-version-tmp-");
+
+  for (const [entry, flag] of [
+    [sourceEntry, "--version"],
+    [distEntry, "--version"],
+    [distEntry, "-V"],
+  ] as const) {
+    const result = await runEntry(t, entry, [flag], { cwd, TMPDIR: tempParent });
+    assert.equal(result.code, 0, result.stderr);
+    assert.equal(result.stdout.trim(), pkg.version);
+  }
+});
+
 test("source and built CLIs produce identical help and view output", async (t) => {
   const directory = await makeTempDir(t, "ae-package-view-");
   const configPath = join(directory, "case.yml");

@@ -81,10 +81,14 @@ cp .env.example .env                        # fill in harness paths and keys (se
 npm run eval -- view examples/cases/deploy-runbook/case.yml --case pi-with-skill
 npm run eval -- config examples/agents/pi.yml
 npm run eval -- run examples/cases/deploy-runbook/case.yml --case pi-with-skill
+npm run eval -- run examples/cases/deploy-runbook/case.yml --reps 3 --jobs 3 --retain on-failure --results-dir /tmp/deploy-runbook
 npm run eval -- report --matrix /tmp/deploy-runbook # after a sweep: one row per check
 ```
 
-[`deploy-runbook-native`](https://github.com/LelouchHe/agent-evals/blob/main/examples/cases/deploy-runbook-native/case.yml) runs the same task through the native Pi runner using an installed `pi` CLI and provider key alone.
+Additional examples showcase other angles of the toolkit:
+
+- [`deploy-runbook-native`](https://github.com/LelouchHe/agent-evals/blob/main/examples/cases/deploy-runbook-native/case.yml) runs the same task through the native Pi runner using an installed `pi` CLI and provider key alone, with `judge` inheriting the case's runner.
+- [`notes-home`](https://github.com/LelouchHe/agent-evals/blob/main/examples/cases/notes-home/case.yml) demonstrates `~/` HOME placement, disjoint top-level and case `files` merging, directory-level `changed: false` restraints, and glob `path` checks (`{decisions,changelog}.md`).
 
 ## Documentation
 

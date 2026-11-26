@@ -85,10 +85,31 @@ export interface MocksConfig {
   readonly shell: ShellMocks;
 }
 
-/** Where one final top-level case field was declared. Nested values share this origin. */
+/**
+ * Structural YAML type of a top-level case field, which determines how common and case declarations compose:
+ * - `"value"`: scalar or atomic object; a case replaces the common default as a whole.
+ * - `"list"`: sequence; a case appends its items after the common items.
+ * - `{ kind: "map", child }`: mapping; keys merge recursively using `child` (when `child` is `"value"`,
+ *   a repeated key in the case replaces the common value).
+ */
+export type FieldType = "value" | "list" | { readonly kind: "map"; readonly child: FieldType };
+
+/** Where a single declaration originated in a YAML document, plus the declaration it overrode if any. */
+export type SourceOrigin =
+  | { readonly file: string; readonly line: number; readonly kind: "common"; readonly overrides?: SourceOrigin }
+  | {
+      readonly file: string;
+      readonly line: number;
+      readonly kind: "case";
+      readonly caseName: string;
+      readonly overrides?: SourceOrigin;
+    };
+
+/** Origin annotation mirroring `FieldType`: a leaf origin, list items, or recursive map entries. */
 export type FieldOrigin =
-  | { readonly file: string; readonly line: number; readonly kind: "common" }
-  | { readonly file: string; readonly line: number; readonly kind: "case"; readonly caseName: string };
+  | SourceOrigin
+  | { readonly kind: "list"; readonly base: SourceOrigin; readonly items: readonly SourceOrigin[] }
+  | { readonly kind: "map"; readonly base: SourceOrigin; readonly entries: Readonly<Record<string, FieldOrigin>> };
 
 /** Basic environment-variable name grammar used by placeholders and declared variables. */
 export const ENV_NAME_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
@@ -104,17 +125,24 @@ export interface ResolvedCase {
   readonly origins: Readonly<Record<string, FieldOrigin>>;
 }
 
+/**
+ * Single source of truth for case fields and their structural types.
+ * Naming convention: plural names (`files`, `checks`, `mocks`) are collections (`list` / `map`);
+ * singular names (`input`, `runner`, `fixture`, `timeoutMs`, `expect`) are atomic `value`s.
+ */
+export const CASE_FIELDS: Readonly<Record<keyof CaseConfig, FieldType>> = {
+  input: "value",
+  fixture: "value",
+  files: { kind: "map", child: "value" },
+  timeoutMs: "value",
+  mocks: { kind: "map", child: { kind: "map", child: "value" } },
+  expect: "value",
+  checks: "list",
+  runner: "value",
+};
+
 /** Top-level fields allowed in a complete resolved case. */
-export const CASE_FIELD_KEYS: ReadonlySet<string> = new Set([
-  "input",
-  "fixture",
-  "files",
-  "timeoutMs",
-  "mocks",
-  "expect",
-  "checks",
-  "runner",
-]);
+export const CASE_FIELD_KEYS: ReadonlySet<string> = new Set(Object.keys(CASE_FIELDS));
 
 /** The document-level authoring control for named cases. */
 export const CASES_KEY = "cases";

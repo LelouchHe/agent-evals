@@ -7,12 +7,13 @@ import { judgeChecker } from "./checkers/judge/index.ts";
 import { mockChecker } from "./checkers/mock/index.ts";
 import { shellChecker } from "./checkers/shell/index.ts";
 import { traceChecker } from "./checkers/trace/index.ts";
-import { loadCase, loadCases } from "./engine/authoring.ts";
+import { loadCases } from "./engine/authoring.ts";
 import { ConfigError, errorMessage } from "./engine/config.ts";
+import { createEnvSource } from "./engine/env-source.ts";
 import { addChecker, addRunner, createRegistry, loadTrustedImplementations } from "./engine/registry.ts";
 import { executeEvaluation, prepareEvaluation, type PreparedEvaluation } from "./engine/run.ts";
 import { formatMatrix, formatReport } from "./engine/report.ts";
-import { runOutcome, type EvaluationRecord } from "./engine/results.ts";
+import { runOutcome, type EvaluationRecord, type RetainArtifacts } from "./engine/results.ts";
 import { describePlacement } from "./engine/placement.ts";
 import { formatResolvedCase } from "./engine/view.ts";
 import { piRunner } from "./runners/pi/index.ts";
@@ -24,18 +25,21 @@ const USAGE = `Usage: agent-evals <command> <config.yml> [options]
 
 Commands:
   run <config.yml>         Execute the selected case, or every case when --case is omitted
-  view <config.yml>        Show the resolved case, its field origins and its placement
+  view <config.yml>        Show the selected case, or every case when --case is omitted
   report <results-dir>...  Print a session report from retained run records
   config <agent.yml>       Query ACP configuration values without prompting
   login <agent.yml>        Run the declared native command and save login files
 
 Options:
-  --case <name>            Named case to select (required by view for files with cases)
-  --reps <n>               Repeat each selected case n times, serially (default: 1)
+  --case <name>            Named case to select (omitting selects every case in a cases document)
+  --reps <n>               Repeat each selected case n times (default: 1)
+  --jobs <n>               Maximum concurrent runs (default: 1)
+  --retain <mode>          Retain workspace and home (excluding login): none, on-failure, all (default: none)
   --results-dir <path>     Where run records are written (default: .agent-evals)
   --extension-dir <path>   Trusted extension root, one implementation per subdirectory (repeatable)
   --files                  With view: list every placed and excluded path
   --matrix                 With report: one table of checks by case instead of the session report
+  --version, -V            Show version
   --help                   Show this help
 
 Configuration errors exit with code 2 before any run resource is created.
@@ -52,6 +56,8 @@ interface CliOptions {
   readonly showFiles: boolean;
   readonly matrix: boolean;
   readonly reps: number;
+  readonly jobs: number;
+  readonly retain: RetainArtifacts;
   /** Additional paths for `report`; the first one is `configPath`. */
   readonly extraPaths: readonly string[];
 }
@@ -71,17 +77,28 @@ async function main(argv: readonly string[]): Promise<number> {
       process.stdout.write(USAGE);
       return 0;
     }
+    if (error instanceof VersionRequested) {
+      const pkg = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8")) as {
+        version?: string;
+      };
+      process.stdout.write(`${pkg.version ?? "unknown"}\n`);
+      return 0;
+    }
     process.stderr.write(`error: ${errorMessage(error)}\n\n${USAGE}`);
     return 2;
   }
 
   try {
     if (options.command === "view") {
-      const resolved = await loadCase(options.configPath, {
+      const cases = await loadCases(options.configPath, {
         ...(options.caseName === undefined ? {} : { caseName: options.caseName }),
       });
-      const placement = await describePlacement(resolved);
-      process.stdout.write(formatResolvedCase(resolved, { placement, files: options.showFiles }));
+      const rendered: string[] = [];
+      for (const resolved of cases) {
+        const placement = await describePlacement(resolved);
+        rendered.push(formatResolvedCase(resolved, { placement, files: options.showFiles }));
+      }
+      process.stdout.write(rendered.join("\n"));
       return 0;
     }
     if (options.command === "report") {
@@ -144,10 +161,20 @@ async function runCommand(options: CliOptions): Promise<number> {
     });
     await loadTrustedImplementations(registry, { extensionDirs: options.extensionDirs });
     const resultsDir = options.resultsDir ?? resolve(".agent-evals");
+    const envSource = createEnvSource(process.cwd(), abort.signal);
     const prepared: PreparedEvaluation[] = [];
     for (let rep = 0; rep < options.reps; rep += 1) {
       for (const entry of cases) {
-        prepared.push(await prepareEvaluation({ case: entry, registry, resultsDir, signal: abort.signal }));
+        prepared.push(
+          await prepareEvaluation({
+            case: entry,
+            registry,
+            resultsDir,
+            retain: options.retain,
+            signal: abort.signal,
+            envSource,
+          }),
+        );
       }
     }
 
@@ -159,14 +186,62 @@ async function runCommand(options: CliOptions): Promise<number> {
       return exitCode(record);
     }
 
-    const records: EvaluationRecord[] = [];
-    for (const entry of prepared) {
-      // Cancellation stops the rest; an error or a failed check does not.
-      if (abort.signal.aborted) break;
-      records.push(await executeEvaluation(entry));
+    const slots: (EvaluationRecord | undefined)[] = new Array(prepared.length);
+    const pending = prepared.map((_, index) => index);
+    const inFlightKeys = new Set<string>();
+    let firstError: unknown;
+    let active = 0;
+
+    // Event-driven bounded pool: runs sharing a `concurrencyKey` (e.g., persistent ACP login.dir)
+    // serialize while unrelated runs execute concurrently up to `options.jobs`. If any worker
+    // rejects unexpectedly, abort and wait for all active workers to drain before exiting.
+    await new Promise<void>((resolvePool) => {
+      const schedule = () => {
+        while (active < options.jobs && !abort.signal.aborted && firstError === undefined) {
+          const pos = pending.findIndex((index) =>
+            prepared[index]!.registered.concurrencyKeys.every((key) => !inFlightKeys.has(key)),
+          );
+          if (pos === -1) break;
+          const [index] = pending.splice(pos, 1);
+          const entry = prepared[index!]!;
+          const keys = entry.registered.concurrencyKeys;
+          for (const key of keys) inFlightKeys.add(key);
+          active += 1;
+          void executeEvaluation(entry)
+            .then(
+              (record) => {
+                slots[index!] = record;
+              },
+              (caught) => {
+                firstError ??= caught;
+                abort.abort();
+              },
+            )
+            .finally(() => {
+              for (const key of keys) inFlightKeys.delete(key);
+              active -= 1;
+              schedule();
+              if (active === 0 && (pending.length === 0 || abort.signal.aborted || firstError !== undefined)) {
+                resolvePool();
+              }
+            });
+        }
+        if (active === 0) {
+          resolvePool();
+        }
+      };
+      schedule();
+    });
+
+    if (firstError !== undefined) {
+      throw firstError;
     }
+
+    const records: EvaluationRecord[] = [];
     const casesPerRep = cases.length;
-    for (const [index, record] of records.entries()) {
+    for (const [index, record] of slots.entries()) {
+      if (record === undefined) continue;
+      records.push(record);
       const repLabel = options.reps === 1 ? "" : `rep ${Math.floor(index / casesPerRep) + 1}/${options.reps} `;
       printCaseLine(record, resultsDir, repLabel);
     }
@@ -200,6 +275,9 @@ function parseArguments(argv: readonly string[]): CliOptions {
         files: { type: "boolean" },
         matrix: { type: "boolean" },
         reps: { type: "string" },
+        jobs: { type: "string" },
+        retain: { type: "string" },
+        version: { type: "boolean", short: "V" },
         help: { type: "boolean", short: "h" },
       },
     });
@@ -210,6 +288,9 @@ function parseArguments(argv: readonly string[]): CliOptions {
   const { values, positionals } = parsed;
   if (values.help === true) {
     throw new HelpRequested();
+  }
+  if (values.version === true) {
+    throw new VersionRequested();
   }
 
   const [command, rawConfigPath, ...unexpected] = positionals;
@@ -230,16 +311,22 @@ function parseArguments(argv: readonly string[]): CliOptions {
     (values.case !== undefined ||
       values["results-dir"] !== undefined ||
       values["extension-dir"] !== undefined ||
-      values.reps !== undefined)
+      values.reps !== undefined ||
+      values.jobs !== undefined ||
+      values.retain !== undefined)
   ) {
     throw new ConfigError(`${command} accepts only an agent configuration file, not case or run options`);
   }
   const extensionDirs = (values["extension-dir"] ?? []).map((directory) => resolve(directory));
   if (
     command === "view" &&
-    (values["results-dir"] !== undefined || extensionDirs.length > 0 || values.reps !== undefined)
+    (values["results-dir"] !== undefined ||
+      extensionDirs.length > 0 ||
+      values.reps !== undefined ||
+      values.jobs !== undefined ||
+      values.retain !== undefined)
   ) {
-    throw new ConfigError("view does not accept --results-dir, --extension-dir or --reps");
+    throw new ConfigError("view does not accept --results-dir, --extension-dir, --reps, --jobs or --retain");
   }
   if (command !== "view" && values.files === true) {
     throw new ConfigError("--files applies only to view");
@@ -252,11 +339,15 @@ function parseArguments(argv: readonly string[]): CliOptions {
     (values.case !== undefined ||
       values["results-dir"] !== undefined ||
       values["extension-dir"] !== undefined ||
-      values.reps !== undefined)
+      values.reps !== undefined ||
+      values.jobs !== undefined ||
+      values.retain !== undefined)
   ) {
     throw new ConfigError("report accepts only results directories");
   }
-  const reps = values.reps === undefined ? 1 : expectReps(values.reps);
+  const reps = values.reps === undefined ? 1 : expectPositiveInt(values.reps, "--reps");
+  const jobs = values.jobs === undefined ? 1 : expectPositiveInt(values.jobs, "--jobs");
+  const retain = values.retain === undefined ? "none" : expectRetain(values.retain);
 
   return {
     command,
@@ -267,17 +358,26 @@ function parseArguments(argv: readonly string[]): CliOptions {
     showFiles: values.files === true,
     matrix: values.matrix === true,
     reps,
+    jobs,
+    retain,
     extraPaths: unexpected.map((path) => resolve(path)),
   };
 }
 
-/** A repetition count is a positive integer written in decimal that a loop can count to. */
-function expectReps(value: string): number {
+/** A count flag is a positive integer written in decimal that a loop can count to. */
+function expectPositiveInt(value: string, flag: string): number {
   const count = Number(value);
   if (!/^[0-9]+$/.test(value) || !Number.isSafeInteger(count) || count < 1) {
-    throw new ConfigError(`--reps must be a positive integer, got ${JSON.stringify(value)}`);
+    throw new ConfigError(`${flag} must be a positive integer, got ${JSON.stringify(value)}`);
   }
   return count;
+}
+
+function expectRetain(value: string): RetainArtifacts {
+  if (value !== "none" && value !== "on-failure" && value !== "all") {
+    throw new ConfigError(`--retain must be "none", "on-failure", or "all", got ${JSON.stringify(value)}`);
+  }
+  return value;
 }
 
 /**
@@ -323,13 +423,16 @@ async function findResultFiles(path: string): Promise<string[]> {
   if (info.isFile()) {
     return [path];
   }
+  const entries = await readdir(path, { withFileTypes: true });
+  // A directory with `result.json` is a single run record; do not recurse into its subdirectories.
+  if (entries.some((entry) => !entry.isDirectory() && entry.name === "result.json")) {
+    return [join(path, "result.json")];
+  }
   const found: string[] = [];
-  for (const entry of await readdir(path, { withFileTypes: true })) {
-    const child = join(path, entry.name);
-    if (entry.isDirectory()) {
-      for (const file of await findResultFiles(child)) found.push(file);
-    } else if (entry.name === "result.json") {
-      found.push(child);
+  for (const entry of entries) {
+    // Never descend into retained artifact trees, even for an incomplete run with no `result.json`.
+    if (entry.isDirectory() && entry.name !== "artifacts") {
+      for (const file of await findResultFiles(join(path, entry.name))) found.push(file);
     }
   }
   return found.sort();
@@ -346,6 +449,11 @@ function printRecord(record: EvaluationRecord, resultsDir: string): void {
   }
   if (record.error !== undefined) {
     lines.push(`  error: ${record.error}`);
+  }
+  if (record.artifacts?.status === "retained" && record.artifacts.path !== undefined) {
+    lines.push(`  artifacts: ${join(resultsDir, record.runId, record.artifacts.path)}`);
+  } else if (record.artifacts?.status === "failed") {
+    lines.push(`  artifacts: failed — ${record.artifacts.error ?? "unknown error"}`);
   }
   lines.push(`  results: ${join(resultsDir, record.runId, "result.json")}`);
   process.stdout.write(lines.join("\n") + "\n");
@@ -368,7 +476,13 @@ function exitCode(record: EvaluationRecord): number {
 /** One summary line per executed case: name, status and the retained result record. */
 function printCaseLine(record: EvaluationRecord, resultsDir: string, prefix = ""): void {
   const name = record.case.name ?? record.case.path;
-  process.stdout.write(`${prefix}${name}: ${runOutcome(record)} ${join(resultsDir, record.runId, "result.json")}\n`);
+  const retainNote =
+    record.artifacts?.status === "failed"
+      ? ` (artifacts retention failed: ${record.artifacts.error ?? "unknown error"})`
+      : "";
+  process.stdout.write(
+    `${prefix}${name}: ${runOutcome(record)} ${join(resultsDir, record.runId, "result.json")}${retainNote}\n`,
+  );
 }
 
 /** Zero only when every case passed, 1 for failed checks, 2 for anything that could not be judged. */
@@ -380,6 +494,7 @@ function aggregateExit(records: readonly EvaluationRecord[]): number {
 }
 
 class HelpRequested extends Error {}
+class VersionRequested extends Error {}
 
 const code = await main(process.argv.slice(2));
 process.exitCode = code;

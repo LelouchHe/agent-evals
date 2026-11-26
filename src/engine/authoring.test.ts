@@ -90,7 +90,14 @@ test("an ordinary document resolves one case and annotates every top-level field
     input: { file: path, line: 1, kind: "common" },
     timeoutMs: { file: path, line: 2, kind: "common" },
     fixture: { file: path, line: 3, kind: "common" },
-    checks: { file: path, line: 4, kind: "common" },
+    checks: {
+      kind: "list",
+      base: { file: path, line: 4, kind: "common" },
+      items: [
+        { file: path, line: 5, kind: "common" },
+        { file: path, line: 8, kind: "common" },
+      ],
+    },
     runner: { file: path, line: 11, kind: "common" },
   });
 });
@@ -124,7 +131,11 @@ test("named cases require explicit selection and preserve common versus case ori
   assert.equal(withSkill.name, "with-skill");
   assert.deepEqual(withSkill.config.runner, { $type: "pi", model: "p/m", skills: ["skill"] });
   assert.deepEqual(withSkill.origins.input, { file: path, line: 1, kind: "common" });
-  assert.deepEqual(withSkill.origins.checks, { file: path, line: 3, kind: "common" });
+  assert.deepEqual(withSkill.origins.checks, {
+    kind: "list",
+    base: { file: path, line: 3, kind: "common" },
+    items: [{ file: path, line: 4, kind: "common" }],
+  });
   assert.deepEqual(withSkill.origins.runner, {
     file: path,
     line: 9,
@@ -208,28 +219,10 @@ test("cases must be a non-empty mapping of named mappings with allowed fields", 
   await expectConfigError(() => loadCase(unknownEntry, { caseName: "one" }), /case "one".*unknown field: nmae/);
 });
 
-test("common and selected case fields are disjoint at the top level", async (t) => {
-  const { path: identical } = await writeDocument(t, [
+test("single-value fields replace common defaults whole, without partial nested merging", async (t) => {
+  const { path } = await writeDocument(t, [
     "input: task",
     "timeoutMs: 1000",
-    "checks:",
-    "  - $type: file",
-    "    path: hello.txt",
-    "    exists: true",
-    "cases:",
-    "  one:",
-    "    timeoutMs: 1000",
-    "    runner:",
-    "      $type: pi",
-    "      model: p/m",
-  ]);
-  await expectConfigError(
-    () => loadCase(identical, { caseName: "one" }),
-    /repeats top-level field from the common part: timeoutMs/,
-  );
-
-  const { path: nestedRunner } = await writeDocument(t, [
-    "input: task",
     "checks:",
     "  - $type: file",
     "    path: hello.txt",
@@ -238,12 +231,161 @@ test("common and selected case fields are disjoint at the top level", async (t) 
     "  $type: pi",
     "  model: p/m",
     "cases:",
-    "  one:",
+    "  override-timeout:",
+    "    timeoutMs: 2500",
+    "  override-runner:",
     "    runner:",
-    "      $type: pi",
-    "      thinking: high",
+    "      $type: noop",
   ]);
-  await expectConfigError(() => loadCase(nestedRunner, { caseName: "one" }), /disjoint/);
+  const timeoutCase = await loadCase(path, { caseName: "override-timeout" });
+  assert.equal(timeoutCase.config.timeoutMs, 2500);
+  assert.deepEqual(timeoutCase.config.runner, { $type: "pi", model: "p/m" });
+  assert.deepEqual(timeoutCase.origins.timeoutMs, {
+    file: path,
+    line: 12,
+    kind: "case",
+    caseName: "override-timeout",
+    overrides: { file: path, line: 2, kind: "common" },
+  });
+
+  const runnerCase = await loadCase(path, { caseName: "override-runner" });
+  assert.deepEqual(runnerCase.config.runner, { $type: "noop" });
+  assert.equal(runnerCase.config.timeoutMs, 1000);
+  assert.deepEqual(runnerCase.origins.runner, {
+    file: path,
+    line: 14,
+    kind: "case",
+    caseName: "override-runner",
+    overrides: { file: path, line: 7, kind: "common" },
+  });
+});
+
+test("collection fields (files, checks, mocks) merge recursively and case leaf values override common", async (t) => {
+  const { path: merged } = await writeDocument(t, [
+    "input: task",
+    "files:",
+    "  .agents/skills: ../..",
+    "mocks:",
+    "  shell:",
+    "    deployctl:",
+    "      return:",
+    "        stdout: ok",
+    "checks:",
+    "  - $type: file",
+    "    path: hello.txt",
+    "    exists: false",
+    "runner:",
+    "  $type: noop",
+    "cases:",
+    "  plain: {}",
+    "  extended:",
+    "    files:",
+    "      ~/mine/space: fixtures/vault",
+    "    mocks:",
+    "      shell:",
+    "        make:",
+    "          pass: false",
+    "    checks:",
+    "      - $type: trace",
+    "        event: skill",
+    "        name: handover",
+    "  overridden:",
+    "    files:",
+    "      .agents/skills: other",
+    "    mocks:",
+    "      shell:",
+    "        deployctl:",
+    "          return:",
+    "            stdout: custom",
+  ]);
+  const plain = await loadCase(merged, { caseName: "plain" });
+  assert.deepEqual(plain.config.files, { ".agents/skills": "../.." });
+  assert.equal(plain.config.checks.length, 1);
+  assert.deepEqual(Object.keys(plain.config.mocks?.shell ?? {}), ["deployctl"]);
+
+  const extended = await loadCase(merged, { caseName: "extended" });
+  assert.deepEqual(extended.config.files, {
+    ".agents/skills": "../..",
+    "~/mine/space": "fixtures/vault",
+  });
+  assert.deepEqual(
+    extended.config.checks.map((check) => check.$type),
+    ["file", "trace"],
+  );
+  assert.deepEqual(Object.keys(extended.config.mocks?.shell ?? {}), ["deployctl", "make"]);
+  assert.deepEqual(extended.origins.files, {
+    kind: "map",
+    base: { file: merged, line: 2, kind: "common" },
+    entries: {
+      ".agents/skills": { file: merged, line: 3, kind: "common" },
+      "~/mine/space": { file: merged, line: 19, kind: "case", caseName: "extended" },
+    },
+  });
+  assert.deepEqual(extended.origins.checks, {
+    kind: "list",
+    base: { file: merged, line: 9, kind: "common" },
+    items: [
+      { file: merged, line: 10, kind: "common" },
+      { file: merged, line: 25, kind: "case", caseName: "extended" },
+    ],
+  });
+  assert.deepEqual(extended.origins.mocks, {
+    kind: "map",
+    base: { file: merged, line: 4, kind: "common" },
+    entries: {
+      shell: {
+        kind: "map",
+        base: { file: merged, line: 5, kind: "common" },
+        entries: {
+          deployctl: { file: merged, line: 6, kind: "common" },
+          make: { file: merged, line: 22, kind: "case", caseName: "extended" },
+        },
+      },
+    },
+  });
+
+  const overridden = await loadCase(merged, { caseName: "overridden" });
+  assert.deepEqual(overridden.config.files, { ".agents/skills": "other" });
+  assert.deepEqual(overridden.origins.files, {
+    kind: "map",
+    base: { file: merged, line: 2, kind: "common" },
+    entries: {
+      ".agents/skills": {
+        file: merged,
+        line: 30,
+        kind: "case",
+        caseName: "overridden",
+        overrides: { file: merged, line: 3, kind: "common" },
+      },
+    },
+  });
+  const deployRule = overridden.config.mocks?.shell.deployctl?.[0]?.action;
+  assert.equal(deployRule?.kind, "return");
+  assert.equal(deployRule.result.stdout, "custom");
+
+  // Own-property semantics: a case adding a literal `__proto__` key preserves it.
+  const { path: protoPath } = await writeDocument(
+    t,
+    [
+      "input: task",
+      "files:",
+      "  a.txt: src-a.txt",
+      "checks:",
+      "  - $type: file",
+      "    path: a.txt",
+      "    exists: false",
+      "runner:",
+      "  $type: noop",
+      "cases:",
+      "  with-proto:",
+      "    files:",
+      "      __proto__: proto.txt",
+    ],
+    "proto-files.yml",
+  );
+  const protoCase = await loadCase(protoPath, { caseName: "with-proto" });
+  assert.ok(Object.hasOwn(protoCase.config.files ?? {}, "__proto__"));
+  assert.equal(protoCase.config.files?.["__proto__"], "proto.txt");
 });
 
 test("incomplete common or case fragments are allowed only when the combination is complete", async (t) => {

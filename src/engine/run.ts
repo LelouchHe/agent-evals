@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto";
-import { cp, lstat, mkdir, realpath, rm, stat } from "node:fs/promises";
+import { copyFile, cp, lstat, mkdir, readdir, realpath, rm, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { assertSeatbeltAvailable } from "../platform/macos/policy.ts";
@@ -28,10 +28,12 @@ import {
   type TraceEntry,
 } from "./registry.ts";
 import {
+  classifyOutcome,
   createResultDirectory,
   newRunId,
   writeResult,
   type EvaluationRecord,
+  type RetainArtifacts,
   type RunStatus,
   type RunnerStatus,
 } from "./results.ts";
@@ -51,7 +53,7 @@ import { createCheckSandbox } from "./check-sandbox.ts";
 import { parseImplementationParams } from "./params.ts";
 import { truncate, truncateNullable } from "./truncate.ts";
 import { substituteValues, type ValueSource } from "./values.ts";
-import { isMissing, openRunRoot, type RunRoot } from "./workspace.ts";
+import { assertRunRoot, isMissing, openRunRoot, type RunRoot } from "./workspace.ts";
 
 const DEFAULT_TIMEOUT_MS = 300_000;
 const CHECK_ABORT_GRACE_MS = 12_000;
@@ -61,6 +63,7 @@ export interface RunRequest {
   readonly case: ResolvedCase;
   readonly registry: Registry;
   readonly resultsDir: string;
+  readonly retain?: RetainArtifacts;
   readonly signal?: AbortSignal;
   /** Parent directory for the temporary run root. Tests use this to inspect cleanup. */
   readonly tempParent?: string;
@@ -87,6 +90,8 @@ export interface PreparedEvaluation {
     readonly runnerType: string;
     readonly runner: Runner;
     readonly checks: readonly { readonly type: string; readonly checker: Checker }[];
+    /** Shared mutable resource keys across all runners created for this evaluation (case + checkers). */
+    readonly concurrencyKeys: readonly string[];
   };
 }
 
@@ -180,7 +185,12 @@ export async function executeEvaluation(prepared: PreparedEvaluation): Promise<E
   }
 
   let runner: Runner | undefined;
+  let workspaceRoot: RunRoot | undefined;
+  let homeRoot: RunRoot | undefined;
   let cleanup: EvaluationRecord["cleanup"] = { status: "removed" };
+  let artifacts: EvaluationRecord["artifacts"] | undefined;
+  let protectedPaths: readonly string[] = registered.runner.homeFiles ?? [];
+  const protectedIdentities: string[] = [];
   let runnerRecord: EvaluationRecord["runner"] = {
     type: registered.runnerType,
     status: "error",
@@ -195,10 +205,11 @@ export async function executeEvaluation(prepared: PreparedEvaluation): Promise<E
   let mockFailed = false;
   const diagnostics: string[] = [];
   let error: string | undefined;
-  let status: RunStatus;
+  let status: RunStatus = "error";
   let timedOut = false;
   let stopFailed = false;
   let timer: NodeJS.Timeout | undefined;
+  let paths: Awaited<ReturnType<typeof createResultDirectory>> | undefined;
 
   try {
     await Promise.all([
@@ -209,6 +220,8 @@ export async function executeEvaluation(prepared: PreparedEvaluation): Promise<E
       mkdir(join(engineDir, "baseline", "workspace"), { recursive: true, mode: 0o700 }),
       mkdir(join(engineDir, "baseline", "home"), { recursive: true, mode: 0o700 }),
     ]);
+    // Capture root identities immediately after creation so setup failures still retain safely.
+    [workspaceRoot, homeRoot] = await Promise.all([openRunRoot(workspaceDir), openRunRoot(homeDir)]);
 
     const fixture = request.case.config.fixture;
     if (fixture !== undefined) {
@@ -220,7 +233,6 @@ export async function executeEvaluation(prepared: PreparedEvaluation): Promise<E
       });
     }
     await placeCaseFiles(request.case, join(engineDir, "files", "workspace"), workspaceDir);
-    const workspaceRoot = await openRunRoot(workspaceDir);
 
     // The runner places its own HOME content first; the case then overlays it without
     // touching login state, and only what the case placed becomes the HOME baseline.
@@ -236,10 +248,10 @@ export async function executeEvaluation(prepared: PreparedEvaluation): Promise<E
       signal: abort.signal,
     };
     runner = registered.runner;
-    const protectedPaths = (await runner.prepareHome?.(context)) ?? [];
+    const preparedProtected = (await runner.prepareHome?.(context)) ?? [];
+    protectedPaths = [...new Set([...protectedPaths, ...preparedProtected])];
     // Login state is protected by the file the filesystem actually holds at each declared
     // path, so a differently-cased or otherwise normalised spelling cannot alias it.
-    const protectedIdentities: string[] = [];
     for (const path of protectedPaths) {
       try {
         const info = await lstat(join(homeDir, path), { bigint: true });
@@ -264,7 +276,6 @@ export async function executeEvaluation(prepared: PreparedEvaluation): Promise<E
         await rm(homeStaging, { recursive: true, force: true });
       }
     }
-    const homeRoot = await openRunRoot(homeDir);
 
     // Forwarders are written before the baseline snapshot, so it already holds them.
     const mocks = request.case.config.mocks;
@@ -406,6 +417,21 @@ export async function executeEvaluation(prepared: PreparedEvaluation): Promise<E
         diagnostics.push(`failed to close mock host: ${errorMessage(caught)}`);
       }
     }
+    if (shouldRetain(request.retain ?? "none", status, request.case.config.expect)) {
+      try {
+        paths = await createResultDirectory(request.resultsDir, runId);
+        const artifactsDir = join(paths.directory, "artifacts");
+        await retainRunArtifacts(workspaceRoot, homeRoot, artifactsDir, {
+          paths: protectedPaths,
+          identities: protectedIdentities,
+        });
+        artifacts = { status: "retained", path: "artifacts" };
+      } catch (caught) {
+        const message = errorMessage(caught);
+        artifacts = { status: "failed", error: message };
+        diagnostics.push(`failed to retain artifacts: ${message}`);
+      }
+    }
     try {
       await rm(root, { recursive: true, force: true, maxRetries: 3 });
     } catch (caught) {
@@ -434,11 +460,93 @@ export async function executeEvaluation(prepared: PreparedEvaluation): Promise<E
     ...(error === undefined ? {} : { error }),
     diagnostics: boundedDiagnostics(diagnostics),
     cleanup,
+    ...(artifacts === undefined ? {} : { artifacts }),
   };
 
-  const paths = await createResultDirectory(request.resultsDir, runId);
+  paths ??= await createResultDirectory(request.resultsDir, runId);
   await writeResult(paths, record, trace, mockRecords);
   return record;
+}
+
+function shouldRetain(retain: RetainArtifacts, status: RunStatus, expect: ResolvedCase["config"]["expect"]): boolean {
+  if (retain === "all") return true;
+  if (retain === "none") return false;
+  const outcome = classifyOutcome(status, expect);
+  return outcome !== "pass" && outcome !== "expected-fail" && outcome !== "cancelled";
+}
+
+interface HomeExclusion {
+  readonly paths: readonly string[];
+  readonly identities: readonly string[];
+}
+
+async function retainRunArtifacts(
+  workspaceRoot: RunRoot | undefined,
+  homeRoot: RunRoot | undefined,
+  artifactsDir: string,
+  excludeHome: HomeExclusion,
+): Promise<void> {
+  await mkdir(artifactsDir, { recursive: true, mode: 0o700 });
+  if (workspaceRoot !== undefined) {
+    await assertRunRoot(workspaceRoot);
+    await retainTree(workspaceRoot.path, join(artifactsDir, "workspace"), {
+      paths: [],
+      identities: excludeHome.identities,
+    });
+  }
+  if (homeRoot !== undefined) {
+    await assertRunRoot(homeRoot);
+    await retainTree(homeRoot.path, join(artifactsDir, "home"), excludeHome);
+  }
+}
+
+async function retainTree(sourceDir: string, destinationDir: string, exclude?: HomeExclusion): Promise<void> {
+  const excludedPaths = (exclude?.paths ?? []).map((entry) => normalizeExcludedPath(entry));
+  const excludedIdentities = new Set(exclude?.identities ?? []);
+
+  const walk = async (currentSource: string, currentDest: string, relPrefix: string): Promise<void> => {
+    let entries;
+    try {
+      entries = await readdir(currentSource, { withFileTypes: true });
+    } catch (caught) {
+      if (isMissing(caught)) return;
+      throw caught;
+    }
+    await mkdir(currentDest, { recursive: true, mode: 0o700 });
+    for (const entry of entries) {
+      const rel = relPrefix.length === 0 ? entry.name : `${relPrefix}/${entry.name}`;
+      if (isExcludedPath(rel, excludedPaths)) continue;
+      const srcPath = join(currentSource, entry.name);
+      let info;
+      try {
+        info = await lstat(srcPath, { bigint: true });
+      } catch (caught) {
+        if (isMissing(caught)) continue;
+        throw caught;
+      }
+      if (info.isFile()) {
+        if (excludedIdentities.has(fileIdentity(info))) continue;
+        await copyFile(srcPath, join(currentDest, entry.name));
+      } else if (info.isDirectory()) {
+        await walk(srcPath, join(currentDest, entry.name), rel);
+      }
+      // Symlinks, sockets, FIFOs and devices are skipped so an agent-created link can never
+      // pull host files into the retained results directory.
+    }
+  };
+
+  await walk(sourceDir, destinationDir, "");
+}
+
+function normalizeExcludedPath(path: string): string {
+  const trimmed = path.replaceAll("\\", "/").replace(/^\/+/u, "").replace(/\/+$/u, "");
+  return process.platform === "darwin" ? trimmed.toLowerCase() : trimmed;
+}
+
+function isExcludedPath(relativePath: string, excludedPaths: readonly string[]): boolean {
+  if (excludedPaths.length === 0) return false;
+  const candidate = process.platform === "darwin" ? relativePath.toLowerCase() : relativePath;
+  return excludedPaths.some((excluded) => candidate === excluded || candidate.startsWith(`${excluded}/`));
 }
 
 async function prepareImplementations(
@@ -449,6 +557,7 @@ async function prepareImplementations(
   runnerType: string;
   runner: Runner;
   checks: readonly { readonly type: string; readonly checker: Checker }[];
+  concurrencyKeys: readonly string[];
 }> {
   const mockTargets =
     request.case.config.mocks === undefined ? undefined : Object.keys(request.case.config.mocks.shell);
@@ -463,6 +572,7 @@ async function prepareImplementations(
   // The case runner's placeholders resolve once; a checker-declared runner arrives resolved with
   // the checker parameters it was written in, so neither declaration is walked twice.
   const caseRunnerParams = await substituteValues(paramsOf(request.case.config.runner), "runner", values);
+  const concurrencyKeys = new Set<string>();
   const createRunner = async (record?: ImplementationRecord): Promise<PreparedRunner> => {
     const declaration = record ?? request.case.config.runner;
     const definition = requireRunner(request.registry, declaration.$type);
@@ -473,7 +583,11 @@ async function prepareImplementations(
       structuredClone(record === undefined ? caseRunnerParams : paramsOf(record)),
       `runner "${definition.type}"`,
     );
-    return { type: definition.type, runner: await definition.create(params, context) };
+    const created = await definition.create(params, context);
+    if (created.concurrencyKey !== undefined) {
+      concurrencyKeys.add(created.concurrencyKey);
+    }
+    return { type: definition.type, runner: created };
   };
   const context: ImplementationContext = {
     authoringDir: request.case.dir,
@@ -498,7 +612,7 @@ async function prepareImplementations(
     checks.push({ type: definition.type, checker: await createChecker(definition, params, index, context) });
   }
 
-  return { runnerType: runnerDefinition.type, runner, checks };
+  return { runnerType: runnerDefinition.type, runner, checks, concurrencyKeys: [...concurrencyKeys] };
 }
 
 /**
