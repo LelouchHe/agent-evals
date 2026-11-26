@@ -1,3 +1,4 @@
+import { posix } from "node:path";
 import { z, type ZodError, type ZodType } from "zod";
 import {
   ConfigError,
@@ -82,8 +83,11 @@ export const runRelativePathSchema = z
 
 /** A workspace path, or `~/…` for a file or directory inside the run HOME. `~/` alone names HOME itself. */
 export const runFilePathSchema = runRelativePathSchema.superRefine((value, context) => {
-  if (value === "~/" || value === "~/.") {
-    context.addIssue({ code: "custom", message: "must name a file or directory inside HOME, not HOME itself" });
+  if (value.startsWith("~/")) {
+    const inner = posix.normalize(value.slice(2)).replace(/\/+$/u, "");
+    if (inner === "" || inner === ".") {
+      context.addIssue({ code: "custom", message: "must name a file or directory inside HOME, not HOME itself" });
+    }
   }
 });
 

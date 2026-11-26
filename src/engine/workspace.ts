@@ -329,7 +329,7 @@ export function isProtectedHomePath(relativePath: string, protectedPaths: readon
 }
 
 function normalizeProtectedPath(path: string): string {
-  const cleaned = path.replaceAll("\\", "/").replace(/^\/+/u, "").replace(/\/+$/u, "");
+  const cleaned = path.replace(/^\/+/u, "").replace(/\/+$/u, "");
   if (cleaned.length === 0) return "";
   const normalized = posix.normalize(cleaned).replace(/\/+$/u, "");
   if (normalized === ".") return "";

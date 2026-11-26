@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
+import { link, mkdir, readFile, readdir, rename, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { test } from "node:test";
 import { stringify } from "yaml";
@@ -805,6 +805,65 @@ test("integration: CLI cancellation interrupts and cleans up", async (t) => {
   ) as EvaluationRecord;
   assert.equal(record.status, "cancelled");
   assert.equal(record.cleanup.status, "removed");
+});
+
+test("refreshed login file inode is re-recorded after runner stops so judge refuses hardlink aliases", async (t) => {
+  const dir = await makeTempDir(t, "ae-refreshed-login-");
+  const resultsDir = await makeTempDir(t, "ae-refreshed-login-results-");
+  const tempParent = await makeTempDir(t, "ae-refreshed-login-runs-");
+  const casePath = join(dir, "case.yml");
+  await writeFile(
+    casePath,
+    stringify({
+      input: "Do the task.",
+      checks: [{ $type: "judge", files: ["leaked.json"], rubric: ["ok"] }],
+      runner: { $type: "refreshing" },
+    }),
+  );
+
+  const refreshingRunner: RunnerDefinition<Record<string, never>> = {
+    type: "refreshing",
+    home: true,
+    params: z.strictObject({}),
+    create() {
+      return {
+        homeFiles: [".auth/token.json"],
+        async prepareHome(ctx) {
+          const authDir = join(ctx.homeDir, ".auth");
+          await mkdir(authDir, { recursive: true });
+          await writeFile(join(authDir, "token.json"), '{"token":"initial"}');
+          return [".auth/token.json"];
+        },
+        async run(ctx) {
+          // Simulate an atomic credential refresh (new inode) plus a workspace hardlink alias.
+          const authDir = join(ctx.homeDir, ".auth");
+          const tmp = join(authDir, "token.json.tmp");
+          const live = join(authDir, "token.json");
+          await writeFile(tmp, '{"token":"refreshed-secret"}');
+          await rename(tmp, live);
+          await link(live, join(ctx.workspaceDir, "leaked.json"));
+          return { finalText: '{"criteria":[{"pass":true,"reason":"ok"}]}', diagnostics: [] };
+        },
+        async stop() {},
+      };
+    },
+  };
+
+  const custom = createRegistry();
+  addRunner(custom, refreshingRunner, "built-in");
+  addChecker(custom, judgeChecker, "built-in");
+  const record = await runEvaluation({
+    case: await loadCase(casePath),
+    registry: custom,
+    resultsDir,
+    tempParent,
+    envSource: createEnvSource(dir),
+  });
+
+  assert.equal(record.status, "error");
+  assert.equal(record.checks[0]?.status, "error");
+  assert.match(record.checks[0]?.reason ?? "", /refusing to stage protected file/);
+  assert.deepEqual(await readdir(tempParent), []);
 });
 
 async function readOnlyResult(resultsDir: string): Promise<EvaluationRecord> {

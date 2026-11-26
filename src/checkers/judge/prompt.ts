@@ -44,17 +44,23 @@ export function buildJudgePrompt(input: JudgePromptInput): string {
 }
 
 function describe(entry: JudgeEvidence): string {
+  const displayPath = sanitizePromptPath(entry.path);
   if (entry.kind === "trace") {
-    return `${entry.path}: the run's messages, reasoning and tool calls in order. A tool call shows what the agent asked for and what its harness reported, not every effect.`;
+    return `${displayPath}: the run's messages, reasoning and tool calls in order. A tool call shows what the agent asked for and what its harness reported, not every effect.`;
   }
   const origin = entry.source === "home" ? "the run's HOME" : "the run's workspace";
   if (entry.kind === "glob") {
-    return `${entry.path}: no files matched this pattern in ${origin}.`;
+    return `${displayPath}: no files matched this pattern in ${origin}.`;
   }
   if (entry.kind === "directory") {
-    return `${entry.path}: an empty directory from ${origin} (no regular files).`;
+    return `${displayPath}: an empty directory from ${origin} (no regular files).`;
   }
   return entry.present
-    ? `${entry.path}: a file from ${origin}.`
-    : `${entry.path}: the run produced no such file; it does not exist.`;
+    ? `${displayPath}: a file from ${origin}.`
+    : `${displayPath}: the run produced no such file; it does not exist.`;
+}
+
+/** Escape line-breaking control characters in agent-controlled paths so filenames stay single-line data. */
+function sanitizePromptPath(path: string): string {
+  return path.replace(/[\r\n\u2028\u2029]/gu, (char) => JSON.stringify(char).slice(1, -1));
 }

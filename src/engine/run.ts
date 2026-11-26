@@ -253,14 +253,7 @@ export async function executeEvaluation(prepared: PreparedEvaluation): Promise<E
     protectedPaths = [...new Set([...protectedPaths, ...preparedProtected])];
     // Login state is protected by the file the filesystem actually holds at each declared
     // path, so a differently-cased or otherwise normalised spelling cannot alias it.
-    for (const path of protectedPaths) {
-      try {
-        const info = await lstat(join(homeDir, path), { bigint: true });
-        if (info.isFile()) protectedIdentities.push(fileIdentity(info));
-      } catch (error) {
-        if (!isMissing(error)) throw error;
-      }
-    }
+    await recordProtectedIdentities(homeDir, protectedPaths, protectedIdentities);
     const homePlacements = homeEntries(request.case.config.files);
     const homeStaging = join(engineDir, "files", "home");
     if (homePlacements.length > 0) {
@@ -343,6 +336,9 @@ export async function executeEvaluation(prepared: PreparedEvaluation): Promise<E
         trace = runner.trace?.();
         usage = runner.usage?.();
       }
+      // Re-record login file identities after the runner stops so an atomic credential refresh
+      // (new inode) stays protected from checks and artifact retention.
+      await recordProtectedIdentities(homeDir, protectedPaths, protectedIdentities);
     }
 
     const runnerStatus: RunnerStatus = stopFailed
@@ -475,6 +471,28 @@ function shouldRetain(retain: RetainArtifacts, status: RunStatus, expect: Resolv
   if (retain === "none") return false;
   const outcome = classifyOutcome(status, expect);
   return outcome !== "pass" && outcome !== "expected-fail" && outcome !== "cancelled";
+}
+
+async function recordProtectedIdentities(
+  homeDir: string,
+  protectedPaths: readonly string[],
+  identities: string[],
+): Promise<void> {
+  const seen = new Set(identities);
+  for (const path of protectedPaths) {
+    try {
+      const info = await lstat(join(homeDir, path), { bigint: true });
+      if (info.isFile()) {
+        const id = fileIdentity(info);
+        if (!seen.has(id)) {
+          seen.add(id);
+          identities.push(id);
+        }
+      }
+    } catch (error) {
+      if (!isMissing(error)) throw error;
+    }
+  }
 }
 
 async function retainRunArtifacts(

@@ -210,6 +210,9 @@ async function stageEvidence(
     source: "workspace" | "home",
     declared: string,
   ): Promise<void> => {
+    if (context.signal.aborted) {
+      throw new JudgeError("judge was cancelled before its runner started");
+    }
     const destRel = `${source}/${stagedRel}`;
     if (stagedPaths.has(destRel)) {
       return;
@@ -219,6 +222,9 @@ async function stageEvidence(
       content = await readRunFile(root, rel);
     } catch (error) {
       throw new JudgeError(`could not read judge evidence ${declared}: ${errorMessage(error)}`);
+    }
+    if (context.signal.aborted) {
+      throw new JudgeError("judge was cancelled before its runner started");
     }
     const target = join(workspaceDir, destRel);
     await mkdir(dirname(target), { recursive: true, mode: 0o700 });
@@ -338,6 +344,7 @@ async function collectDirectoryFiles(
   relPrefix: string,
   signal: AbortSignal,
   filter: StagingFilter,
+  shouldDescend: (dirRel: string) => boolean = () => true,
 ): Promise<readonly string[]> {
   const files: string[] = [];
   const visit = async (currentAbs: string, prefix: string): Promise<void> => {
@@ -370,7 +377,7 @@ async function collectDirectoryFiles(
       if (info.isFile()) {
         if (filter.protectedIdentities.has(fileIdentity(info))) continue;
         files.push(childRel);
-      } else if (info.isDirectory()) {
+      } else if (info.isDirectory() && shouldDescend(childRel)) {
         await visit(childAbs, childRel);
       }
       // Symlinks and special files are skipped so an agent-created link cannot pull outside files.
@@ -388,43 +395,49 @@ async function matchGlobFiles(
   filter: StagingFilter,
 ): Promise<readonly string[]> {
   await assertRunRoot(root);
-  const normalized = pattern.replace(/^(?:\.\/)+/u, "");
+  const normalized = posix.normalize(pattern).replace(/\/+$/u, "");
   const segments = normalized.split("/");
   const staticSegments: string[] = [];
   for (const segment of segments) {
     if (isGlob(segment)) break;
     staticSegments.push(segment);
   }
-  const baseDir = staticSegments.length === 0 ? "." : staticSegments.join("/");
-  if (baseDir !== "." && filter.isHome && isProtectedHomePath(baseDir, filter.protectedPaths)) {
-    return [];
-  }
-  let startAbs: string;
-  if (baseDir === ".") {
-    startAbs = root.path;
-  } else {
-    try {
-      startAbs = await resolveWorkspacePath(root, baseDir);
-    } catch (error) {
-      throw new JudgeError(`could not read judge evidence ${pattern}: ${errorMessage(error)}`);
+  // Walk the static prefix without following symlinks so prefix symlinks are skipped just like
+  // symlinks encountered below the wildcard.
+  let startAbs = root.path;
+  let prefixRel = "";
+  for (const segment of staticSegments) {
+    if (signal.aborted) {
+      throw new JudgeError("judge was cancelled before its runner started");
     }
-    const resolvedRel = relative(root.path, startAbs).split(sep).join("/");
-    if (filter.isHome && resolvedRel.length > 0 && isProtectedHomePath(resolvedRel, filter.protectedPaths)) {
+    prefixRel = prefixRel === "" ? segment : `${prefixRel}/${segment}`;
+    if (filter.isHome && isProtectedHomePath(prefixRel, filter.protectedPaths)) {
+      return [];
+    }
+    startAbs = join(startAbs, segment);
+    let info;
+    try {
+      info = await lstat(startAbs, { bigint: true });
+    } catch (error) {
+      if (isMissing(error)) return [];
+      throw new JudgeError(`could not inspect judge evidence ${prefixRel}: ${errorMessage(error)}`);
+    }
+    if (!info.isDirectory()) {
       return [];
     }
   }
-  let startInfo;
-  try {
-    startInfo = await lstat(startAbs, { bigint: true });
-  } catch (error) {
-    if (isMissing(error)) return [];
-    throw new JudgeError(`could not inspect judge evidence ${baseDir}: ${errorMessage(error)}`);
-  }
-  if (!startInfo.isDirectory()) {
-    return [];
-  }
 
-  const allFiles = await collectDirectoryFiles(root, startAbs, baseDir === "." ? "" : baseDir, signal, filter);
+  const pruneDepth = !segments.some(
+    (segment) => segment.includes("**") || (segment.includes("{") && !segment.includes("}")),
+  );
+  const shouldDescend = (dirRel: string): boolean => {
+    if (!pruneDepth) return true;
+    const depth = dirRel.split("/").length;
+    if (depth >= segments.length) return false;
+    return posix.matchesGlob(dirRel, segments.slice(0, depth).join("/"));
+  };
+
+  const allFiles = await collectDirectoryFiles(root, startAbs, prefixRel, signal, filter, shouldDescend);
   return allFiles.filter((fileRel) => posix.matchesGlob(fileRel, normalized));
 }
 
