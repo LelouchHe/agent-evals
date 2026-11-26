@@ -433,7 +433,9 @@ function judgeInstruments(runs: readonly EvaluationRecord[]): readonly string[] 
 }
 
 function value(input: unknown): string {
-  return typeof input === "string" && input !== "" ? input : "—";
+  if (typeof input !== "string") return "—";
+  const singleLine = input.replace(/\r\n?|\n/g, " ").trim();
+  return singleLine === "" ? "—" : singleLine;
 }
 
 function sum(runs: readonly EvaluationRecord[], pick: (run: EvaluationRecord) => number): number {

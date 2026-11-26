@@ -261,7 +261,12 @@ export async function executeEvaluation(prepared: PreparedEvaluation): Promise<E
     protectedPaths = [...new Set([...protectedPaths, ...preparedProtected])];
     // Login state is protected by the file the filesystem actually holds at each declared
     // path, so a differently-cased or otherwise normalised spelling cannot alias it.
-    await recordProtectedIdentities(homeRoot, protectedPaths, protectedIdentities);
+    try {
+      await recordProtectedIdentities(homeRoot, protectedPaths, protectedIdentities);
+    } catch (caught) {
+      protectedIdentitiesError = errorMessage(caught);
+      throw caught;
+    }
     const homePlacements = homeEntries(request.case.config.files);
     const homeStaging = join(engineDir, "files", "home");
     if (homePlacements.length > 0) {

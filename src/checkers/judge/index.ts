@@ -426,7 +426,7 @@ async function matchGlobFiles(
     }
   }
 
-  const pruneDepth = !segments.includes("**") && !normalized.includes("{");
+  const pruneDepth = !segments.includes("**") && !hasCrossSegmentBrace(normalized);
   const shouldDescend = (dirRel: string): boolean => {
     if (!pruneDepth) return true;
     const depth = dirRel.split("/").length;
@@ -436,6 +436,17 @@ async function matchGlobFiles(
 
   const allFiles = await collectDirectoryFiles(root, startAbs, prefixRel, signal, filter, shouldDescend);
   return allFiles.filter((fileRel) => posix.matchesGlob(fileRel, normalized));
+}
+
+/** True when a brace expression contains a path separator, so single-segment prefix pruning cannot apply. */
+function hasCrossSegmentBrace(pattern: string): boolean {
+  let depth = 0;
+  for (const char of pattern) {
+    if (char === "{") depth += 1;
+    else if (char === "}" && depth > 0) depth -= 1;
+    else if (char === "/" && depth > 0) return true;
+  }
+  return false;
 }
 
 /**

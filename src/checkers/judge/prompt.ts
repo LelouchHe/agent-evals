@@ -63,11 +63,12 @@ function describe(entry: JudgeEvidence): string {
 const LINE_BREAK_ESCAPES: Readonly<Record<string, string>> = {
   "\r": "\\r",
   "\n": "\\n",
+  "\u0085": "\\u0085",
   "\u2028": "\\u2028",
   "\u2029": "\\u2029",
 };
 
 /** Escape line-breaking control characters in agent-controlled paths so filenames stay single-line data. */
 function sanitizePromptPath(path: string): string {
-  return path.replace(/[\r\n\u2028\u2029]/gu, (char) => LINE_BREAK_ESCAPES[char] ?? char);
+  return path.replace(/[\r\n\u0085\u2028\u2029]/gu, (char) => LINE_BREAK_ESCAPES[char] ?? char);
 }
