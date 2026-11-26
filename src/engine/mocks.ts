@@ -120,8 +120,18 @@ export async function startMockHost(options: MockHostOptions): Promise<MockHost>
     );
   };
   const forwarder = await renderForwarder(spec);
+  const extraPathTemplates = await Promise.all(
+    (spec.extraPathForwarders ?? []).map(async (extra) => ({
+      extra,
+      scriptPath: join(options.engineDir, extra.templateName),
+      content: await renderForwarder(extra),
+    })),
+  );
   try {
     await writeFile(scriptPath, forwarder, { mode: 0o500, flag: "wx" });
+    for (const entry of extraPathTemplates) {
+      await writeFile(entry.scriptPath, entry.content, { mode: 0o500, flag: "wx" });
+    }
 
     for (const target of Object.keys(options.shell).sort()) {
       if (target.includes("/")) {
@@ -133,6 +143,9 @@ export async function startMockHost(options: MockHostOptions): Promise<MockHost>
         await placeWorkspaceForwarder(workspaceRoot.path, options, target, wsForwarder);
       } else {
         await link(scriptPath, join(forwarderDir, spec.targetFileName(target)));
+        for (const entry of extraPathTemplates) {
+          await link(entry.scriptPath, join(forwarderDir, entry.extra.targetFileName(target)));
+        }
       }
     }
   } catch (error) {

@@ -117,6 +117,11 @@ export function buildWindowsWorkloadEnv(env: NodeJS.ProcessEnv): Record<string, 
   setDefault("SystemRoot", SYSTEM_ROOT);
   setDefault("WINDIR", SYSTEM_ROOT);
   setDefault("SystemDrive", systemDrive);
+  setDefault("ProgramFiles", PROGRAM_FILES);
+  if (process.env["ProgramFiles(x86)"] !== undefined && process.env["ProgramFiles(x86)"].length > 0) {
+    setDefault("ProgramFiles(x86)", process.env["ProgramFiles(x86)"]);
+  }
+  setDefault("ProgramData", process.env.ProgramData ?? join(systemDrive, "ProgramData"));
   setDefault("ComSpec", join(SYSTEM_ROOT, "System32", "cmd.exe"));
   setDefault("PATHEXT", ".COM;.EXE;.BAT;.CMD");
   setDefault("USERPROFILE", userProfile);

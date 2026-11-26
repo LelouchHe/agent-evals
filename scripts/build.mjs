@@ -16,6 +16,7 @@ for (const asset of [
   "platform/posix-forwarder-client.mjs",
   "platform/windows/forwarder.cmd",
   "platform/windows/forwarder.ps1",
+  "platform/windows/forwarder.sh",
   "platform/windows/forwarder-client.mjs",
   "platform/macos/supervisor.sh",
   "runners/pi/shell-wrapper.sh",

@@ -61,7 +61,8 @@ function findPassTarget() {
       for (const ext of extensions) {
         const candidate = resolve(folder, `${name}${ext}`);
         if (!isRegularFile(candidate)) continue;
-        if (canonicalSelf(candidate).toLowerCase() === self.toLowerCase()) continue;
+        const canonical = canonicalSelf(candidate).toLowerCase();
+        if (canonical === self.toLowerCase() || canonical.startsWith(`${bindir.toLowerCase()}${sep}`)) continue;
         return candidate;
       }
     }

@@ -18,10 +18,15 @@ export interface MockForwarderTemplate {
   readonly quote: (value: string) => string;
 }
 
-export interface MockForwarderSpec extends MockForwarderTemplate {
-  readonly clientPath: string;
+export interface MockPathForwarderTemplate extends MockForwarderTemplate {
   readonly templateName: string;
   readonly targetFileName: (target: string) => string;
+}
+
+export interface MockForwarderSpec extends MockPathForwarderTemplate {
+  readonly clientPath: string;
+  /** Additional PATH shims placed beside the primary one (e.g. extensionless `sh` shims for Git Bash on Windows). */
+  readonly extraPathForwarders?: readonly MockPathForwarderTemplate[];
   readonly workspaceForwarder?: (target: string) => MockForwarderTemplate;
   readonly resolvePathTargetName: (selfPath: string, forwarderRoot: string) => string | undefined;
 }

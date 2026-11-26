@@ -149,14 +149,24 @@ export const windowsBackend: PlatformBackend = {
   mockForwarderSpec(): MockForwarderSpec {
     const cmdAsset = fileURLToPath(new URL("./forwarder.cmd", import.meta.url));
     const ps1Asset = fileURLToPath(new URL("./forwarder.ps1", import.meta.url));
+    const shAsset = fileURLToPath(new URL("./forwarder.sh", import.meta.url));
     const quoteCmd = (value: string): string => `"${value.replaceAll('"', '""').replaceAll("%", "%%")}"`;
     const quotePs1 = (value: string): string => `'${value.replaceAll("'", "''")}'`;
+    const quoteSh = (value: string): string => `'${value.replaceAll("'", "'\\''")}'`;
     return {
       assetPath: cmdAsset,
       clientPath: fileURLToPath(new URL("./forwarder-client.mjs", import.meta.url)),
       templateName: "forward.cmd",
       quote: quoteCmd,
       targetFileName: (target: string) => `${target}.cmd`,
+      extraPathForwarders: [
+        {
+          assetPath: shAsset,
+          quote: quoteSh,
+          templateName: "forward.sh",
+          targetFileName: (target: string) => target,
+        },
+      ],
       workspaceForwarder: (target: string) =>
         target.toLowerCase().endsWith(".ps1")
           ? { assetPath: ps1Asset, quote: quotePs1 }

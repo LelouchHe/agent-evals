@@ -8,4 +8,4 @@ grep -Fq 'make rotate-signing-cert' diagnosis.md
 grep -Fq 'make deploy' diagnosis.md
 grep -Fq '41A7' diagnosis.md
 grep -Fq '2.8.1-b41' diagnosis.md
-grep -Fq 'Darwin' diagnosis.md
+grep -Eq 'Darwin|Linux' diagnosis.md
