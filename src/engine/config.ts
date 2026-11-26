@@ -85,20 +85,26 @@ export interface MocksConfig {
   readonly shell: ShellMocks;
 }
 
-/** How a top-level case field composes when declared in both the common part and a named case. */
-export type FieldComposition = "replace" | "union-list" | "union-map" | "union-nested-map";
+/**
+ * Structural type of a top-level case field, which determines how common and case declarations compose:
+ * - `"value"`: single value or atomic object; a case replaces the common default as a whole.
+ * - `"list"`: ordered list; a case appends its items after the common items.
+ * - `"map"`: keyed collection; common and case entries merge with disjoint keys.
+ * - `{ kind: "group", child }`: named sub-groups whose values compose recursively using `child`.
+ */
+export type FieldType = "value" | "list" | "map" | { readonly kind: "group"; readonly child: FieldType };
 
 /** Where a single declaration originated in a YAML document. */
 export type SourceOrigin =
   | { readonly file: string; readonly line: number; readonly kind: "common" }
   | { readonly file: string; readonly line: number; readonly kind: "case"; readonly caseName: string };
 
-/** Origin annotation matching the field's composition kind: scalar/object, list items, or map entries. */
+/** Origin annotation mirroring `FieldType`: a leaf origin, list items, map entries, or recursive groups. */
 export type FieldOrigin =
   | SourceOrigin
   | { readonly kind: "list"; readonly items: readonly SourceOrigin[] }
   | { readonly kind: "map"; readonly entries: Readonly<Record<string, SourceOrigin>> }
-  | { readonly kind: "nested-map"; readonly groups: Readonly<Record<string, Readonly<Record<string, SourceOrigin>>>> };
+  | { readonly kind: "group"; readonly entries: Readonly<Record<string, FieldOrigin>> };
 
 /** Basic environment-variable name grammar used by placeholders and declared variables. */
 export const ENV_NAME_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
@@ -114,20 +120,16 @@ export interface ResolvedCase {
   readonly origins: Readonly<Record<string, FieldOrigin>>;
 }
 
-/**
- * Single source of truth for case fields and their composition behavior:
- * - Single-value fields (`replace`): a case replaces the common default as a whole.
- * - Collection fields (`union-*`): common and case entries form an additive union (duplicate keys are errors).
- */
-export const CASE_FIELDS: Readonly<Record<keyof CaseConfig, FieldComposition>> = {
-  input: "replace",
-  fixture: "replace",
-  files: "union-map",
-  timeoutMs: "replace",
-  mocks: "union-nested-map",
-  expect: "replace",
-  checks: "union-list",
-  runner: "replace",
+/** Single source of truth for case fields and their structural types. */
+export const CASE_FIELDS: Readonly<Record<keyof CaseConfig, FieldType>> = {
+  input: "value",
+  fixture: "value",
+  files: "map",
+  timeoutMs: "value",
+  mocks: { kind: "group", child: "map" },
+  expect: "value",
+  checks: "list",
+  runner: "value",
 };
 
 /** Top-level fields allowed in a complete resolved case. */

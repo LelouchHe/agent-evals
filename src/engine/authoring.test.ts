@@ -306,11 +306,14 @@ test("collection fields (files, checks, mocks) form additive unions and reject d
     ],
   });
   assert.deepEqual(extended.origins.mocks, {
-    kind: "nested-map",
-    groups: {
+    kind: "group",
+    entries: {
       shell: {
-        deployctl: { file: merged, line: 6, kind: "common" },
-        make: { file: merged, line: 22, kind: "case", caseName: "extended" },
+        kind: "map",
+        entries: {
+          deployctl: { file: merged, line: 6, kind: "common" },
+          make: { file: merged, line: 22, kind: "case", caseName: "extended" },
+        },
       },
     },
   });

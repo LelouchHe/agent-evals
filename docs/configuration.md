@@ -111,26 +111,28 @@ A multi-case document is one invocation, but every case is an ordinary run: it v
 - **Output is one line per executed case:** `<case name>: <status> <result.json path>`. `--case` keeps the single-run report instead.
 - **Exit status is 0 only when every case passed**, 1 when checks failed, and 2 when a case ended as `error`, `timeout` or `cancelled`. A cancelled sweep also prints how many cases did not run.
 
-**Composition follows one rule based on field type: collection fields form an additive union (never overwriting), and single-value fields are replaced whole by the case.**
+**Composition follows one rule based on structural field type (`value`, `list`, `map`, `group`):**
 
-- **Collection fields** (`files`, `checks`, `mocks`): common and case entries combine additively — `checks` appends case checks after common checks, while keyed collections (`files` destinations, `mocks.shell` targets) require disjoint keys and reject duplicates as configuration errors.
-- **Single-value fields** (`input`, `runner`, `fixture`, `timeoutMs`, `expect`): the top-level value is the default for every case, and a case that declares the field replaces it as a whole (no partial nested merge).
+- **`value`** (`input`, `runner`, `fixture`, `timeoutMs`, `expect`): the top-level value is the default for every case, and a case that declares the field replaces it as a whole (no partial nested merge).
+- **`list`** (`checks`): additive union — case items append after common items.
+- **`map`** (`files`): additive union — common and case entries must have disjoint keys; repeating a key is a configuration error.
+- **`group(<child>)`** (`mocks` is `group(map)`): named sub-groups whose values compose recursively using `<child>` (so `mocks.shell` merges disjoint command targets, without ever merging inside a leaf rule object).
 
-Siblings are independent, and there is no recursive merge or deletion operator. `agent-evals view` prints the resolved YAML with inline `# <file>:<line>` comments showing each single-value field's or collection entry's exact source line. Names have no built-in skill/comparison behavior and are never result-directory paths.
+Siblings are independent, and there is no recursive merge of `value` objects or deletion operator. `agent-evals view` prints the resolved YAML with inline `# <file>:<line>` comments on each `value` field and each collection entry. Names have no built-in skill/comparison behavior and are never result-directory paths.
 
 ## Common Fields and Parsing
 
-| Field       | Type       | In `cases`               | Contract                                                                                                                                                |
-| ----------- | ---------- | ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `input`     | value      | replaces common          | Required non-empty initial user message.                                                                                                                |
-| `runner`    | value      | replaces common (whole)  | Required implementation record.                                                                                                                         |
-| `fixture`   | value      | replaces common          | Optional directory relative to this YAML, copied into the workspace root. Omission starts an empty workspace.                                           |
-| `timeoutMs` | value      | replaces common          | Optional positive integer milliseconds; defaults to 300000. Bounds runner execution and is also each check's budget, not the whole run's wall time.     |
-| `expect`    | value      | replaces common          | Optional `pass` (default) or `fail`: whether the checks are expected to fail, as a vacuity or negative baseline. See [negative cases](#negative-cases). |
-| `files`     | collection | union (disjoint keys)    | Optional mapping from a destination to an authoring file or directory, placed after the fixture; a `~/` destination places into the run HOME.           |
-| `checks`    | collection | union (append)           | Required non-empty list of implementation records.                                                                                                      |
-| `mocks`     | collection | union (disjoint targets) | Optional declared collaborator substitutes; see [Mocks](#mocks).                                                                                        |
-| `cases`     | document   | n/a                      | Optional document-level selection control; not passed to execution.                                                                                     |
+| Field       | Type         | In `cases`               | Contract                                                                                                                                                |
+| ----------- | ------------ | ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `input`     | `value`      | replaces common          | Required non-empty initial user message.                                                                                                                |
+| `runner`    | `value`      | replaces common (whole)  | Required implementation record.                                                                                                                         |
+| `fixture`   | `value`      | replaces common          | Optional directory relative to this YAML, copied into the workspace root. Omission starts an empty workspace.                                           |
+| `timeoutMs` | `value`      | replaces common          | Optional positive integer milliseconds; defaults to 300000. Bounds runner execution and is also each check's budget, not the whole run's wall time.     |
+| `expect`    | `value`      | replaces common          | Optional `pass` (default) or `fail`: whether the checks are expected to fail, as a vacuity or negative baseline. See [negative cases](#negative-cases). |
+| `files`     | `map`        | union (disjoint keys)    | Optional mapping from a destination to an authoring file or directory, placed after the fixture; a `~/` destination places into the run HOME.           |
+| `checks`    | `list`       | union (append)           | Required non-empty list of implementation records.                                                                                                      |
+| `mocks`     | `group(map)` | union (disjoint targets) | Optional declared collaborator substitutes; see [Mocks](#mocks).                                                                                        |
+| `cases`     | document     | n/a                      | Optional document-level selection control; not passed to execution.                                                                                     |
 
 Unknown common fields, invalid shapes and duplicate YAML keys are errors. There is one document/file: no `extends`, imported collections or nested `cases`. Implementation parameters may contain [placeholders](#placeholders). Null is a value, not omission or deletion.
 

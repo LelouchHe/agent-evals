@@ -110,14 +110,13 @@ function applyOrigin(pair: Pair, origin: FieldOrigin): void {
       if (!isMap(pair.value)) return;
       annotateMap(pair.value, origin.entries);
       return;
-    case "nested-map":
+    case "group":
       if (!isMap(pair.value)) return;
       for (const groupPair of pair.value.items) {
         if (!isScalar(groupPair.key) || typeof groupPair.key.value !== "string") continue;
-        if (!isMap(groupPair.value)) continue;
-        const entries = origin.groups[groupPair.key.value];
-        if (entries !== undefined) {
-          annotateMap(groupPair.value, entries);
+        const childOrigin = origin.entries[groupPair.key.value];
+        if (childOrigin !== undefined) {
+          applyOrigin(groupPair, childOrigin);
         }
       }
       return;
