@@ -89,10 +89,10 @@ test("view succeeds without Pi or environment values and annotates common versus
   });
   assert.equal(result.code, 0, result.stderr);
   assert.match(result.stdout, /^case: "with-skill"$/m);
-  assert.match(result.stdout, /^ {2}input: .* # case\.yml:1$/m);
-  assert.match(result.stdout, /^ {2}timeoutMs: 120000 # case\.yml:2$/m);
-  assert.match(result.stdout, /^ {4}- \$type: file # case\.yml:4$/m);
-  assert.match(result.stdout, /^ {2}runner: # case\.yml:9$/m);
+  assert.match(result.stdout, /^ {2}input: .* {2,}# case\.yml:1$/m);
+  assert.match(result.stdout, /^ {2}timeoutMs: 120000 {2,}# case\.yml:2$/m);
+  assert.match(result.stdout, /^ {4}- \$type: file {2,}# case\.yml:4$/m);
+  assert.match(result.stdout, /^ {2}runner: {2,}# case\.yml:9$/m);
   assert.doesNotMatch(result.stdout, /view-secret-value/);
   assert.doesNotMatch(result.stdout, /CANARY-LAUNCHED/);
   await assert.rejects(() => access(lookupMarker), /ENOENT/);
@@ -146,7 +146,7 @@ test("view escapes control characters in selected case labels", async (t) => {
   const expected = JSON.stringify(name);
   const lines = result.stdout.split("\n");
   assert.ok(lines.includes(`case: ${expected}`), result.stdout);
-  assert.ok(lines.includes("  runner: # case.yml:8"), result.stdout);
+  assert.match(result.stdout, /^ {2}runner: {2,}# case\.yml:8$/m);
   assert.ok(!lines.includes("  spoof: yes"), result.stdout);
   assert.ok(!result.stdout.includes("\u0007"));
 });

@@ -42,6 +42,8 @@ export function formatResolvedCase(resolved: ResolvedCase, options: ViewOptions)
   return lines.join("\n") + "\n";
 }
 
+const MAX_ALIGN_COLUMN = 44;
+
 function formatAnnotatedConfig(resolved: ResolvedCase): string {
   const doc = new Document(resolved.config);
   if (isMap(doc.contents)) {
@@ -52,7 +54,37 @@ function formatAnnotatedConfig(resolved: ResolvedCase): string {
       applyOrigin(pair, origin);
     }
   }
-  return doc.toString();
+  return alignOriginComments(doc.toString(), basename(resolved.path));
+}
+
+/**
+ * Align trailing `# <file>:<line>` comments to one column, capped so a single long scalar
+ * (such as `input`) never pushes every other line's comment far to the right.
+ */
+function alignOriginComments(yamlText: string, fileName: string): string {
+  const suffix = new RegExp(`^(.*?) (# ${escapeRegExp(fileName)}:\\d+)$`, "u");
+  const lines = yamlText.trimEnd().split("\n");
+  const parsed = lines.map((line): { readonly line: string } | { readonly body: string; readonly comment: string } => {
+    const match = suffix.exec(line);
+    return match === null ? { line } : { body: match[1]!, comment: match[2]! };
+  });
+  let column = 0;
+  for (const entry of parsed) {
+    if ("comment" in entry && entry.body.length + 2 <= MAX_ALIGN_COLUMN) {
+      column = Math.max(column, entry.body.length + 2);
+    }
+  }
+  return parsed
+    .map((entry) => {
+      if (!("comment" in entry)) return entry.line;
+      const pad = Math.max(2, column - entry.body.length);
+      return `${entry.body}${" ".repeat(pad)}${entry.comment}`;
+    })
+    .join("\n");
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
 }
 
 function applyOrigin(pair: Pair, origin: FieldOrigin): void {
