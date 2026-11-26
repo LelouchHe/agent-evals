@@ -35,11 +35,8 @@ jobs:
       - name: Lint, format, typecheck, build
         run: npm run lint && npm run format:check && npm run typecheck && npm run build
 
-      - name: Run Windows sandbox & check-sandbox tests
-        run: node --test --test-timeout=60000 src/platform/windows/sandbox.test.ts
-
-      - name: Run platform-agnostic engine unit tests on Windows
-        run: node --test --test-timeout=30000 src/engine/authoring.test.ts src/engine/files.test.ts src/engine/ignore.test.ts src/engine/registry.test.ts src/engine/report.test.ts src/engine/skills.test.ts src/engine/values.test.ts src/engine/workspace.test.ts src/checkers/file/index.test.ts src/checkers/trace/index.test.ts src/checkers/mock/index.test.ts tests/noop-runner.test.ts tests/run.test.ts
+      - name: Run full test suite on Windows
+        run: node --test --test-timeout=60000
 
       - name: Teardown sandbox users
         if: always()
