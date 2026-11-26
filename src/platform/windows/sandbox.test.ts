@@ -345,10 +345,20 @@ test("Windows AppContainer allows child process with piped stdio (execFileSync)"
   await Promise.all([mkdir(workspace), mkdir(engine)]);
 
   const script = `
-    const { execFileSync } = require("node:child_process");
+    const { execFileSync, spawnSync } = require("node:child_process");
     const cmd = process.env.ComSpec || "C:\\\\Windows\\\\System32\\\\cmd.exe";
-    const out = execFileSync(cmd, ["/d", "/c", "echo piped-ok"], { encoding: "utf8", windowsHide: true });
-    process.stdout.write(out.trim());
+    const res = spawnSync(cmd, ["/d", "/c", "echo piped-ok"], {
+      encoding: "utf8",
+      windowsHide: true,
+      timeout: 5000,
+    });
+    process.stdout.write(JSON.stringify({
+      status: res.status,
+      signal: res.signal,
+      stdout: (res.stdout || "").trim(),
+      stderr: (res.stderr || "").trim(),
+      error: res.error ? (res.error.code || res.error.message) : null,
+    }));
   `;
 
   const policy = createSandboxPolicy({
@@ -367,6 +377,7 @@ test("Windows AppContainer allows child process with piped stdio (execFileSync)"
     env: { TEMP: workspace, TMP: workspace },
     interactive: false,
   });
+  t.after(() => proc.stop());
 
   const [stdout, stderr, code] = await Promise.all([
     collectOutput(proc.child.stdout),
@@ -375,7 +386,15 @@ test("Windows AppContainer allows child process with piped stdio (execFileSync)"
   ]);
 
   assert.equal(code, 0, `stderr: ${stderr}`);
-  assert.equal(stdout, "piped-ok");
+  const parsed = JSON.parse(stdout) as {
+    status: number | null;
+    stdout: string;
+    stderr: string;
+    error: string | null;
+  };
+  assert.equal(parsed.error, null, `spawnSync error: ${stdout}`);
+  assert.equal(parsed.status, 0, `spawnSync status: ${stdout}`);
+  assert.equal(parsed.stdout, "piped-ok", `spawnSync output: ${stdout}`);
 });
 
 test("Windows sandbox revokes NTFS ACLs on normal exit and graceful stop()", { skip: !IS_WINDOWS }, async (t) => {
