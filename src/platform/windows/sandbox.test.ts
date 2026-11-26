@@ -154,8 +154,8 @@ test(
       };
       const psRes = spawnSync(
         "powershell.exe",
-        ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", "Write-Output ('ps-user=' + $env:USERNAME)"],
-        { encoding: "utf8", windowsHide: true, timeout: 15000 },
+        ["-NoLogo", "-NoProfile", "-NonInteractive", "-InputFormat", "None", "-Command", "Write-Output ('ps-user=' + [Environment]::UserName)"],
+        { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], windowsHide: true, timeout: 15000 },
       );
       results.powershell = {
         status: psRes.status,
@@ -468,8 +468,8 @@ for await (const line of rl) {
     }
     const toolOut = execFileSync(
       "powershell.exe",
-      ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", "Write-Output 'ps-tool-ran-ok'"],
-      { encoding: "utf8", windowsHide: true },
+      ["-NoLogo", "-NoProfile", "-NonInteractive", "-InputFormat", "None", "-Command", "Write-Output 'ps-tool-ran-ok'"],
+      { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], windowsHide: true },
     ).trim();
     writeFileSync(join(process.cwd(), "hello.txt"), "Hello from Windows sandbox: " + toolOut + "\\n", "utf8");
     process.stdout.write(JSON.stringify({ id: msg.id, ok: true, secretBlocked, toolOut }) + "\\n");
