@@ -336,7 +336,7 @@ test("CLI reports help and built-in argument errors with exit code 2", async (t)
     TMPDIR: cwd,
   });
   assert.equal(runOnly.code, 2);
-  assert.match(runOnly.stderr, /view does not accept --results-dir, --extension-dir or --reps/);
+  assert.match(runOnly.stderr, /view does not accept --results-dir, --extension-dir, --reps, --jobs or --retain/);
 });
 
 test("CLI accepts equals values and a dash-prefixed config path after --", async (t) => {

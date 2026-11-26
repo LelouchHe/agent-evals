@@ -39,6 +39,7 @@ Options:
   --extension-dir <path>   Trusted extension root, one implementation per subdirectory (repeatable)
   --files                  With view: list every placed and excluded path
   --matrix                 With report: one table of checks by case instead of the session report
+  --version, -V            Show version
   --help                   Show this help
 
 Configuration errors exit with code 2 before any run resource is created.
@@ -74,6 +75,13 @@ async function main(argv: readonly string[]): Promise<number> {
   } catch (error) {
     if (error instanceof HelpRequested) {
       process.stdout.write(USAGE);
+      return 0;
+    }
+    if (error instanceof VersionRequested) {
+      const pkg = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8")) as {
+        version?: string;
+      };
+      process.stdout.write(`${pkg.version ?? "unknown"}\n`);
       return 0;
     }
     process.stderr.write(`error: ${errorMessage(error)}\n\n${USAGE}`);
@@ -230,6 +238,7 @@ function parseArguments(argv: readonly string[]): CliOptions {
         reps: { type: "string" },
         jobs: { type: "string" },
         retain: { type: "string" },
+        version: { type: "boolean", short: "V" },
         help: { type: "boolean", short: "h" },
       },
     });
@@ -240,6 +249,9 @@ function parseArguments(argv: readonly string[]): CliOptions {
   const { values, positionals } = parsed;
   if (values.help === true) {
     throw new HelpRequested();
+  }
+  if (values.version === true) {
+    throw new VersionRequested();
   }
 
   const [command, rawConfigPath, ...unexpected] = positionals;
@@ -432,6 +444,7 @@ function aggregateExit(records: readonly EvaluationRecord[]): number {
 }
 
 class HelpRequested extends Error {}
+class VersionRequested extends Error {}
 
 const code = await main(process.argv.slice(2));
 process.exitCode = code;

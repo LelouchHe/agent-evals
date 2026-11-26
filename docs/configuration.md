@@ -13,7 +13,7 @@ agent-evals run case.yml [--case name] [--reps n] [--jobs n] \
 agent-evals report results-dir...
 ```
 
-The development form is `npm run eval -- <command>`; both entry points execute the same built CLI. Flags are parsed by Node's `util.parseArgs`: `--name=value`, separate option values, `--` before dash-prefixed positionals, and `--help`/`-h` are supported. Use `--case=-name` for a dash-prefixed case name.
+The development form is `npm run eval -- <command>`; both entry points execute the same built CLI. Flags are parsed by Node's `util.parseArgs`: `--name=value`, separate option values, `--` before dash-prefixed positionals, `--version`/`-V`, and `--help`/`-h` are supported. Use `--case=-name` for a dash-prefixed case name.
 
 `run` on a `cases` document without `--case` executes every entry serially, in declaration order ([selection and summary](#one-case-or-named-cases)). A document with one ordinary case is unchanged.
 
