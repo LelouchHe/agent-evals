@@ -9,6 +9,7 @@ on:
 jobs:
   windows-poc:
     runs-on: windows-latest
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@v5
 
