@@ -21,11 +21,13 @@ mod windows_impl {
     use std::collections::BTreeMap;
     use std::ffi::OsStr;
     use std::fs;
+    use std::io::Read;
     use std::mem::{size_of, zeroed};
     use std::os::windows::ffi::OsStrExt;
     use std::path::Path;
     use std::ptr::{null, null_mut};
     use std::sync::atomic::{AtomicIsize, Ordering};
+    use std::thread;
     use std::time::{SystemTime, UNIX_EPOCH};
 
     use windows_sys::Win32::Foundation::{
@@ -97,6 +99,8 @@ mod windows_impl {
         readable_files: Vec<String>,
         #[serde(default)]
         allow_network: bool,
+        #[serde(default)]
+        control_pipe: Option<String>,
     }
 
     pub fn run() -> Result<i32, String> {
@@ -250,6 +254,21 @@ mod windows_impl {
         ACTIVE_JOB.store(job.0 as isize, Ordering::SeqCst);
         unsafe {
             SetConsoleCtrlHandler(Some(ctrl_handler), TRUE);
+        }
+
+        if let Some(pipe_path) = config.control_pipe.clone() {
+            thread::spawn(move || {
+                if let Ok(mut file) = fs::File::open(&pipe_path) {
+                    let mut buf = [0u8; 16];
+                    let _ = file.read(&mut buf);
+                    let active = ACTIVE_JOB.load(Ordering::SeqCst);
+                    if active != 0 {
+                        unsafe {
+                            TerminateJobObject(active as HANDLE, 130);
+                        }
+                    }
+                }
+            });
         }
 
         // Build command line, cwd, and environment
