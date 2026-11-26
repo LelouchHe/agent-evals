@@ -14,7 +14,8 @@ execFileSync(process.execPath, [tsc, "-p", join(root, "tsconfig.build.json")], {
 for (const asset of [
   "engine/forwarder.sh",
   "engine/forwarder.cmd",
-  "engine/forwarder-client.mjs",
+  "platform/posix-forwarder-client.mjs",
+  "platform/windows/forwarder-client.mjs",
   "platform/macos/supervisor.sh",
   "runners/pi/shell-wrapper.sh",
 ]) {

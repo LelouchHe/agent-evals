@@ -3,7 +3,6 @@ import { link, mkdir, readFile, realpath, rename, stat, writeFile } from "node:f
 import { createServer, type Socket } from "node:net";
 import { basename, dirname, join, relative, sep } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
-import { fileURLToPath } from "node:url";
 import { listenMockServer, mockForwarderSpec, type MockForwarderSpec } from "../platform/index.ts";
 import { ConfigError, errorMessage, type MockAction, type ShellMocks } from "./config.ts";
 import { compileShellMocks, matchCall, type CompiledRules, type CompiledShellMocks } from "./mock-match.ts";
@@ -18,12 +17,6 @@ const MAX_CALL_BYTES = 1_000_000;
 const PASS_MARKER = Buffer.from("agent-evals:pass");
 const PASS_MARKER_LINE = Buffer.from("agent-evals:pass\n");
 const EMPTY = Buffer.alloc(0);
-
-// The forwarder is a POSIX shell asset beside this module, copied unchanged by the build, so
-// source and built runs read one text. It reports the call over the run's socket and reads the
-// reply from a single line: capturing the reply would strip the trailing newlines that make an
-// empty stdout or stderr distinguishable. The name it is executed under selects the target.
-const FORWARDER_CLIENT = fileURLToPath(new URL("./forwarder-client.mjs", import.meta.url));
 
 export interface MockOutcome {
   /** Every recorded call, in arrival order. */
@@ -73,7 +66,7 @@ export async function startMockHost(options: MockHostOptions): Promise<MockHost>
   const forwarderRoot = await realpath(forwarderDir);
 
   const nodeExecutable = await realpath(process.execPath);
-  const clientPath = await realpath(FORWARDER_CLIENT);
+  const clientPath = await realpath(spec.clientPath);
 
   const records: MockRecord[] = [];
   const faults: string[] = [];

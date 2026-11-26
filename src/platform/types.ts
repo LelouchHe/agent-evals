@@ -15,6 +15,7 @@ export interface ShellLookupHandle {
 
 export interface MockForwarderSpec {
   readonly assetName: "forwarder.sh" | "forwarder.cmd";
+  readonly clientPath: string;
   readonly templateName: string;
   readonly quote: (value: string) => string;
   readonly targetFileName: (target: string) => string;

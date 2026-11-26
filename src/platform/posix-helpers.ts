@@ -3,6 +3,7 @@ import { access, constants, open, rm, type FileHandle } from "node:fs/promises";
 import type { Server } from "node:net";
 import { basename, dirname, join } from "node:path";
 import { tmpdir } from "node:os";
+import { fileURLToPath } from "node:url";
 import type { DirectoryIdentity, MockEndpoint, MockForwarderSpec, ShellLookupHandle } from "./types.ts";
 
 export const posixPlatformHelpers = {
@@ -77,6 +78,7 @@ export const posixPlatformHelpers = {
   mockForwarderSpec(): MockForwarderSpec {
     return {
       assetName: "forwarder.sh",
+      clientPath: fileURLToPath(new URL("./posix-forwarder-client.mjs", import.meta.url)),
       templateName: "forward",
       quote: (value: string) => `'${value.replaceAll("'", "'\\''")}'`,
       targetFileName: (target: string) => target,

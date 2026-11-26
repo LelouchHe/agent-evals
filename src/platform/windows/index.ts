@@ -3,6 +3,7 @@ import { randomBytes } from "node:crypto";
 import { access, constants, lstat, open, realpath, stat, type FileHandle } from "node:fs/promises";
 import type { AddressInfo, Server } from "node:net";
 import { basename, dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import type {
   DirectoryIdentity,
   MockEndpoint,
@@ -145,6 +146,7 @@ export const windowsBackend: PlatformBackend = {
   mockForwarderSpec(): MockForwarderSpec {
     return {
       assetName: "forwarder.cmd",
+      clientPath: fileURLToPath(new URL("./forwarder-client.mjs", import.meta.url)),
       templateName: "forward.cmd",
       quote: (value: string) => `"${value.replaceAll('"', '""').replaceAll("%", "%%")}"`,
       targetFileName: (target: string) => `${target}.cmd`,
