@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { chmod, cp, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { access, chmod, cp, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -25,6 +25,15 @@ for (const asset of [
   const target = join(dist, asset);
   await mkdir(dirname(target), { recursive: true });
   await cp(join(root, "src", asset), target);
+}
+
+// Bundle the prebuilt Windows sandbox helper when present (Windows CI and release builds).
+const winSandboxBinary = join(root, "native", "win-sandbox", "target", "release", "win-sandbox.exe");
+try {
+  await access(winSandboxBinary);
+  await cp(winSandboxBinary, join(dist, "platform", "windows", "win-sandbox.exe"));
+} catch {
+  // Not built on non-Windows local checkouts.
 }
 
 // Declaration files keep the source's `.ts` specifiers, which a consumer's TypeScript only

@@ -134,9 +134,10 @@ Reference it in `.env` as `COPILOT_GITHUB_TOKEN="!security find-generic-password
 
 ## Native Windows Setup
 
-On native Windows, run the one-time setup from an elevated PowerShell prompt to build `win-sandbox.exe` and provision the dedicated sandbox users (`agent-evals-online` and `agent-evals-offline`), Windows Defender Firewall rule, and `C:\ProgramData\agent-evals\runs`:
+On native Windows, run the one-time setup from an elevated PowerShell prompt to provision the dedicated sandbox users (`agent-evals-online` and `agent-evals-offline`), Windows Defender Firewall rule, and `C:\ProgramData\agent-evals\runs` (from a source checkout, build `win-sandbox.exe` first; published npm releases bundle it):
 
 ```powershell
+# Only needed from a source checkout (npm installs bundle win-sandbox.exe):
 cargo build --release --manifest-path native/win-sandbox/Cargo.toml
 agent-evals setup sandbox # or from a checkout: npm run eval -- setup sandbox
 ```

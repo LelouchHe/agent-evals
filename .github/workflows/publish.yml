@@ -12,14 +12,42 @@ jobs:
   test:
     uses: ./.github/workflows/ci.yml
 
-  publish:
+  build-win-sandbox:
     needs: test
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: native/win-sandbox
+
+      - name: Build win-sandbox.exe
+        working-directory: native/win-sandbox
+        run: cargo build --release
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: win-sandbox-exe
+          path: native/win-sandbox/target/release/win-sandbox.exe
+          if-no-files-found: error
+
+  publish:
+    needs: [test, build-win-sandbox]
     runs-on: ubuntu-latest
     permissions:
       contents: write # create the GitHub release
       id-token: write # npm provenance
     steps:
       - uses: actions/checkout@v5
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: win-sandbox-exe
+          path: native/win-sandbox/target/release
+
+      - name: Verify bundled win-sandbox.exe
+        run: test -f native/win-sandbox/target/release/win-sandbox.exe
 
       - uses: actions/setup-node@v5
         with:

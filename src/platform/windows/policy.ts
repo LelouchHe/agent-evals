@@ -25,6 +25,7 @@ export function winSandboxExecutablePath(): string {
 
   const candidates = [
     process.env.AGENT_EVALS_WIN_SANDBOX_BIN,
+    fileURLToPath(new URL("./win-sandbox.exe", import.meta.url)),
     join(REPO_ROOT, "native", "win-sandbox", "target", "release", "win-sandbox.exe"),
     join(REPO_ROOT, "native", "win-sandbox", "target", "debug", "win-sandbox.exe"),
   ].filter((p): p is string => typeof p === "string" && p.length > 0);

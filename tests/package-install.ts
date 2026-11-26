@@ -37,7 +37,6 @@ test("the packed CLI installs and runs without source or development dependencie
     npm_config_update_notifier: "false",
     ...(process.platform === "win32"
       ? {
-          AGENT_EVALS_WIN_SANDBOX_BIN: join(project, "native", "win-sandbox", "target", "release", "win-sandbox.exe"),
           AGENT_EVALS_WIN_SANDBOX_CREDENTIALS: join(
             process.env.LOCALAPPDATA ?? "",
             "agent-evals",
