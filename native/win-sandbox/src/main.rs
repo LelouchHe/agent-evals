@@ -40,12 +40,14 @@ mod windows_impl {
     };
     use windows_sys::Win32::Security::{
         AllocateAndInitializeSid, CreateRestrictedToken, CreateWellKnownSid, FreeSid,
-        GetTokenInformation, TokenLogonSid, WinBuiltinUsersSid, WinWorldSid, ACL,
-        DACL_SECURITY_INFORMATION, DISABLE_MAX_PRIVILEGE, NO_INHERITANCE, PSID,
-        SID_AND_ATTRIBUTES, SID_IDENTIFIER_AUTHORITY, SUB_CONTAINERS_AND_OBJECTS_INHERIT,
-        TOKEN_ADJUST_DEFAULT, TOKEN_ADJUST_SESSIONID, TOKEN_ASSIGN_PRIMARY, TOKEN_DUPLICATE,
-        TOKEN_GROUPS, TOKEN_QUERY, WRITE_RESTRICTED,
+        GetTokenInformation, SetTokenInformation, TokenDefaultDacl, TokenLogonSid,
+        WinBuiltinUsersSid, WinWorldSid, ACL, DACL_SECURITY_INFORMATION, DISABLE_MAX_PRIVILEGE,
+        NO_INHERITANCE, PSID, SID_AND_ATTRIBUTES, SID_IDENTIFIER_AUTHORITY,
+        SUB_CONTAINERS_AND_OBJECTS_INHERIT, TOKEN_ADJUST_DEFAULT, TOKEN_ADJUST_SESSIONID,
+        TOKEN_ASSIGN_PRIMARY, TOKEN_DEFAULT_DACL, TOKEN_DUPLICATE, TOKEN_GROUPS, TOKEN_QUERY,
+        WRITE_RESTRICTED,
     };
+    use windows_sys::Win32::Foundation::GENERIC_ALL;
     use windows_sys::Win32::Storage::FileSystem::{
         DELETE, FILE_GENERIC_EXECUTE, FILE_GENERIC_READ, FILE_GENERIC_WRITE,
     };
@@ -353,7 +355,77 @@ mod windows_impl {
             return Err(format!("CreateRestrictedToken failed: {}", last_error()));
         }
 
-        Ok(SafeHandle(restricted_raw))
+        let restricted = SafeHandle(restricted_raw);
+        // Add the synthetic SID to the restricted token's DefaultDacl so objects created by the
+        // sandboxed process with default security (such as libuv's stdio named pipes) can be
+        // opened by the process itself under the restricted SID check.
+        grant_default_dacl_sid(restricted.0, synthetic_sid)?;
+
+        Ok(restricted)
+    }
+
+    fn grant_default_dacl_sid(token: HANDLE, sid: PSID) -> Result<(), String> {
+        let mut len: u32 = 0;
+        let ok = unsafe { GetTokenInformation(token, TokenDefaultDacl, null_mut(), 0, &mut len) };
+        if ok == 0 && last_error() != ERROR_INSUFFICIENT_BUFFER {
+            return Err(format!(
+                "GetTokenInformation(TokenDefaultDacl) sizing failed: {}",
+                last_error()
+            ));
+        }
+        let mut buf = vec![0u8; len as usize];
+        let ok = unsafe {
+            GetTokenInformation(
+                token,
+                TokenDefaultDacl,
+                buf.as_mut_ptr() as *mut _,
+                len,
+                &mut len,
+            )
+        };
+        if ok == 0 {
+            return Err(format!(
+                "GetTokenInformation(TokenDefaultDacl) failed: {}",
+                last_error()
+            ));
+        }
+        let old_dacl = unsafe { (*(buf.as_ptr() as *const TOKEN_DEFAULT_DACL)).DefaultDacl };
+        let ea = EXPLICIT_ACCESS_W {
+            grfAccessPermissions: GENERIC_ALL,
+            grfAccessMode: SET_ACCESS,
+            grfInheritance: NO_INHERITANCE,
+            Trustee: TRUSTEE_W {
+                pMultipleTrustee: null_mut(),
+                MultipleTrusteeOperation: 0,
+                TrusteeForm: TRUSTEE_IS_SID,
+                TrusteeType: TRUSTEE_IS_UNKNOWN,
+                ptstrName: sid as *mut u16,
+            },
+        };
+        let mut new_dacl: *mut ACL = null_mut();
+        let status = unsafe { SetEntriesInAclW(1, &ea, old_dacl, &mut new_dacl) };
+        if status != ERROR_SUCCESS {
+            return Err(format!("SetEntriesInAclW(TokenDefaultDacl) error {status}"));
+        }
+        let _dacl_guard = LocalFreeGuard(new_dacl as HLOCAL);
+        let td = TOKEN_DEFAULT_DACL {
+            DefaultDacl: new_dacl,
+        };
+        let ok = unsafe {
+            SetTokenInformation(
+                token,
+                TokenDefaultDacl,
+                &td as *const _ as *const _,
+                size_of::<TOKEN_DEFAULT_DACL>() as u32,
+            )
+        };
+        if ok == 0 {
+            return Err(format!(
+                "SetTokenInformation(TokenDefaultDacl) failed: {}",
+                last_error()
+            ));
+        }
+        Ok(())
     }
 
     fn well_known_sid(sid_type: i32) -> Result<Vec<u8>, String> {

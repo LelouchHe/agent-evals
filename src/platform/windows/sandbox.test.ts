@@ -181,7 +181,11 @@ test(
 );
 
 test("Windows Restricted Token runs git and fs.realpathSync natively", { skip: !IS_WINDOWS }, async (t) => {
-  const root = await mkdtemp(join(tmpdir(), "ae-win-git-"));
+  // Place run root outside %USERPROFILE% so ancestor lstat in realpathSync works while
+  // %USERPROFILE% remains unreadable to the full restricted token.
+  const scratchBase = join(process.cwd(), ".win-poc-tmp");
+  await mkdir(scratchBase, { recursive: true });
+  const root = await mkdtemp(join(scratchBase, "ae-win-git-"));
   t.after(() => rm(root, { recursive: true, force: true }));
 
   const workspace = join(root, "workspace");
@@ -307,13 +311,19 @@ test(
   "Windows Restricted Token runs fake stdio JSON-RPC agent with shell tool call end-to-end",
   { skip: !IS_WINDOWS },
   async (t) => {
-    const root = await mkdtemp(join(tmpdir(), "ae-win-fake-"));
-    t.after(() => rm(root, { recursive: true, force: true }));
+    const scratchBase = join(process.cwd(), ".win-poc-tmp");
+    await mkdir(scratchBase, { recursive: true });
+    const root = await mkdtemp(join(scratchBase, "ae-win-fake-"));
+    const secretRoot = await mkdtemp(join(tmpdir(), "ae-win-secret-"));
+    t.after(async () => {
+      await rm(root, { recursive: true, force: true });
+      await rm(secretRoot, { recursive: true, force: true });
+    });
 
     const workspace = join(root, "workspace");
     const deps = join(root, "deps");
     const engine = join(root, "engine");
-    const secretDir = join(root, "secret");
+    const secretDir = join(secretRoot, "secret");
     await Promise.all([mkdir(workspace), mkdir(deps), mkdir(engine), mkdir(secretDir)]);
 
     await writeFile(join(secretDir, "cred.txt"), "do-not-leak", "utf8");
