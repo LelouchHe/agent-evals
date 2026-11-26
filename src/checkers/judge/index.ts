@@ -103,8 +103,7 @@ class JudgeChecker implements Checker {
     try {
       const runnerContext = await prepareRun(parsed, context, judgeDir);
       const { finalText, diagnostics } = await runJudge(this.#judge.runner, runnerContext);
-      const judgeLabel = this.#judge.label ?? this.#judge.runner.label ?? this.#judge.type;
-      return parseVerdict(finalText, parsed.rubric, diagnostics, judgeLabel);
+      return parseVerdict(finalText, parsed.rubric, diagnostics);
     } catch (error) {
       if (error instanceof JudgeError) {
         throw error;
@@ -457,12 +456,7 @@ function runnerDeclaration(record: Record<string, unknown>, context: z.Refinemen
   return record as ImplementationRecord;
 }
 
-function parseVerdict(
-  text: string | null,
-  rubric: readonly string[],
-  diagnostics: readonly string[],
-  judgeLabel: string,
-): CheckResult[] {
+function parseVerdict(text: string | null, rubric: readonly string[], diagnostics: readonly string[]): CheckResult[] {
   if (text === null) {
     throw new JudgeError(withDiagnostics("judge produced no assistant text", diagnostics));
   }
@@ -493,7 +487,7 @@ function parseVerdict(
     checker: "judge",
     subject: rubric[index] ?? "",
     status: entry.pass ? "pass" : "fail",
-    reason: truncate(`[${judgeLabel}] ${entry.reason.trim()}`, 500),
+    reason: truncate(entry.reason.trim(), 500),
   }));
 }
 

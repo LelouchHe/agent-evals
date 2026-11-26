@@ -134,7 +134,7 @@ test("integration: a judge without its own runner declaration runs the case's ru
   assert.equal(prompts.length, 2);
   assert.equal(prompts[0], "Do the task.");
   assert.match(prompts[1] ?? "", /Rubric statements/);
-  assert.equal(record.checks[0]?.reason, "[stub] model stub/model");
+  assert.equal(record.checks[0]?.reason, "model stub/model");
   assert.deepEqual(await readdir(tempParent), []);
 });
 

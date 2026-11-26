@@ -261,11 +261,16 @@ function document(path: string, cases: ReadonlyMap<string, readonly EvaluationRe
 function instrument(cases: ReadonlyMap<string, readonly EvaluationRecord[]>): string {
   const runs = [...cases.values()].flat();
   const counts = new Set([...cases.values()].map((entry) => entry.length));
-  return `runner ${listed(runs.map((run) => value(run.resolvedConfig.runner["$type"])))} · harness ${listed(
-    runs.map(harness),
-  )} · model ${listed(runs.map(model))} · ${
-    counts.size === 1 ? `reps ${[...counts][0]}` : "reps mixed"
-  } · cases ${cases.size}`;
+  const judges = judgeInstruments(runs);
+  const parts = [
+    `runner ${listed(runs.map((run) => value(run.resolvedConfig.runner["$type"])))}`,
+    `harness ${listed(runs.map(harness))}`,
+    `model ${listed(runs.map(model))}`,
+    ...(judges.length === 0 ? [] : [`judge ${listed(judges)}`]),
+    counts.size === 1 ? `reps ${[...counts][0]}` : "reps mixed",
+    `cases ${cases.size}`,
+  ];
+  return parts.join(" · ");
 }
 
 function caseLine(label: string, runs: readonly EvaluationRecord[], width: number, verdictWidth: number): string {
@@ -388,17 +393,43 @@ function longest(values: readonly (string | readonly unknown[])[]): number {
 }
 
 function harness(record: EvaluationRecord): string {
-  const agent = record.resolvedConfig.runner["agent"];
-  if (typeof agent !== "string") return value(record.resolvedConfig.runner["$type"]);
+  return harnessOf(record.resolvedConfig.runner);
+}
+
+function model(record: EvaluationRecord): string {
+  return modelOf(record.resolvedConfig.runner);
+}
+
+function harnessOf(runner: Readonly<Record<string, unknown>>): string {
+  const agent = runner["agent"];
+  if (typeof agent !== "string") return value(runner["$type"]);
   const name = basename(agent);
   return name.includes(".") ? name.slice(0, name.lastIndexOf(".")) : name;
 }
 
-function model(record: EvaluationRecord): string {
-  const config = record.resolvedConfig.runner["config"];
+function modelOf(runner: Readonly<Record<string, unknown>>): string {
+  const config = runner["config"];
   const configured =
     typeof config === "object" && config !== null ? (config as Record<string, unknown>)["model"] : undefined;
-  return value(configured ?? record.resolvedConfig.runner["model"]);
+  return value(configured ?? runner["model"]);
+}
+
+function judgeInstruments(runs: readonly EvaluationRecord[]): readonly string[] {
+  const result: string[] = [];
+  for (const run of runs) {
+    for (const check of run.resolvedConfig.checks) {
+      if (check["$type"] !== "judge") continue;
+      const declared = check["runner"];
+      const runner =
+        typeof declared === "object" && declared !== null && !Array.isArray(declared)
+          ? (declared as Readonly<Record<string, unknown>>)
+          : run.resolvedConfig.runner;
+      const judgeHarness = harnessOf(runner);
+      const judgeModel = modelOf(runner);
+      result.push(judgeModel === "—" ? judgeHarness : `${judgeHarness}/${judgeModel}`);
+    }
+  }
+  return result;
 }
 
 function value(input: unknown): string {
