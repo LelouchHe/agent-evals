@@ -182,18 +182,40 @@ test("--jobs runs cases concurrently up to the limit and preserves declaration o
   const extensionDir = join(directory, "extensions");
   await mkdir(runs);
   await mkdir(join(extensionDir, "timed"), { recursive: true });
-  // Track concurrent runs in-process and delay the first case longer than the second so we
-  // prove both bounded parallelism (active <= 2, peak === 2) and deterministic output ordering.
+  // Synchronize the three cases with in-process promises (no fixed sleeps):
+  //   1. `slow` enters and waits for `fast` to enter (proving concurrency >= 2).
+  //   2. `fast` enters, signals `slow`, and finishes first, freeing a slot.
+  //   3. `third` enters while `slow` is still active (proving the pool backfills and stays <= 2),
+  //      signals `slow`, and finishes second.
+  //   4. `slow` finishes last, so completion order (fast, third, slow) differs from declaration
+  //      order (slow, fast, third), proving output preserves declaration order.
   await writeFile(
     join(extensionDir, "timed", "index.mjs"),
     `
 let active = 0;
 let peak = 0;
+const gates = new Map();
+function gate(name) {
+  let entry = gates.get(name);
+  if (!entry) {
+    let resolve;
+    const promise = new Promise((r) => { resolve = r; });
+    entry = { promise, resolve };
+    gates.set(name, entry);
+  }
+  return entry;
+}
 export const runner = {
   type: "timed",
   params: {
     async safeParseAsync(raw) {
-      return { success: true, data: { delayMs: Number(raw.delayMs ?? 0) } };
+      return {
+        success: true,
+        data: {
+          signal: raw.signal === undefined ? undefined : String(raw.signal),
+          waitFor: Array.isArray(raw.waitFor) ? raw.waitFor.map(String) : [],
+        },
+      };
     },
   },
   create(parsed) {
@@ -201,7 +223,8 @@ export const runner = {
       async run() {
         active += 1;
         if (active > peak) peak = active;
-        await new Promise((resolve) => setTimeout(resolve, parsed.delayMs));
+        if (parsed.signal !== undefined) gate(parsed.signal).resolve();
+        for (const name of parsed.waitFor) await gate(name).promise;
         const seenPeak = peak;
         active -= 1;
         return { finalText: "peak=" + seenPeak, diagnostics: [] };
@@ -219,9 +242,9 @@ export const runner = {
       input: "task",
       checks: [{ $type: "file", path: "missing.txt", exists: false }],
       cases: {
-        slow: { runner: { $type: "timed", delayMs: 200 } },
-        fast: { runner: { $type: "timed", delayMs: 40 } },
-        third: { runner: { $type: "timed", delayMs: 120 } },
+        slow: { runner: { $type: "timed", waitFor: ["fast-entered", "third-entered"] } },
+        fast: { runner: { $type: "timed", signal: "fast-entered" } },
+        third: { runner: { $type: "timed", signal: "third-entered" } },
       },
     }),
   );
@@ -230,7 +253,7 @@ export const runner = {
     t,
     CLI,
     ["run", path, "--jobs", "2", "--extension-dir", extensionDir, "--results-dir", resultsDir],
-    { cwd: directory, env: { ...process.env, TMPDIR: runs } },
+    { cwd: directory, env: { ...process.env, TMPDIR: runs }, timeoutMs: 10_000 },
   );
 
   assert.equal(run.code, 0, run.stderr);
