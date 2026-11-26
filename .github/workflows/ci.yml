@@ -12,6 +12,7 @@ on:
 jobs:
   check:
     if: github.event_name != 'pull_request' || !github.event.pull_request.draft
+    timeout-minutes: 10
     strategy:
       fail-fast: false
       matrix:
@@ -56,6 +57,7 @@ jobs:
 
   smoke:
     if: github.event_name != 'pull_request' || !github.event.pull_request.draft
+    timeout-minutes: 10
     needs: check
     strategy:
       fail-fast: false

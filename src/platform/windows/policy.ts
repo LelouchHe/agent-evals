@@ -6,11 +6,14 @@ import type { CreateSandboxPolicyOptions, SandboxPolicy } from "../types.ts";
 
 const SYSTEM_ROOT = process.env.SystemRoot ?? process.env.WINDIR ?? "C:\\Windows";
 
+const PROGRAM_FILES = process.env.ProgramFiles ?? "C:\\Program Files";
+
 export const SYSTEM_PATH: readonly string[] = [
   join(SYSTEM_ROOT, "System32"),
   SYSTEM_ROOT,
   join(SYSTEM_ROOT, "System32", "Wbem"),
   join(SYSTEM_ROOT, "System32", "WindowsPowerShell", "v1.0"),
+  join(PROGRAM_FILES, "PowerShell", "7"),
 ];
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..", "..");

@@ -316,7 +316,8 @@ export function isProtectedHomePath(relativePath: string, protectedPaths: readon
 }
 
 function normalizeProtectedPath(path: string): string {
-  const cleaned = path.replace(/^\/+/u, "").replace(/\/+$/u, "");
+  const withSlashes = sep === "/" ? path : path.split(sep).join("/");
+  const cleaned = withSlashes.replace(/^\/+/u, "").replace(/\/+$/u, "");
   if (cleaned.length === 0) return "";
   const normalized = posix.normalize(cleaned).replace(/\/+$/u, "");
   if (normalized === ".") return "";

@@ -34,12 +34,10 @@ checks:
     files:
       checks/check-diagnosis.ps1: checks/check-diagnosis.ps1
     run:
-      - powershell.exe
+      - pwsh.exe
       - -NoLogo
       - -NoProfile
       - -NonInteractive
-      - -InputFormat
-      - None
       - -File
       - checks/check-diagnosis.ps1
   - $type: trace

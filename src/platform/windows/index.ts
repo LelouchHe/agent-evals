@@ -1,4 +1,4 @@
-import { spawn } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { access, constants, lstat, open, realpath, stat, type FileHandle } from "node:fs/promises";
 import type { AddressInfo, Server } from "node:net";
@@ -126,13 +126,15 @@ export const windowsBackend: PlatformBackend = {
       terminate() {
         if (child.pid !== undefined) {
           try {
-            const killer = spawn("taskkill", ["/pid", String(child.pid), "/T", "/F"], {
+            // Run taskkill /T /F synchronously while the shell parent still exists so
+            // grandchildren (e.g. node.exe under cmd.exe) are terminated before cmd.exe exits.
+            execFileSync("taskkill", ["/pid", String(child.pid), "/T", "/F"], {
               stdio: "ignore",
               windowsHide: true,
+              timeout: 2_000,
             });
-            killer.unref();
           } catch {
-            // Fall back to direct kill below.
+            // Already exited or taskkill unavailable; fall back to direct kill below.
           }
           try {
             child.kill();

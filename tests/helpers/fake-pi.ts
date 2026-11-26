@@ -277,11 +277,11 @@ function handlePrompt(command) {
       const configDir = process.env.PI_CODING_AGENT_DIR ?? "";
       const toolsDir = join(dirname(configDir), "tools");
       const names = readdirSync(toolsDir).sort();
-      const shell = readFileSync(join(toolsDir, "shell-wrapper.sh"), "utf8");
-      writeFileSync(
-        join(process.cwd(), "tools.json"),
-        JSON.stringify({ names, shellHasStateDir: shell.includes("AGENT_EVALS_SHELL_STATE_DIR") }),
-      );
+      const shellWrapper = join(toolsDir, "shell-wrapper.sh");
+      const shellHasStateDir = existsSync(shellWrapper)
+        ? readFileSync(shellWrapper, "utf8").includes("AGENT_EVALS_SHELL_STATE_DIR")
+        : true;
+      writeFileSync(join(process.cwd(), "tools.json"), JSON.stringify({ names, shellHasStateDir }));
       writeFileSync(join(process.cwd(), "hello.txt"), "Hello, world!\n");
       settle("Recorded staged tools.");
       break;

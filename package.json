@@ -27,7 +27,7 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "typecheck": "tsc --noEmit",
-    "test": "node --test --test-timeout=30000",
+    "test": "node scripts/test.mjs",
     "test:package": "node --test --test-timeout=180000 tests/package-install.ts",
     "pretest": "npm run build",
     "check": "npm run lint && npm run format:check && npm run typecheck && npm test",
