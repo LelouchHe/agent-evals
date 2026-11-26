@@ -307,6 +307,55 @@ export const runner = {
     const record: EvaluationRecord = JSON.parse(await readFile(line.result, "utf8"));
     assert.equal(record.runner.finalText, "peak=1");
   }
+
+  // Checker-owned runners created via context.createRunner also serialize on concurrencyKey.
+  await mkdir(join(extensionDir, "keyed-check"), { recursive: true });
+  await writeFile(
+    join(extensionDir, "keyed-check", "index.mjs"),
+    `
+export const checker = {
+  type: "keyed-check",
+  params: { async safeParseAsync(raw) { return { success: true, data: raw }; } },
+  async create(parsed, context) {
+    const { runner } = await context.createRunner(parsed.runner);
+    return {
+      async check(checkContext) {
+        const outcome = await runner.run({
+          workspaceDir: checkContext.workspace.path,
+          homeDir: checkContext.home.path,
+          tmpDir: checkContext.runRootDir,
+          engineDir: checkContext.runRootDir,
+          configDir: checkContext.runRootDir,
+          runRootDir: checkContext.runRootDir,
+          input: "judge",
+          timeoutMs: checkContext.timeoutMs,
+          signal: checkContext.signal,
+        });
+        return [{ checker: "keyed-check", subject: "serialized", status: outcome.finalText === "peak=1" ? "pass" : "fail", reason: String(outcome.finalText) }];
+      },
+    };
+  },
+};
+`,
+  );
+  const judgePath = join(directory, "judge-case.yml");
+  const judgeResults = join(directory, "judge-results");
+  await writeFile(
+    judgePath,
+    stringify({
+      input: "task",
+      runner: { $type: "noop" },
+      checks: [{ $type: "keyed-check", runner: { $type: "keyed", key: "shared-judge-login" } }],
+      cases: { a: {}, b: {} },
+    }),
+  );
+  const judgeRun = await runCliProcess(
+    t,
+    CLI,
+    ["run", judgePath, "--jobs", "2", "--extension-dir", extensionDir, "--results-dir", judgeResults],
+    { cwd: directory, env: { ...process.env, TMPDIR: runs } },
+  );
+  assert.equal(judgeRun.code, 0, judgeRun.stderr);
 });
 
 test("--jobs rejects non-positive values and commands other than run", async (t) => {

@@ -175,8 +175,11 @@ test("--retain all copies workspace and home while excluding login files, hardli
   await assert.rejects(readFile(join(artifactsDir, "workspace", "workspace-token-alias.json")), { code: "ENOENT" });
   await assert.rejects(readFile(join(artifactsDir, "workspace", "escape-link.txt")), { code: "ENOENT" });
 
-  // `report` must ignore workspace files named `result.json` inside `artifacts/`.
+  // `report` must ignore workspace files named `result.json` inside `artifacts/`, even in an
+  // incomplete run directory that has no top-level `result.json`.
   assert.equal(await readFile(join(artifactsDir, "workspace", "result.json"), "utf8"), "not-a-record\n");
+  await mkdir(join(resultsDir, "incomplete-run", "artifacts", "workspace"), { recursive: true });
+  await writeFile(join(resultsDir, "incomplete-run", "artifacts", "workspace", "result.json"), "not-json\n");
   const reportRun = await runCliProcess(t, CLI, ["report", resultsDir], { cwd: directory });
   assert.equal(reportRun.code, 0, reportRun.stderr);
 

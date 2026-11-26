@@ -90,6 +90,8 @@ export interface PreparedEvaluation {
     readonly runnerType: string;
     readonly runner: Runner;
     readonly checks: readonly { readonly type: string; readonly checker: Checker }[];
+    /** Shared mutable resource keys across all runners created for this evaluation (case + checkers). */
+    readonly concurrencyKeys: readonly string[];
   };
 }
 
@@ -218,6 +220,8 @@ export async function executeEvaluation(prepared: PreparedEvaluation): Promise<E
       mkdir(join(engineDir, "baseline", "workspace"), { recursive: true, mode: 0o700 }),
       mkdir(join(engineDir, "baseline", "home"), { recursive: true, mode: 0o700 }),
     ]);
+    // Capture root identities immediately after creation so setup failures still retain safely.
+    [workspaceRoot, homeRoot] = await Promise.all([openRunRoot(workspaceDir), openRunRoot(homeDir)]);
 
     const fixture = request.case.config.fixture;
     if (fixture !== undefined) {
@@ -229,7 +233,6 @@ export async function executeEvaluation(prepared: PreparedEvaluation): Promise<E
       });
     }
     await placeCaseFiles(request.case, join(engineDir, "files", "workspace"), workspaceDir);
-    workspaceRoot = await openRunRoot(workspaceDir);
 
     // The runner places its own HOME content first; the case then overlays it without
     // touching login state, and only what the case placed becomes the HOME baseline.
@@ -273,7 +276,6 @@ export async function executeEvaluation(prepared: PreparedEvaluation): Promise<E
         await rm(homeStaging, { recursive: true, force: true });
       }
     }
-    homeRoot = await openRunRoot(homeDir);
 
     // Forwarders are written before the baseline snapshot, so it already holds them.
     const mocks = request.case.config.mocks;
@@ -555,6 +557,7 @@ async function prepareImplementations(
   runnerType: string;
   runner: Runner;
   checks: readonly { readonly type: string; readonly checker: Checker }[];
+  concurrencyKeys: readonly string[];
 }> {
   const mockTargets =
     request.case.config.mocks === undefined ? undefined : Object.keys(request.case.config.mocks.shell);
@@ -569,6 +572,7 @@ async function prepareImplementations(
   // The case runner's placeholders resolve once; a checker-declared runner arrives resolved with
   // the checker parameters it was written in, so neither declaration is walked twice.
   const caseRunnerParams = await substituteValues(paramsOf(request.case.config.runner), "runner", values);
+  const concurrencyKeys = new Set<string>();
   const createRunner = async (record?: ImplementationRecord): Promise<PreparedRunner> => {
     const declaration = record ?? request.case.config.runner;
     const definition = requireRunner(request.registry, declaration.$type);
@@ -579,7 +583,11 @@ async function prepareImplementations(
       structuredClone(record === undefined ? caseRunnerParams : paramsOf(record)),
       `runner "${definition.type}"`,
     );
-    return { type: definition.type, runner: await definition.create(params, context) };
+    const created = await definition.create(params, context);
+    if (created.concurrencyKey !== undefined) {
+      concurrencyKeys.add(created.concurrencyKey);
+    }
+    return { type: definition.type, runner: created };
   };
   const context: ImplementationContext = {
     authoringDir: request.case.dir,
@@ -604,7 +612,7 @@ async function prepareImplementations(
     checks.push({ type: definition.type, checker: await createChecker(definition, params, index, context) });
   }
 
-  return { runnerType: runnerDefinition.type, runner, checks };
+  return { runnerType: runnerDefinition.type, runner, checks, concurrencyKeys: [...concurrencyKeys] };
 }
 
 /**

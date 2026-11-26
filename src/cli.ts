@@ -198,15 +198,14 @@ async function runCommand(options: CliOptions): Promise<number> {
     await new Promise<void>((resolvePool) => {
       const schedule = () => {
         while (active < options.jobs && !abort.signal.aborted && firstError === undefined) {
-          const pos = pending.findIndex((index) => {
-            const key = prepared[index]!.registered.runner.concurrencyKey;
-            return key === undefined || !inFlightKeys.has(key);
-          });
+          const pos = pending.findIndex((index) =>
+            prepared[index]!.registered.concurrencyKeys.every((key) => !inFlightKeys.has(key)),
+          );
           if (pos === -1) break;
           const [index] = pending.splice(pos, 1);
           const entry = prepared[index!]!;
-          const key = entry.registered.runner.concurrencyKey;
-          if (key !== undefined) inFlightKeys.add(key);
+          const keys = entry.registered.concurrencyKeys;
+          for (const key of keys) inFlightKeys.add(key);
           active += 1;
           void executeEvaluation(entry)
             .then(
@@ -219,7 +218,7 @@ async function runCommand(options: CliOptions): Promise<number> {
               },
             )
             .finally(() => {
-              if (key !== undefined) inFlightKeys.delete(key);
+              for (const key of keys) inFlightKeys.delete(key);
               active -= 1;
               schedule();
               if (active === 0 && (pending.length === 0 || abort.signal.aborted || firstError !== undefined)) {
@@ -425,13 +424,14 @@ async function findResultFiles(path: string): Promise<string[]> {
     return [path];
   }
   const entries = await readdir(path, { withFileTypes: true });
-  // A directory with `result.json` is a single run record; do not recurse into its `artifacts/`.
+  // A directory with `result.json` is a single run record; do not recurse into its subdirectories.
   if (entries.some((entry) => !entry.isDirectory() && entry.name === "result.json")) {
     return [join(path, "result.json")];
   }
   const found: string[] = [];
   for (const entry of entries) {
-    if (entry.isDirectory()) {
+    // Never descend into retained artifact trees, even for an incomplete run with no `result.json`.
+    if (entry.isDirectory() && entry.name !== "artifacts") {
       for (const file of await findResultFiles(join(path, entry.name))) found.push(file);
     }
   }

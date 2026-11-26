@@ -203,7 +203,6 @@ class FileChecker implements Checker {
           const found = pattern.regex ? searches(pattern.source, text) : text.includes(pattern.source);
           if (found) hits[index] = displayPath;
         }
-        if (hits.every((hit) => hit !== undefined)) break;
       }
     } catch (error) {
       readError = errorMessage(error);
