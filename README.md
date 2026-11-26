@@ -5,14 +5,14 @@
 
 A toolkit for evaluating AI agent systems on the real CLI and harness layer.
 
-Requirements: Node.js 24+ on macOS (`sandbox-exec`), Linux, or WSL2 (`bubblewrap` / `bwrap` with unprivileged user namespaces; native Windows and WSL1 are not supported). See [Platforms](https://github.com/LelouchHe/agent-evals/blob/main/docs/platforms.md) for backend details and [Setup](https://github.com/LelouchHe/agent-evals/blob/main/docs/setup.md) for `.env` and harness directories. [Roadmap](https://github.com/LelouchHe/agent-evals/blob/main/docs/roadmap.md) lists what is still open.
+Requirements: Node.js 24+ on macOS (`sandbox-exec`), Linux, WSL2 (`bubblewrap` / `bwrap` with unprivileged user namespaces), or native Windows (`win-sandbox.exe`; WSL1 is not supported). See [Platforms](https://github.com/LelouchHe/agent-evals/blob/main/docs/platforms.md) for backend details and [Setup](https://github.com/LelouchHe/agent-evals/blob/main/docs/setup.md) for `.env` and harness directories. [Roadmap](https://github.com/LelouchHe/agent-evals/blob/main/docs/roadmap.md) lists what is still open.
 
 > **Status: pre-1.0.** Breaking changes ship in a minor release until 1.0.
 
 ## Why Agent Evals
 
 - **Evaluate the whole agent system, not a bare model API.** Outcomes depend on the model _plus_ its harness, skills, instructions and tool loop. One generic [ACP runner](https://github.com/LelouchHe/agent-evals/blob/main/docs/configuration.md#acp-runner-type-acp) drives unmodified [Pi](https://github.com/LelouchHe/agent-evals/blob/main/examples/agents/pi.yml), [Claude Code](https://github.com/LelouchHe/agent-evals/blob/main/examples/agents/claude.yml) and [GitHub Copilot CLI](https://github.com/LelouchHe/agent-evals/blob/main/examples/agents/copilot.yml) side by side, so changing a skill, instruction, flag or harness is a controlled experiment.
-- **Host-native OS sandboxing, not Linux containers.** Each run executes on the host under macOS Seatbelt or Linux `bubblewrap` in its own run root with a private `HOME` and workspace ([layout](https://github.com/LelouchHe/agent-evals/blob/main/docs/setup.md#how-isolated-harness-homes-work)). Host toolchains and platform behavior stay real, while operator dotfiles, login keychains, rubrics and check-time acceptance tests stay unreachable to the agent.
+- **Host-native OS sandboxing, not Linux containers.** Each run executes on the host under macOS Seatbelt, Linux `bubblewrap`, or Windows sandbox users (`win-sandbox.exe`) in its own run root with a private `HOME` and workspace ([layout](https://github.com/LelouchHe/agent-evals/blob/main/docs/setup.md#how-isolated-harness-homes-work)). Host toolchains and platform behavior stay real, while operator dotfiles, login keychains, rubrics and check-time acceptance tests stay unreachable to the agent.
 - **Three evidence sources, deterministic first.** Checks read workspace side effects (`file`, sandboxed `shell`), host-recorded calls to [mocked commands](https://github.com/LelouchHe/agent-evals/blob/main/docs/mocks.md) (`mock`) and the run's trace (`trace`), with an LLM `judge` only where qualitative judgment is needed. A `noop` baseline runner catches checks that pass without an agent.
 
 ## What a Case Looks Like
@@ -92,16 +92,16 @@ Additional examples showcase other angles of the toolkit:
 
 ## Documentation
 
-| Document                                                                                            | Question it answers                                                                  |
-| --------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------ |
-| [Setup](https://github.com/LelouchHe/agent-evals/blob/main/docs/setup.md)                           | How do I install the CLI, configure `.env`, and prepare Pi, Claude Code and Copilot? |
-| [Writing Cases](https://github.com/LelouchHe/agent-evals/blob/main/docs/cases.md)                   | How should tasks, fixtures, baselines and assertions be designed?                    |
-| [Configuration Reference](https://github.com/LelouchHe/agent-evals/blob/main/docs/configuration.md) | How do YAML files, placeholders, runners, checkers and result records work?          |
-| [Mocks](https://github.com/LelouchHe/agent-evals/blob/main/docs/mocks.md)                           | How do I substitute or spy on shell commands, and what does `mocks.json` contain?    |
-| [Extensions](https://github.com/LelouchHe/agent-evals/blob/main/docs/extensions.md)                 | How do I write and load a custom runner or checker?                                  |
-| [Platforms](https://github.com/LelouchHe/agent-evals/blob/main/docs/platforms.md)                   | Which host OSes are supported (macOS, Linux, WSL2) and how each sandbox works?       |
-| [Architecture](https://github.com/LelouchHe/agent-evals/blob/main/docs/architecture.md)             | How do the modules cooperate, and what runtime/development limits apply today?       |
-| [Roadmap](https://github.com/LelouchHe/agent-evals/blob/main/docs/roadmap.md)                       | What is planned next (M6 sandbox config, M7 MCP mocks), and where are past archives? |
+| Document                                                                                            | Question it answers                                                                            |
+| --------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
+| [Setup](https://github.com/LelouchHe/agent-evals/blob/main/docs/setup.md)                           | How do I install the CLI, configure `.env`, and prepare Pi, Claude Code and Copilot?           |
+| [Writing Cases](https://github.com/LelouchHe/agent-evals/blob/main/docs/cases.md)                   | How should tasks, fixtures, baselines and assertions be designed?                              |
+| [Configuration Reference](https://github.com/LelouchHe/agent-evals/blob/main/docs/configuration.md) | How do YAML files, placeholders, runners, checkers and result records work?                    |
+| [Mocks](https://github.com/LelouchHe/agent-evals/blob/main/docs/mocks.md)                           | How do I substitute or spy on shell commands, and what does `mocks.json` contain?              |
+| [Extensions](https://github.com/LelouchHe/agent-evals/blob/main/docs/extensions.md)                 | How do I write and load a custom runner or checker?                                            |
+| [Platforms](https://github.com/LelouchHe/agent-evals/blob/main/docs/platforms.md)                   | Which host OSes are supported (macOS, Linux, WSL2, native Windows) and how each sandbox works? |
+| [Architecture](https://github.com/LelouchHe/agent-evals/blob/main/docs/architecture.md)             | How do the modules cooperate, and what runtime/development limits apply today?                 |
+| [Roadmap](https://github.com/LelouchHe/agent-evals/blob/main/docs/roadmap.md)                       | What is planned next (M6 sandbox config, M7 MCP mocks), and where are past archives?           |
 
 Delivered milestone records (`M1`–`M5`) are preserved under [`docs/archive/`](https://github.com/LelouchHe/agent-evals/blob/main/docs/archive/).
 
@@ -116,7 +116,9 @@ Serialize checkout build/test/eval commands because `npm run build` replaces `di
 
 ## Releasing
 
-[CI](https://github.com/LelouchHe/agent-evals/blob/main/.github/workflows/ci.yml) runs the gate on macOS and Linux for every pull request and push to `main`. A release is a tag: push `vX.Y.Z` matching `package.json`'s version, and [publish](https://github.com/LelouchHe/agent-evals/blob/main/.github/workflows/publish.yml) re-runs that gate, publishes `@lelouchhe/agent-evals` to npm with provenance, and creates the GitHub release. The workflow needs the `NPM_TOKEN` repository secret: an npm token with publish rights for the `@lelouchhe` scope. A scoped package defaults to restricted, so the publish command passes `--access public`.
+[CI](https://github.com/LelouchHe/agent-evals/blob/main/.github/workflows/ci.yml) runs the deterministic `check` gate on macOS, Linux, and Windows for every pull request and push to `main`. It also defines an optional 3-OS live ACP `smoke` job (`pi-acp` running `deploy-runbook-posix` on macOS/Linux and `deploy-runbook-windows` on Windows): set the `OPENCODE_API_KEY` repository secret (`gh secret set OPENCODE_API_KEY`) to enable it on CI / `workflow_dispatch`, and remove the secret (`gh secret remove OPENCODE_API_KEY`) when you want `smoke` skipped automatically.
+
+A release is a tag: push `vX.Y.Z` matching `package.json`'s version, and [publish](https://github.com/LelouchHe/agent-evals/blob/main/.github/workflows/publish.yml) re-runs that gate, publishes `@lelouchhe/agent-evals` to npm with provenance, and creates the GitHub release. The workflow needs the `NPM_TOKEN` repository secret: an npm token with publish rights for the `@lelouchhe` scope. A scoped package defaults to restricted, so the publish command passes `--access public`.
 
 ## License
 

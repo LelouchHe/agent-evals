@@ -1,6 +1,6 @@
 # Setup
 
-Requirements: Node.js 24+ on macOS (`/usr/bin/sandbox-exec`), Linux, or WSL2 (`bubblewrap` / `bwrap` with unprivileged user namespaces; native Windows and WSL1 are not supported — see [Platforms](platforms.md)). `view` needs neither a harness nor credentials. `run` needs only what each declared runner needs: the native `pi` runner an installed `pi` CLI and provider key, the ACP runner its agent, `deps` and login prepared as below, and `noop` nothing. A `judge` adds no requirement of its own — it runs the runner it names, or the case's when it names none, so a case judged by an ACP runner needs no `pi` CLI.
+Requirements: Node.js 24+ on macOS (`/usr/bin/sandbox-exec`), Linux, WSL2 (`bubblewrap` / `bwrap` with unprivileged user namespaces), or native Windows (`win-sandbox.exe` + one-time Admin setup; WSL1 is not supported — see [Platforms](platforms.md)). `view` needs neither a harness nor credentials. `run` needs only what each declared runner needs: the native `pi` runner an installed `pi` CLI and provider key, the ACP runner its agent, `deps` and login prepared as below, and `noop` nothing. A `judge` adds no requirement of its own — it runs the runner it names, or the case's when it names none, so a case judged by an ACP runner needs no `pi` CLI.
 
 ## Install the CLI
 
@@ -131,6 +131,25 @@ security add-generic-password -U -a "$USER" -s copilot-github-token -w
 ```
 
 Reference it in `.env` as `COPILOT_GITHUB_TOKEN="!security find-generic-password -w -s copilot-github-token"`.
+
+## Native Windows Setup
+
+On native Windows, run the one-time setup from an elevated PowerShell prompt to build `win-sandbox.exe` and provision the dedicated sandbox users (`agent-evals-online` and `agent-evals-offline`), Windows Defender Firewall rule, and `C:\ProgramData\agent-evals\runs`:
+
+```powershell
+cargo build --release --manifest-path native/win-sandbox/Cargo.toml
+pwsh -NoProfile -File scripts/windows-sandbox-setup.ps1
+```
+
+Normal `agent-evals` runs execute as your standard non-admin user (no elevation required). To remove the local accounts, firewall rule, and credentials file later, run `pwsh -NoProfile -File scripts/windows-sandbox-setup.ps1 -Teardown` as Administrator.
+
+To prepare Pi on Windows and run the native Windows ACP example:
+
+```powershell
+pwsh -NoProfile -File examples/agents/pi-setup.ps1 C:\agent-evals-home\pi
+# Add OPENCODE_API_KEY and PI_DEPS=C:\agent-evals-home\pi\deps to .env, then:
+npm run eval -- run examples/cases/deploy-runbook-windows/case.yml --case pi-with-skill
+```
 
 ## Verify Readiness
 
