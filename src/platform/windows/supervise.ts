@@ -41,7 +41,7 @@ export async function spawnSupervised(options: SpawnSupervisedOptions): Promise<
     readableRoots: options.policy.readableRoots,
     writableFiles: options.policy.writableFiles ?? [],
     readableFiles: options.policy.readableFiles ?? [],
-    writeRestrictedOnly: false,
+    writeRestrictedOnly: true,
     controlPipe,
   };
   await writeFile(configPath, JSON.stringify(config), "utf8");

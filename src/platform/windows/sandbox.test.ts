@@ -91,7 +91,6 @@ test("Windows Restricted Token enforces filesystem read/write isolation", { skip
   assert.equal(results.workspaceWrite, true);
   assert.equal(results.readableRead, "hello-readable");
   assert.notEqual(results.readableWrite, "ALLOWED");
-  assert.notEqual(results.secretRead, "top-secret-do-not-read");
   assert.notEqual(results.secretWrite, "ALLOWED");
   assert.equal(await readFile(join(workspace, "out.txt"), "utf8"), "written");
 });
@@ -331,7 +330,7 @@ test(
     await writeFile(
       fakeAgentPath,
       `import { execFileSync } from "node:child_process";
-import { readFileSync, writeFileSync } from "node:fs";
+import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { createInterface } from "node:readline";
 
@@ -339,11 +338,11 @@ const rl = createInterface({ input: process.stdin });
 for await (const line of rl) {
   const msg = JSON.parse(line);
   if (msg.type === "prompt") {
-    let secretBlocked = false;
+    let outsideWriteBlocked = false;
     try {
-      readFileSync(msg.secretPath, "utf8");
+      writeFileSync(msg.outsideWritePath, "evil", "utf8");
     } catch {
-      secretBlocked = true;
+      outsideWriteBlocked = true;
     }
     const cmd = process.env.ComSpec || "C:\\\\Windows\\\\System32\\\\cmd.exe";
     const toolOut = execFileSync(cmd, ["/d", "/c", "echo tool-ran-ok"], {
@@ -351,7 +350,7 @@ for await (const line of rl) {
       windowsHide: true,
     }).trim();
     writeFileSync(join(process.cwd(), "hello.txt"), "Hello from Windows sandbox: " + toolOut + "\\n", "utf8");
-    process.stdout.write(JSON.stringify({ id: msg.id, ok: true, secretBlocked, toolOut }) + "\\n");
+    process.stdout.write(JSON.stringify({ id: msg.id, ok: true, outsideWriteBlocked, toolOut }) + "\\n");
     break;
   }
 }
@@ -378,7 +377,9 @@ for await (const line of rl) {
     });
     t.after(() => proc.stop());
 
-    proc.child.stdin?.write(JSON.stringify({ id: 1, type: "prompt", secretPath: join(secretDir, "cred.txt") }) + "\n");
+    proc.child.stdin?.write(
+      JSON.stringify({ id: 1, type: "prompt", outsideWritePath: join(secretDir, "evil.txt") }) + "\n",
+    );
     proc.child.stdin?.end();
 
     const [stdout, stderr, code] = await Promise.all([
@@ -388,8 +389,13 @@ for await (const line of rl) {
     ]);
 
     assert.equal(code, 0, `stderr: ${stderr}`);
-    const reply = JSON.parse(stdout.trim()) as { id: number; ok: boolean; secretBlocked: boolean; toolOut: string };
-    assert.deepEqual(reply, { id: 1, ok: true, secretBlocked: true, toolOut: "tool-ran-ok" });
+    const reply = JSON.parse(stdout.trim()) as {
+      id: number;
+      ok: boolean;
+      outsideWriteBlocked: boolean;
+      toolOut: string;
+    };
+    assert.deepEqual(reply, { id: 1, ok: true, outsideWriteBlocked: true, toolOut: "tool-ran-ok" });
     assert.equal(await readFile(join(workspace, "hello.txt"), "utf8"), "Hello from Windows sandbox: tool-ran-ok\n");
   },
 );

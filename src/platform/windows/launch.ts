@@ -18,7 +18,7 @@ export async function spawnSandboxed(options: SpawnSandboxedOptions): Promise<Ch
     readableRoots: options.policy.readableRoots,
     writableFiles: options.policy.writableFiles ?? [],
     readableFiles: options.policy.readableFiles ?? [],
-    writeRestrictedOnly: false,
+    writeRestrictedOnly: true,
   };
   await writeFile(configPath, JSON.stringify(config), "utf8");
 
