@@ -54,7 +54,14 @@ import { createCheckSandbox } from "./check-sandbox.ts";
 import { parseImplementationParams } from "./params.ts";
 import { truncate, truncateNullable } from "./truncate.ts";
 import { substituteValues, type ValueSource } from "./values.ts";
-import { assertRunRoot, isMissing, isProtectedHomePath, openRunRoot, type RunRoot } from "./workspace.ts";
+import {
+  assertRunRoot,
+  isMissing,
+  isProtectedHomePath,
+  openRunRoot,
+  resolveWorkspacePath,
+  type RunRoot,
+} from "./workspace.ts";
 
 const DEFAULT_TIMEOUT_MS = 300_000;
 const CHECK_ABORT_GRACE_MS = 12_000;
@@ -192,6 +199,7 @@ export async function executeEvaluation(prepared: PreparedEvaluation): Promise<E
   let artifacts: EvaluationRecord["artifacts"] | undefined;
   let protectedPaths: readonly string[] = registered.runner.homeFiles ?? [];
   const protectedIdentities: string[] = [];
+  let protectedIdentitiesError: string | undefined;
   let runnerRecord: EvaluationRecord["runner"] = {
     type: registered.runnerType,
     status: "error",
@@ -253,7 +261,7 @@ export async function executeEvaluation(prepared: PreparedEvaluation): Promise<E
     protectedPaths = [...new Set([...protectedPaths, ...preparedProtected])];
     // Login state is protected by the file the filesystem actually holds at each declared
     // path, so a differently-cased or otherwise normalised spelling cannot alias it.
-    await recordProtectedIdentities(homeDir, protectedPaths, protectedIdentities);
+    await recordProtectedIdentities(homeRoot, protectedPaths, protectedIdentities);
     const homePlacements = homeEntries(request.case.config.files);
     const homeStaging = join(engineDir, "files", "home");
     if (homePlacements.length > 0) {
@@ -338,7 +346,13 @@ export async function executeEvaluation(prepared: PreparedEvaluation): Promise<E
       }
       // Re-record login file identities after the runner stops so an atomic credential refresh
       // (new inode) stays protected from checks and artifact retention.
-      await recordProtectedIdentities(homeDir, protectedPaths, protectedIdentities);
+      try {
+        await recordProtectedIdentities(homeRoot, protectedPaths, protectedIdentities);
+      } catch (caught) {
+        protectedIdentitiesError = errorMessage(caught);
+        diagnostics.push(`failed to inspect protected login state: ${protectedIdentitiesError}`);
+        error ??= `failed to inspect protected login state: ${protectedIdentitiesError}`;
+      }
     }
 
     const runnerStatus: RunnerStatus = stopFailed
@@ -357,7 +371,7 @@ export async function executeEvaluation(prepared: PreparedEvaluation): Promise<E
       finalText: outcome === undefined ? null : truncateNullable(outcome.finalText, MAX_RECORDED_TEXT),
       ...(usage === undefined ? {} : { usage }),
     };
-    if (outcome !== undefined) {
+    if (outcome !== undefined && protectedIdentitiesError === undefined) {
       diagnostics.push(...outcome.diagnostics);
       checks = await runChecks(
         registered.checks,
@@ -387,6 +401,9 @@ export async function executeEvaluation(prepared: PreparedEvaluation): Promise<E
     } else if (runnerStatus !== "completed") {
       status = "error";
       error ??= "runner failed before checks could run";
+    } else if (protectedIdentitiesError !== undefined) {
+      status = "error";
+      error ??= `failed to inspect protected login state: ${protectedIdentitiesError}`;
     } else if (mockFailed) {
       status = "error";
       error ??= "a mock fault ended the run";
@@ -416,18 +433,28 @@ export async function executeEvaluation(prepared: PreparedEvaluation): Promise<E
       }
     }
     if (shouldRetain(request.retain ?? "none", status, request.case.config.expect)) {
-      try {
-        paths = await createResultDirectory(request.resultsDir, runId);
-        const artifactsDir = join(paths.directory, "artifacts");
-        await retainRunArtifacts(workspaceRoot, homeRoot, artifactsDir, {
-          paths: protectedPaths,
-          identities: protectedIdentities,
-        });
-        artifacts = { status: "retained", path: "artifacts" };
-      } catch (caught) {
-        const message = errorMessage(caught);
+      if (protectedIdentitiesError !== undefined) {
+        const message = `cannot verify protected login state: ${protectedIdentitiesError}`;
         artifacts = { status: "failed", error: message };
         diagnostics.push(`failed to retain artifacts: ${message}`);
+      } else {
+        let artifactsDir: string | undefined;
+        try {
+          paths = await createResultDirectory(request.resultsDir, runId);
+          artifactsDir = join(paths.directory, "artifacts");
+          await retainRunArtifacts(workspaceRoot, homeRoot, artifactsDir, {
+            paths: protectedPaths,
+            identities: protectedIdentities,
+          });
+          artifacts = { status: "retained", path: "artifacts" };
+        } catch (caught) {
+          if (artifactsDir !== undefined) {
+            await rm(artifactsDir, { recursive: true, force: true }).catch(() => {});
+          }
+          const message = errorMessage(caught);
+          artifacts = { status: "failed", error: message };
+          diagnostics.push(`failed to retain artifacts: ${message}`);
+        }
       }
     }
     try {
@@ -474,14 +501,22 @@ function shouldRetain(retain: RetainArtifacts, status: RunStatus, expect: Resolv
 }
 
 async function recordProtectedIdentities(
-  homeDir: string,
+  homeRoot: RunRoot,
   protectedPaths: readonly string[],
   identities: string[],
 ): Promise<void> {
   const seen = new Set(identities);
   for (const path of protectedPaths) {
+    let resolved: string;
     try {
-      const info = await lstat(join(homeDir, path), { bigint: true });
+      // Follow in-HOME symlinks (matching ACP login copy-back) while rejecting escaping/broken links.
+      resolved = await resolveWorkspacePath(homeRoot, path);
+    } catch (error) {
+      if (isMissing(error)) continue;
+      throw error;
+    }
+    try {
+      const info = await lstat(resolved, { bigint: true });
       if (info.isFile()) {
         const id = fileIdentity(info);
         if (!seen.has(id)) {

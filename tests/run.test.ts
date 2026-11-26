@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { link, mkdir, readFile, readdir, rename, writeFile } from "node:fs/promises";
+import { link, mkdir, readFile, readdir, rename, symlink, unlink, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { test } from "node:test";
 import { stringify } from "yaml";
@@ -851,6 +851,63 @@ test("refreshed login file inode is re-recorded after runner stops so judge refu
 
   const custom = createRegistry();
   addRunner(custom, refreshingRunner, "built-in");
+  addChecker(custom, judgeChecker, "built-in");
+  const record = await runEvaluation({
+    case: await loadCase(casePath),
+    registry: custom,
+    resultsDir,
+    tempParent,
+    envSource: createEnvSource(dir),
+  });
+
+  assert.equal(record.status, "error");
+  assert.equal(record.checks[0]?.status, "error");
+  assert.match(record.checks[0]?.reason ?? "", /refusing to stage protected file/);
+  assert.deepEqual(await readdir(tempParent), []);
+});
+
+test("in-HOME symlink login target is recorded after runner stops so judge refuses staging it", async (t) => {
+  const dir = await makeTempDir(t, "ae-symlink-login-");
+  const resultsDir = await makeTempDir(t, "ae-symlink-login-results-");
+  const tempParent = await makeTempDir(t, "ae-symlink-login-runs-");
+  const casePath = join(dir, "case.yml");
+  await writeFile(
+    casePath,
+    stringify({
+      input: "Do the task.",
+      checks: [{ $type: "judge", files: ["~/target-secret.json"], rubric: ["ok"] }],
+      runner: { $type: "symlink-refreshing" },
+    }),
+  );
+
+  const symlinkRunner: RunnerDefinition<Record<string, never>> = {
+    type: "symlink-refreshing",
+    home: true,
+    params: z.strictObject({}),
+    create() {
+      return {
+        homeFiles: [".auth/token.json"],
+        async prepareHome(ctx) {
+          const authDir = join(ctx.homeDir, ".auth");
+          await mkdir(authDir, { recursive: true });
+          await writeFile(join(authDir, "token.json"), '{"token":"initial"}');
+          return [".auth/token.json"];
+        },
+        async run(ctx) {
+          const target = join(ctx.homeDir, "target-secret.json");
+          const linkPath = join(ctx.homeDir, ".auth", "token.json");
+          await writeFile(target, '{"token":"refreshed-via-symlink"}');
+          await unlink(linkPath);
+          await symlink(target, linkPath);
+          return { finalText: '{"criteria":[{"pass":true,"reason":"ok"}]}', diagnostics: [] };
+        },
+        async stop() {},
+      };
+    },
+  };
+
+  const custom = createRegistry();
+  addRunner(custom, symlinkRunner, "built-in");
   addChecker(custom, judgeChecker, "built-in");
   const record = await runEvaluation({
     case: await loadCase(casePath),

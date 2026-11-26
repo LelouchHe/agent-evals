@@ -427,9 +427,7 @@ async function matchGlobFiles(
     }
   }
 
-  const pruneDepth = !segments.some(
-    (segment) => segment.includes("**") || (segment.includes("{") && !segment.includes("}")),
-  );
+  const pruneDepth = !segments.includes("**") && !normalized.includes("{");
   const shouldDescend = (dirRel: string): boolean => {
     if (!pruneDepth) return true;
     const depth = dirRel.split("/").length;

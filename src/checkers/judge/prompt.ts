@@ -60,7 +60,14 @@ function describe(entry: JudgeEvidence): string {
     : `${displayPath}: the run produced no such file; it does not exist.`;
 }
 
+const LINE_BREAK_ESCAPES: Readonly<Record<string, string>> = {
+  "\r": "\\r",
+  "\n": "\\n",
+  "\u2028": "\\u2028",
+  "\u2029": "\\u2029",
+};
+
 /** Escape line-breaking control characters in agent-controlled paths so filenames stay single-line data. */
 function sanitizePromptPath(path: string): string {
-  return path.replace(/[\r\n\u2028\u2029]/gu, (char) => JSON.stringify(char).slice(1, -1));
+  return path.replace(/[\r\n\u2028\u2029]/gu, (char) => LINE_BREAK_ESCAPES[char] ?? char);
 }
