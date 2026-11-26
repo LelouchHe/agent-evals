@@ -42,7 +42,7 @@ async function writeScenario(t: Parameters<typeof makeTempDir>[0], options: Scen
         thinking: "low",
         executable: options.judgeExecutable,
       },
-      file: "hello.txt",
+      files: ["hello.txt"],
       rubric: ["hello.txt exists and contains Hello, world!."],
     },
   ];
@@ -116,7 +116,7 @@ test("integration: a judge without its own runner declaration runs the case's ru
     casePath,
     stringify({
       input: "Do the task.",
-      checks: [{ $type: "judge", file: "report.md", rubric: ["The report names the cause."] }],
+      checks: [{ $type: "judge", files: ["report.md"], rubric: ["The report names the cause."] }],
       runner: { $type: "stub", model: "stub/model" },
     }),
   );
@@ -167,7 +167,7 @@ test("a judge's declared runner resolves its placeholders once, without expandin
         {
           $type: "judge",
           runner: { $type: "stub", apiKey: "${env:JUDGE_KEY}" },
-          file: "report.md",
+          files: ["report.md"],
           rubric: ["The report names the cause."],
         },
       ],
@@ -211,7 +211,7 @@ test("an inherited runner gets its own copy of the case declaration", async (t) 
     casePath,
     stringify({
       input: "Do the task.",
-      checks: [{ $type: "judge", file: "report.md", rubric: ["x"] }],
+      checks: [{ $type: "judge", files: ["report.md"], rubric: ["x"] }],
       runner: { $type: "stub", state: { n: 0 } },
     }),
   );
@@ -245,8 +245,8 @@ test("a runner a checker declares is reported as that check's error, not the cas
     stringify({
       input: "Do the task.",
       checks: [
-        { $type: "judge", file: "report.md", rubric: ["x"] },
-        { $type: "judge", runner: { $type: "stub", apiKey: 42 }, file: "report.md", rubric: ["x"] },
+        { $type: "judge", files: ["report.md"], rubric: ["x"] },
+        { $type: "judge", runner: { $type: "stub", apiKey: 42 }, files: ["report.md"], rubric: ["x"] },
       ],
       runner: { $type: "stub", apiKey: "case-key" },
     }),
@@ -437,7 +437,7 @@ test("integration: a replaced workspace root is rejected instead of reading outs
       {
         $type: "judge",
         runner: { $type: "pi", model: "test/judge-model", executable: judge.executable },
-        file: "hello.txt",
+        files: ["hello.txt"],
         rubric: ["hello.txt exists"],
       },
     ],
@@ -727,7 +727,7 @@ test("integration: FIFO judge evidence fails promptly and the CLI exits", { time
       {
         $type: "judge",
         runner: { $type: "pi", model: "test/judge-model", executable: judge.executable },
-        file: "hello.txt",
+        files: ["hello.txt"],
         rubric: ["hello.txt exists"],
       },
     ],

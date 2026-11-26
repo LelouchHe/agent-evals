@@ -148,7 +148,7 @@ test("built CLI runs packaged supervisor, wrapper, and judge assets", async (t) 
         {
           $type: "judge",
           runner: { $type: "pi", model: "test/judge-model", executable: judge.executable },
-          file: "hello.txt",
+          files: ["hello.txt"],
           rubric: ["hello.txt exists and contains Hello, world!."],
         },
       ],

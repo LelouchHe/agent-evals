@@ -12,6 +12,7 @@ export type {
   CheckSandbox,
   CheckSandboxOutcome,
   CheckStatus,
+  HomeProtection,
   ImplementationContext,
   MockRecord,
   MockWiring,
@@ -37,14 +38,18 @@ export {
   type PatternSyntax,
 } from "./engine/config.ts";
 export { compileMockArgs } from "./engine/mock-match.ts";
-export { patternListSchema, patternSyntaxSchema, runRelativePathSchema } from "./engine/params.ts";
+export { patternListSchema, patternSyntaxSchema, runFilePathSchema, runRelativePathSchema } from "./engine/params.ts";
 export { searches } from "./engine/regex.ts";
 export {
   MAX_CHECK_BYTES,
   WorkspacePathError,
+  assertRunRoot,
+  fileIdentity,
   isMissing,
+  isProtectedHomePath,
   readRunFile,
   readRunTree,
+  resolveWorkspacePath,
   runPathExists,
   type RunEntryKind,
   type RunRoot,

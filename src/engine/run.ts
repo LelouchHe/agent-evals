@@ -16,6 +16,7 @@ import {
   requireRunner,
   type RecordedCheckResult,
   type Checker,
+  type HomeProtection,
   type ImplementationContext,
   type MockRecord,
   type PreparedRunner,
@@ -53,7 +54,7 @@ import { createCheckSandbox } from "./check-sandbox.ts";
 import { parseImplementationParams } from "./params.ts";
 import { truncate, truncateNullable } from "./truncate.ts";
 import { substituteValues, type ValueSource } from "./values.ts";
-import { assertRunRoot, isMissing, openRunRoot, type RunRoot } from "./workspace.ts";
+import { assertRunRoot, isMissing, isProtectedHomePath, openRunRoot, type RunRoot } from "./workspace.ts";
 
 const DEFAULT_TIMEOUT_MS = 300_000;
 const CHECK_ABORT_GRACE_MS = 12_000;
@@ -370,6 +371,7 @@ export async function executeEvaluation(prepared: PreparedEvaluation): Promise<E
         baselineRoot,
         homeRoot,
         homeBaselineRoot,
+        { paths: protectedPaths, identities: protectedIdentities },
         trace,
         mockRecords,
         timeoutMs,
@@ -475,16 +477,11 @@ function shouldRetain(retain: RetainArtifacts, status: RunStatus, expect: Resolv
   return outcome !== "pass" && outcome !== "expected-fail" && outcome !== "cancelled";
 }
 
-interface HomeExclusion {
-  readonly paths: readonly string[];
-  readonly identities: readonly string[];
-}
-
 async function retainRunArtifacts(
   workspaceRoot: RunRoot | undefined,
   homeRoot: RunRoot | undefined,
   artifactsDir: string,
-  excludeHome: HomeExclusion,
+  excludeHome: HomeProtection,
 ): Promise<void> {
   await mkdir(artifactsDir, { recursive: true, mode: 0o700 });
   if (workspaceRoot !== undefined) {
@@ -500,8 +497,8 @@ async function retainRunArtifacts(
   }
 }
 
-async function retainTree(sourceDir: string, destinationDir: string, exclude?: HomeExclusion): Promise<void> {
-  const excludedPaths = (exclude?.paths ?? []).map((entry) => normalizeExcludedPath(entry));
+async function retainTree(sourceDir: string, destinationDir: string, exclude?: HomeProtection): Promise<void> {
+  const excludedPaths = exclude?.paths ?? [];
   const excludedIdentities = new Set(exclude?.identities ?? []);
 
   const walk = async (currentSource: string, currentDest: string, relPrefix: string): Promise<void> => {
@@ -515,7 +512,7 @@ async function retainTree(sourceDir: string, destinationDir: string, exclude?: H
     await mkdir(currentDest, { recursive: true, mode: 0o700 });
     for (const entry of entries) {
       const rel = relPrefix.length === 0 ? entry.name : `${relPrefix}/${entry.name}`;
-      if (isExcludedPath(rel, excludedPaths)) continue;
+      if (isProtectedHomePath(rel, excludedPaths)) continue;
       const srcPath = join(currentSource, entry.name);
       let info;
       try {
@@ -536,17 +533,6 @@ async function retainTree(sourceDir: string, destinationDir: string, exclude?: H
   };
 
   await walk(sourceDir, destinationDir, "");
-}
-
-function normalizeExcludedPath(path: string): string {
-  const trimmed = path.replaceAll("\\", "/").replace(/^\/+/u, "").replace(/\/+$/u, "");
-  return process.platform === "darwin" ? trimmed.toLowerCase() : trimmed;
-}
-
-function isExcludedPath(relativePath: string, excludedPaths: readonly string[]): boolean {
-  if (excludedPaths.length === 0) return false;
-  const candidate = process.platform === "darwin" ? relativePath.toLowerCase() : relativePath;
-  return excludedPaths.some((excluded) => candidate === excluded || candidate.startsWith(`${excluded}/`));
 }
 
 async function prepareImplementations(
@@ -698,6 +684,7 @@ async function runChecks(
   baselineRoot: RunRoot,
   homeRoot: RunRoot,
   homeBaselineRoot: RunRoot,
+  protectedHome: HomeProtection,
   trace: readonly TraceEntry[] | undefined,
   mockRecords: readonly MockRecord[] | undefined,
   timeoutMs: number,
@@ -733,6 +720,7 @@ async function runChecks(
         baseline: baselineRoot,
         home: homeRoot,
         homeBaseline: homeBaselineRoot,
+        protectedHome,
         runRootDir: root,
         input: request.case.config.input,
         ...(trace === undefined ? {} : { trace }),

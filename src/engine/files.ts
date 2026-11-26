@@ -11,7 +11,7 @@ import {
   type ResolvedCase,
 } from "./config.ts";
 import { IgnoreTree, isIgnored } from "./ignore.ts";
-import { isMissing } from "./workspace.ts";
+import { fileIdentity, isMissing } from "./workspace.ts";
 
 /**
  * Place the case's workspace `files` entries into the prepared workspace. Entries are
@@ -172,10 +172,7 @@ export async function copyPlacement(
   );
 }
 
-/** The identity a filesystem uses for one file, independent of the spelling that reached it. */
-export function fileIdentity(info: { readonly dev: bigint; readonly ino: bigint }): string {
-  return `${info.dev}:${info.ino}`;
-}
+export { fileIdentity };
 
 /** Target-relative files a placement may never create or replace. */
 class ProtectedPaths {

@@ -168,6 +168,12 @@ export interface RegisteredRunnerDefinition {
   readonly home?: boolean;
 }
 
+/** HOME-relative paths and file identities belonging to runner login state, never exposed to checks. */
+export interface HomeProtection {
+  readonly paths: readonly string[];
+  readonly identities: readonly string[];
+}
+
 export interface CheckerContext {
   /** Prepared workspace root; its identity is verified for every operation. */
   readonly workspace: RunRoot;
@@ -177,6 +183,8 @@ export interface CheckerContext {
   readonly home: RunRoot;
   /** What the case placed in HOME, outside the evaluated agent's writable area. */
   readonly homeBaseline: RunRoot;
+  /** Runner login files in HOME that checks must not expose. */
+  readonly protectedHome?: HomeProtection;
   readonly runRootDir: string;
   readonly input: string;
   /** The runner's trace, when it records one. */

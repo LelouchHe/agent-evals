@@ -209,14 +209,22 @@ function handlePrompt(command) {
       settle("```json\n" + JSON.stringify({ criteria: [{ criterion: "a", pass: true, reason: "ok" }] }) + "\n```");
       break;
     case "judge-evidence": {
-      // Reports every entry of the judge's own workspace with its content, under whatever name
-      // the checker staged it. Nothing is looked up by a name the test chose.
+      // Reports every regular file in the judge's own workspace recursively with its content,
+      // under whatever relative path the checker staged it.
       const cwd = process.cwd();
-      const entries = readdirSync(cwd).sort();
-      const files = entries.map((name) => {
-        const path = join(cwd, name);
-        return `${name}=${statSync(path).isFile() ? readFileSync(path, "utf8").trim() : "(directory)"}`;
-      });
+      const files: string[] = [];
+      const walk = (dir: string, prefix: string): void => {
+        for (const name of readdirSync(dir).sort()) {
+          const full = join(dir, name);
+          const rel = prefix === "" ? name : `${prefix}/${name}`;
+          if (statSync(full).isDirectory()) {
+            walk(full, rel);
+          } else {
+            files.push(`${rel}=${readFileSync(full, "utf8").trim()}`);
+          }
+        }
+      };
+      walk(cwd, "");
       settle(
         JSON.stringify({
           criteria: [{ pass: true, reason: `files:${files.length === 0 ? "(none)" : files.join(" ")}` }],
