@@ -1,0 +1,36 @@
+name: Windows Restricted Token PoC
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - "poc/windows-restricted-token"
+
+jobs:
+  windows-poc:
+    runs-on: windows-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "24"
+          cache: npm
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: native/win-sandbox
+
+      - name: Build win-sandbox.exe (Rust)
+        working-directory: native/win-sandbox
+        run: cargo build --release
+
+      - name: Install Node dependencies
+        run: npm ci --force
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Run Windows Restricted Token PoC tests
+        run: node --test --test-timeout=30000 src/platform/windows/sandbox.test.ts
