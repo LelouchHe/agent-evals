@@ -1,6 +1,6 @@
 import { constants, type Stats } from "node:fs";
 import { lstat, open, readdir, realpath } from "node:fs/promises";
-import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { basename, dirname, isAbsolute, join, posix, relative, resolve, sep } from "node:path";
 import { ConfigError, errorMessage } from "./config.ts";
 
 /** Largest file a check will read. Checks stay bounded and predictable. */
@@ -310,4 +310,28 @@ export function isMissing(error: unknown): boolean {
     "code" in error &&
     ((error as { code?: unknown }).code === "ENOENT" || (error as { code?: unknown }).code === "ENOTDIR")
   );
+}
+
+/** The identity a filesystem uses for one file, independent of the spelling that reached it. */
+export function fileIdentity(info: { readonly dev: bigint; readonly ino: bigint }): string {
+  return `${info.dev}:${info.ino}`;
+}
+
+/** True when `relativePath` is or lies under any protected HOME-relative path. */
+export function isProtectedHomePath(relativePath: string, protectedPaths: readonly string[]): boolean {
+  if (protectedPaths.length === 0) return false;
+  const candidate = normalizeProtectedPath(relativePath);
+  if (candidate.length === 0) return false;
+  return protectedPaths.some((entry) => {
+    const excluded = normalizeProtectedPath(entry);
+    return excluded.length > 0 && (candidate === excluded || candidate.startsWith(`${excluded}/`));
+  });
+}
+
+function normalizeProtectedPath(path: string): string {
+  const cleaned = path.replace(/^\/+/u, "").replace(/\/+$/u, "");
+  if (cleaned.length === 0) return "";
+  const normalized = posix.normalize(cleaned).replace(/\/+$/u, "");
+  if (normalized === ".") return "";
+  return process.platform === "darwin" ? normalized.toLowerCase() : normalized;
 }

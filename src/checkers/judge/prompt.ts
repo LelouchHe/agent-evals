@@ -1,10 +1,11 @@
 /** One evidence artifact staged into the judge's own workspace. */
 export interface JudgeEvidence {
-  /** Run-relative path the artifact is staged at, and the path the prompt names. */
+  /** Workspace-relative path in the judge's workspace (or the unmatched glob pattern). */
   readonly path: string;
-  /** Whether the run produced it. A requested file the run never wrote is staged as absent. */
+  /** Whether the run produced it. A requested file or glob with no match is staged as absent. */
   readonly present: boolean;
-  readonly kind: "file" | "trace";
+  readonly kind: "file" | "directory" | "glob" | "trace";
+  readonly source?: "workspace" | "home";
 }
 
 export interface JudgePromptInput {
@@ -43,10 +44,31 @@ export function buildJudgePrompt(input: JudgePromptInput): string {
 }
 
 function describe(entry: JudgeEvidence): string {
+  const displayPath = sanitizePromptPath(entry.path);
   if (entry.kind === "trace") {
-    return `${entry.path}: the run's messages, reasoning and tool calls in order. A tool call shows what the agent asked for and what its harness reported, not every effect.`;
+    return `${displayPath}: the run's messages, reasoning and tool calls in order. A tool call shows what the agent asked for and what its harness reported, not every effect.`;
+  }
+  const origin = entry.source === "home" ? "the run's HOME" : "the run's workspace";
+  if (entry.kind === "glob") {
+    return `${displayPath}: no files matched this pattern in ${origin}.`;
+  }
+  if (entry.kind === "directory") {
+    return `${displayPath}: an empty directory from ${origin} (no regular files).`;
   }
   return entry.present
-    ? `${entry.path}: a file the run left in its workspace.`
-    : `${entry.path}: the run produced no such file; it does not exist.`;
+    ? `${displayPath}: a file from ${origin}.`
+    : `${displayPath}: the run produced no such file; it does not exist.`;
+}
+
+const LINE_BREAK_ESCAPES: Readonly<Record<string, string>> = {
+  "\r": "\\r",
+  "\n": "\\n",
+  "\u0085": "\\u0085",
+  "\u2028": "\\u2028",
+  "\u2029": "\\u2029",
+};
+
+/** Escape line-breaking control characters in agent-controlled paths so filenames stay single-line data. */
+function sanitizePromptPath(path: string): string {
+  return path.replace(/[\r\n\u0085\u2028\u2029]/gu, (char) => LINE_BREAK_ESCAPES[char] ?? char);
 }

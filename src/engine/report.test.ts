@@ -330,3 +330,28 @@ test("a matrix keeps a carriage return out of the table", () => {
   assert.ok(text.includes("| 1 | trace line one | 1/1 |"), text);
   assert.equal(text.includes("\r"), false, text);
 });
+
+test("session and matrix headers show judge harness/model when judge checks are present", () => {
+  const noJudge = formatReport([record(1, { name: "a", status: "pass", checks: [] })]);
+  assert.doesNotMatch(noJudge, /· judge /);
+
+  const explicitDeclarations = [{ $type: "judge", runner: { $type: "pi", model: "deepseek/judge" }, rubric: ["ok"] }];
+  const explicitRun = record(1, {
+    name: "a",
+    status: "pass",
+    declarations: explicitDeclarations,
+    checks: [["ok", "pass", undefined, 0]],
+  });
+  assert.match(formatReport([explicitRun]), /· judge pi\/deepseek\/judge ·/);
+  assert.match(formatMatrix([explicitRun]), /· judge pi\/deepseek\/judge ·/);
+
+  const inheritedRun = record(2, {
+    name: "b",
+    status: "pass",
+    agent: "agents/claude.yml",
+    model: "haiku",
+    declarations: [{ $type: "judge", rubric: ["ok"] }],
+    checks: [["ok", "pass", undefined, 0]],
+  });
+  assert.match(formatReport([inheritedRun]), /· judge claude\/haiku ·/);
+});

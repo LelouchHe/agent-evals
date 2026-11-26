@@ -355,27 +355,30 @@ What `trace` cannot prove about the text: it is what the agent said in the recor
 
 ### Judge Checker (`$type: judge`)
 
-| Parameter | Contract                                                   |
-| --------- | ---------------------------------------------------------- |
-| `runner`  | Optional runner declaration; absent means the case's own.  |
-| `file`    | Optional workspace-relative evidence file.                 |
-| `trace`   | Optional literal `true`: give the run's trace as evidence. |
-| `rubric`  | Required non-empty list of non-empty statements.           |
+| Parameter | Contract                                                                     |
+| --------- | ---------------------------------------------------------------------------- |
+| `runner`  | Optional runner declaration; absent means the case's own.                    |
+| `files`   | Optional non-empty list of workspace or `~/` file, directory, or glob paths. |
+| `trace`   | Optional literal `true`: give the run's trace as evidence.                   |
+| `rubric`  | Required non-empty list of non-empty statements.                             |
 
-At least one of `file` and `trace` is required; with both, both are staged and the model decides which statements need which. The trace is staged as `trace.md`, so `file` may not name that path or anything under it.
+At least one of `files` and `trace` is required; with both, both are staged and the model decides which statements need which. `~/` paths require a runner that provides a HOME and may not name `~/` or `~/\.` itself.
 
 ```yaml
 - $type: judge
   # Absent here: the judge runs this case's runner with its harness, model and
   # credentials. Name a runner to judge with a different one.
+  files:
+    - diagnosis.md
+    - ~/mine/space/Plan/**/*.md
   trace: true
   rubric:
     - The agent consulted the deploy-runbook skill before writing the diagnosis.
 ```
 
-The judge runs a runner over its own workspace: it stages the named regular file at the same relative path and the rendered trace as `trace.md`, then asks that runner to decide the rubric from those files. The staged path is the declared one with `.` segments and trailing separators resolved, and the prompt names that staged path; a backslash is part of a file name here, not a separator. The prompt carries the task, the rubric and the names of the evidence files, never their contents, so one file the model must read chooses how much of a large trace or file it opens. The run's workspace itself is never handed over, and its evidence is read once through the same regular-file access every checker uses. A file the run never wrote is staged as absent and the prompt says so; the trace is rendered in run order without cutting, with each tool call's title, kind, status, input and output. Use it for process questions a fixed rule cannot answer, such as whether the agent's account matches what it actually did. Skill consultations have a deterministic checker ([`trace`](#trace-checker-type-trace)); do not judge them twice. A requested call shows what the agent asked for, not every effect, and harnesses differ in what they report (reasoning may be absent). `trace: true` with a runner that records no trace, such as the native Pi runner, is a checker error. Everything about how the judge reaches a model — harness, model, credentials, tools and sandbox — is the declared runner's decision, and so is whether the evidence is read at all: the judge stages the files, it never parses them itself, so a runner whose harness cannot read its own workspace answers from the prompt alone. A runner that cannot produce a verdict is a checker error that says so, not a failed check: `noop` returns no text at all, and a harness whose model is configured outside the case only helps if that configuration supplies one. Declare a `runner` for the judge where the inherited one cannot judge.
+The judge runs a runner over its own workspace: it stages workspace files under `workspace/<path>`, HOME files under `home/<path>`, and the rendered trace as `trace.md`, then asks that runner to decide the rubric from those files. Directory structure is preserved under each prefix, so workspace files, HOME files and `trace.md` never collide. Each entry in `files` may name a regular file, a directory (staged recursively), or a glob (`*`, `**`, `?`, `[...]`, `{a,b}`); `.` segments and trailing separators are normalized, and a backslash is part of a file name rather than a separator. Runner login files are protected the same way as `--retain`: an explicit path or file identity pointing to protected login state is rejected as a checker error, while directory and glob walks skip protected paths, protected file identities, symlinks and special files. The prompt carries the task, the rubric and the staged evidence paths, never their contents, so the model chooses how much of a large trace or file it opens. The run's workspace and HOME themselves are never handed over, and each file is read once through the same regular-file access every checker uses. Missing files, empty directories and unmatched globs are reported in the prompt rather than failing the check; the trace is rendered in run order without cutting, with each tool call's title, kind, status, input and output. Use it for process questions a fixed rule cannot answer, such as whether the agent's account matches what it actually did. Skill consultations have a deterministic checker ([`trace`](#trace-checker-type-trace)); do not judge them twice. A requested call shows what the agent asked for, not every effect, and harnesses differ in what they report (reasoning may be absent). `trace: true` with a runner that records no trace, such as the native Pi runner, is a checker error. Everything about how the judge reaches a model — harness, model, credentials, tools and sandbox — is the declared runner's decision, and so is whether the evidence is read at all: the judge stages the files, it never parses them itself, so a runner whose harness cannot read its own workspace answers from the prompt alone. A runner that cannot produce a verdict is a checker error that says so, not a failed check: `noop` returns no text at all, and a harness whose model is configured outside the case only helps if that configuration supplies one. Declare a `runner` for the judge where the inherited one cannot judge.
 
-Verdict JSON must have exactly one criterion per rubric item, in rubric order, each with a boolean `pass` and a non-empty `reason`. A `criterion` label is ignored, as are extra fields; a malformed object, an absent verdict, or the wrong number of criteria is a checker error rather than a failed check. A valid negative judgment is `fail`.
+Verdict JSON must have exactly one criterion per rubric item, in rubric order, each with a boolean `pass` and a non-empty `reason`. A `criterion` label is ignored, as are extra fields; a malformed object, an absent verdict, or the wrong number of criteria is a checker error rather than a failed check. A valid negative judgment is `fail`. When a document includes `judge` checks, session and matrix reports include the declared judge harness/model (falling back to the case runner when omitted) on the document header line.
 
 Two limits follow from running a runner. A judge's declared parameters are substituted once, when the case loads, against the evaluated run: `${HOME}` and `${TMPDIR}` there name that run's directories, not the judge's private run root, so an agent file that points a harness at `${TMPDIR}` points it outside the judge's writable directories. And the runner's own arrangement still applies, including anything it keeps outside the run root, such as an ACP login store it may read and copy back.
 

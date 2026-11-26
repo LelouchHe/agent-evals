@@ -2,7 +2,7 @@ import { lstat, readdir, stat } from "node:fs/promises";
 import { join, posix } from "node:path";
 import { z } from "zod";
 import type { CheckResult, Checker, CheckerContext, CheckerDefinition } from "../../engine/registry.ts";
-import { patternListSchema, runRelativePathSchema } from "../../engine/params.ts";
+import { patternListSchema, runFilePathSchema } from "../../engine/params.ts";
 import { truncate } from "../../engine/truncate.ts";
 import { searches } from "../../engine/regex.ts";
 import {
@@ -24,16 +24,9 @@ function isGlob(path: string): boolean {
   return GLOB_META.test(path);
 }
 
-/** A workspace path, or `~/…` for a file in the run HOME. `~/` alone names HOME, not a file. */
-const filePathSchema = runRelativePathSchema.superRefine((value, context) => {
-  if (value === "~/" || value === "~/.") {
-    context.addIssue({ code: "custom", message: "must name a file or directory inside HOME, not HOME itself" });
-  }
-});
-
 const fileCheckParamsSchema = z
   .strictObject({
-    path: filePathSchema,
+    path: runFilePathSchema,
     exists: z.boolean().optional(),
     changed: z.boolean().optional(),
     matches: patternListSchema.optional(),

@@ -1,3 +1,4 @@
+import { posix } from "node:path";
 import { z, type ZodError, type ZodType } from "zod";
 import {
   ConfigError,
@@ -79,6 +80,16 @@ export const runRelativePathSchema = z
   .refine((value) => !value.startsWith("/") && !value.split(/[\\/]+/).includes(".."), {
     message: "must be relative to the run workspace without '..' segments",
   });
+
+/** A workspace path, or `~/…` for a file or directory inside the run HOME. `~/` alone names HOME itself. */
+export const runFilePathSchema = runRelativePathSchema.superRefine((value, context) => {
+  if (value.startsWith("~/")) {
+    const inner = posix.normalize(value.slice(2)).replace(/\/+$/u, "");
+    if (inner === "" || inner === ".") {
+      context.addIssue({ code: "custom", message: "must name a file or directory inside HOME, not HOME itself" });
+    }
+  }
+});
 
 /** Parse raw declared parameters exactly once with the implementation's Zod schema. */
 export async function parseImplementationParams<P>(

@@ -109,7 +109,7 @@ test("the packed CLI installs and runs without source or development dependencie
           apiKey: "${env:MY_KEY}",
           executable: judge.executable,
         },
-        file: "hello.txt",
+        files: ["hello.txt"],
         rubric: ["The file satisfies the task."],
       },
     ],
