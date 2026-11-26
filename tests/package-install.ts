@@ -135,6 +135,35 @@ test("the packed CLI installs and runs without source or development dependencie
     const loggedIn = await invoke(bin, ["login", agent.path]);
     assert.equal(loggedIn.code, 0, loggedIn.stderr);
     assert.equal(await readFile(join(agent.login, ".auth/token"), "utf8"), "synthetic-token");
+
+    // Exercise the packaged mock forwarder (forwarder.sh + forwarder-client.mjs) through the installed CLI.
+    const mockAgent = await makeAcpAgent(t, "mocks");
+    const mockCase = join(mockAgent.root, "mock-case.yml");
+    await writeFile(
+      mockCase,
+      stringify({
+        input: "Check mocks.",
+        mocks: {
+          shell: {
+            id: { return: { exitCode: 7, stdout: "answer\n", stderr: "denied\n" } },
+            publish: { return: { stdout: "A\0B\u00ff" } },
+          },
+        },
+        runner: { $type: "acp", agent: "agent.yml" },
+        checks: [
+          { $type: "file", path: "call-out", matches: "/^answer\\n?$/" },
+          { $type: "file", path: "call-status", matches: "/^7$/" },
+          { $type: "mock", shell: ["id"], times: 1 },
+        ],
+      }),
+    );
+    const mockResults = join(root, "mock-results");
+    const mockRun = await runCliProcess(t, bin, ["run", mockCase, "--results-dir", mockResults], {
+      cwd,
+      env: { ...env, TMPDIR: root },
+      timeoutMs: 30_000,
+    });
+    assert.equal(mockRun.code, 0, mockRun.stdout + mockRun.stderr);
   }
   const viewed = await invoke(bin, ["view", configPath]);
   const built = await invoke(join(project, "dist/cli.js"), ["view", configPath]);

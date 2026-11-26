@@ -76,7 +76,7 @@ async function runProgram(
     supervised = await spawnSupervised({
       policy: {
         writableRoots: [options.workspaceDir, homeDir, tmpDir],
-        readableRoots: [],
+        readableRoots: stagingDir === undefined ? [] : [stagingDir],
         readAll: true,
         allowNetwork: false,
       },

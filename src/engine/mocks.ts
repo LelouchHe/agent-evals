@@ -75,22 +75,19 @@ export async function startMockHost(options: MockHostOptions): Promise<MockHost>
   const forwarderRoot = await realpath(forwarderDir);
 
   const nodeExecutable = await realpath(process.execPath);
-  const nodeDirectory = dirname(nodeExecutable);
   const clientPath = await realpath(FORWARDER_CLIENT);
-  const readableRoots = [
-    ...new Set([
-      nodeDirectory,
-      ...(basename(nodeDirectory) === "bin" ? [dirname(nodeDirectory)] : []),
-      dirname(clientPath),
-    ]),
-  ];
 
-  const forwarder = (await readFile(FORWARDER_ASSET, "utf8"))
-    .replace("__NODE__", quote(nodeExecutable))
-    .replace("__CLIENT__", quote(clientPath))
-    .replace("__BINDIR__", quote(forwarderRoot))
-    .replace("__SOCKET__", quote(socketPath))
-    .replace("__FAULT__", quote(faultPath));
+  const replacements: Readonly<Record<string, string>> = {
+    __NODE__: quote(nodeExecutable),
+    __CLIENT__: quote(clientPath),
+    __BINDIR__: quote(forwarderRoot),
+    __SOCKET__: quote(socketPath),
+    __FAULT__: quote(faultPath),
+  };
+  const forwarder = (await readFile(FORWARDER_ASSET, "utf8")).replace(
+    /__NODE__|__CLIENT__|__BINDIR__|__SOCKET__|__FAULT__/g,
+    (token) => replacements[token]!,
+  );
   await writeFile(scriptPath, forwarder, { mode: 0o500, flag: "wx" });
 
   for (const target of Object.keys(options.shell).sort()) {
@@ -105,7 +102,7 @@ export async function startMockHost(options: MockHostOptions): Promise<MockHost>
     forwarderDir,
     socketPath,
     denyTargets: denyTargetsOf(options.shell),
-    readableRoots,
+    readableFiles: [nodeExecutable, clientPath],
   };
   const records: MockRecord[] = [];
   const faults: string[] = [];

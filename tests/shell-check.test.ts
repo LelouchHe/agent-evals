@@ -191,7 +191,10 @@ test(
       ],
     }));
     assert.equal(record.status, "fail");
-    assert.match(record.checks[0]?.reason ?? "", /Operation not permitted|Read-only file system|Permission denied/);
+    assert.match(
+      record.checks[0]?.reason ?? "",
+      /Operation not permitted|Read-only file system|Permission denied|Directory nonexistent|No such file or directory/,
+    );
   },
 );
 

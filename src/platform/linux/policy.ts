@@ -1,6 +1,6 @@
 import { spawnSync } from "node:child_process";
 import { accessSync, constants, lstatSync, readlinkSync, realpathSync, statSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { dirname, isAbsolute, join, resolve } from "node:path";
 import type { CreateSandboxPolicyOptions, SandboxPolicy } from "../types.ts";
 
 export type { SandboxPolicy };
@@ -8,6 +8,7 @@ export const SYSTEM_PATH = ["/usr/bin", "/bin", "/usr/sbin", "/sbin"] as const;
 
 const DISTRO_TOP_DIRS = ["/bin", "/sbin", "/lib", "/lib64"] as const;
 const NETWORK_ETC_FILES = ["/etc/resolv.conf", "/etc/hosts"] as const;
+const PROBE_TRUE_PATHS = ["/usr/bin/true", "/bin/true"] as const;
 
 let cachedBwrapPath: string | undefined;
 
@@ -34,10 +35,15 @@ export function assertBwrapAvailable(): void {
       "the Linux sandbox requires bubblewrap (bwrap), which was not found on PATH; install bubblewrap (e.g. apt-get install bubblewrap)",
     );
   }
-  const probe = spawnSync(bwrap, ["--ro-bind", "/", "/", "--unshare-pid", "--die-with-parent", "--", "true"], {
-    encoding: "utf8",
-    timeout: 5_000,
-  });
+  const probeTrue = PROBE_TRUE_PATHS.find((candidate) => safeStat(candidate)?.isFile() === true);
+  if (probeTrue === undefined) {
+    throw new Error("the Linux sandbox could not find /usr/bin/true or /bin/true for preflight verification");
+  }
+  const probe = spawnSync(
+    bwrap,
+    ["--ro-bind", "/", "/", "--unshare-pid", "--die-with-parent", "--new-session", "--", probeTrue],
+    { encoding: "utf8", timeout: 5_000 },
+  );
   if (probe.error !== undefined || probe.status !== 0) {
     const detail = (probe.stderr || probe.error?.message || `exit status ${String(probe.status)}`).trim();
     throw new Error(
@@ -54,7 +60,7 @@ export function bwrapExecutablePath(): string {
 
 /** Build the `bwrap` argument list implementing `policy` around `command` and `args`. */
 export function buildBwrapArgs(policy: SandboxPolicy, command: string, args: readonly string[]): string[] {
-  const flags: string[] = ["--unshare-pid", "--die-with-parent"];
+  const flags: string[] = ["--unshare-pid", "--die-with-parent", "--new-session"];
   if (!policy.allowNetwork) {
     flags.push("--unshare-net");
   }
@@ -73,8 +79,31 @@ export function buildBwrapArgs(policy: SandboxPolicy, command: string, args: rea
     flags.push("--symlink", target, dest);
   };
 
+  const remountRo: string[] = [];
   if (policy.readAll === true) {
     flags.push("--ro-bind", "/", "/", "--dev", "/dev", "--proc", "/proc");
+    if (!policy.allowNetwork) {
+      // Mask host runtime/temp directories so pathname AF_UNIX sockets in /tmp and /run
+      // cannot be reached when network access is denied; explicit readable/writable roots
+      // beneath /tmp are re-mounted below, then the tmpfs parents are remounted read-only.
+      flags.push("--tmpfs", "/tmp");
+      remountRo.push("/tmp");
+      if (safeLstat("/run") !== undefined) {
+        flags.push("--tmpfs", "/run");
+        remountRo.push("/run");
+      }
+      const varRun = safeLstat("/var/run");
+      if (varRun !== undefined && varRun.isDirectory() && !varRun.isSymbolicLink()) {
+        flags.push("--tmpfs", "/var/run");
+        remountRo.push("/var/run");
+      }
+      for (const root of policy.readableRoots) {
+        mountReadablePath(root, addRoBind, addSymlink);
+      }
+      for (const file of policy.readableFiles ?? []) {
+        mountReadablePath(file, addRoBind, addSymlink);
+      }
+    }
   } else {
     addRoBind("/usr");
     for (const dir of DISTRO_TOP_DIRS) {
@@ -91,8 +120,16 @@ export function buildBwrapArgs(policy: SandboxPolicy, command: string, args: rea
     }
     if (policy.allowNetwork) {
       for (const file of NETWORK_ETC_FILES) {
+        const info = safeLstat(file);
+        if (info === undefined || !info.isSymbolicLink()) continue;
         const real = safeRealpath(file);
-        if (real !== undefined && !real.startsWith("/etc/") && !real.startsWith("/usr/")) {
+        if (real === undefined) continue;
+        // Mount the final resolved target at the first symlink hop so multi-hop resolver
+        // chains (systemd-resolved, OrbStack, WSL2) resolve inside the read-only /etc bind.
+        const firstHop = resolve(dirname(file), readlinkSync(file));
+        if (!firstHop.startsWith("/etc/") && !firstHop.startsWith("/usr/")) {
+          addRoBind(real, firstHop);
+        } else if (!real.startsWith("/etc/") && !real.startsWith("/usr/")) {
           addRoBind(real);
         }
       }
@@ -114,20 +151,30 @@ export function buildBwrapArgs(policy: SandboxPolicy, command: string, args: rea
     rwMounted.add(path);
     flags.push("--bind", path, path);
   };
+  const mountWritablePath = (rawPath: string): void => {
+    const resolved = resolve(rawPath);
+    const info = safeLstat(resolved);
+    if (info === undefined) return;
+    if (info.isSymbolicLink()) {
+      const real = safeRealpath(resolved);
+      if (real === undefined) return;
+      addRwBind(real);
+      addSymlink(real, resolved);
+      return;
+    }
+    addRwBind(resolved);
+    const real = safeRealpath(resolved);
+    if (real !== undefined && real !== resolved) addRwBind(real);
+  };
 
   for (const root of policy.writableRoots) {
-    const resolved = resolve(root);
-    if (safeLstat(resolved) === undefined) continue;
-    addRwBind(resolved);
-    const real = safeRealpath(resolved);
-    if (real !== undefined && real !== resolved) addRwBind(real);
+    mountWritablePath(root);
   }
   for (const file of policy.writableFiles ?? []) {
-    const resolved = resolve(file);
-    if (safeLstat(resolved) === undefined) continue;
-    addRwBind(resolved);
-    const real = safeRealpath(resolved);
-    if (real !== undefined && real !== resolved) addRwBind(real);
+    mountWritablePath(file);
+  }
+  for (const dir of remountRo) {
+    flags.push("--remount-ro", dir);
   }
 
   // Denied executables come last, masking each real binary with non-executable /dev/null.
@@ -172,13 +219,17 @@ function findBwrap(): string | undefined {
     "/bin/bwrap",
     ...(process.env.PATH ?? "")
       .split(":")
-      .filter((entry) => entry.length > 0)
+      .filter((entry) => entry.length > 0 && isAbsolute(entry))
       .map((entry) => join(entry, "bwrap")),
   ];
   for (const candidate of candidates) {
+    const real = safeRealpath(candidate);
+    if (real === undefined) continue;
+    const info = safeStat(real);
+    if (info === undefined || !info.isFile()) continue;
     try {
-      accessSync(candidate, constants.X_OK);
-      return candidate;
+      accessSync(real, constants.X_OK);
+      return real;
     } catch {
       // Keep searching.
     }

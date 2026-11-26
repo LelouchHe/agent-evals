@@ -19,6 +19,7 @@ test("bwrap policy enables PID cleanup and unshares network when denied", () => 
   );
   assert.ok(args.includes("--unshare-pid"));
   assert.ok(args.includes("--die-with-parent"));
+  assert.ok(args.includes("--new-session"));
   assert.ok(args.includes("--unshare-net"));
   assert.deepEqual(args.slice(-2), ["--", "/bin/true"]);
 });

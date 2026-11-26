@@ -466,6 +466,21 @@ test("a false workspace rule hides the real script and does not require one", as
   assert.deepEqual(faults, []);
 });
 
+test("large stdout and stderr payloads flush completely through the forwarder", async (t) => {
+  const bigOut = "o".repeat(256 * 1024);
+  const bigErr = "e".repeat(256 * 1024);
+  const { host: server } = await host(t, {
+    bigtool: [{ action: { kind: "return", result: { exitCode: 3, stdout: bigOut, stderr: bigErr } } }],
+  });
+  const result = await call(join(server.wiring.forwarderDir, "bigtool"));
+  assert.equal(result.status, 3);
+  assert.equal(result.stdout.length, bigOut.length);
+  assert.equal(result.stderr.length, bigErr.length);
+  assert.equal(result.stdout, bigOut);
+  assert.equal(result.stderr, bigErr);
+  await server.close();
+});
+
 test("pass inherits standard input through the forwarder", async (t) => {
   const { host: server } = await host(t, { cat: [{ action: { kind: "pass" } }] });
   const child = spawn(join(server.wiring.forwarderDir, "cat"), [], { stdio: ["pipe", "pipe", "pipe"] });

@@ -1,23 +1,37 @@
 import { spawn } from "node:child_process";
+import { accessSync, constants } from "node:fs";
 import type { Readable } from "node:stream";
 import { setTimeout as delay } from "node:timers/promises";
 import type { SpawnSupervisedOptions, SupervisedProcess } from "../types.ts";
 import { buildBwrapArgs, bwrapExecutablePath } from "./policy.ts";
 
+const SCRIPT_BINARY = "/usr/bin/script";
+
 /**
- * Start a command inside a bubblewrap PID namespace (`--unshare-pid --die-with-parent`).
+ * Start a command inside a bubblewrap PID namespace (`--unshare-pid --die-with-parent --new-session`).
  * When the workload exits or `bwrap` is terminated, the kernel tears down the PID namespace
- * and sends SIGKILL to every remaining descendant automatically.
+ * and sends SIGKILL to every remaining descendant automatically. Interactive runs allocate a
+ * sandbox-owned PTY via `util-linux` `script` so the workload never holds the operator's terminal.
  */
 export async function spawnSupervised(options: SpawnSupervisedOptions): Promise<SupervisedProcess> {
   const executable = bwrapExecutablePath();
   const [program, ...args] = options.command;
+  const bwrapArgs = buildBwrapArgs(options.policy, program, args);
   const mode = options.interactive ? "inherit" : "pipe";
   const stdio: Array<"inherit" | "pipe" | "ignore"> = [mode, mode, mode];
   // Optional private report pipe at FD 5 (FD 3 and 4 unused on Linux).
   if (options.report === true) stdio.push("ignore", "ignore", "pipe");
 
-  const child = spawn(executable, buildBwrapArgs(options.policy, program, args), {
+  let launchCommand = executable;
+  let launchArgs = bwrapArgs;
+  if (options.interactive) {
+    assertScriptAvailable();
+    const quoted = [executable, ...bwrapArgs].map(shellQuote).join(" ");
+    launchCommand = SCRIPT_BINARY;
+    launchArgs = ["-q", "-e", "-f", "-c", quoted, "/dev/null"];
+  }
+
+  const child = spawn(launchCommand, launchArgs, {
     cwd: options.cwd,
     env: options.env,
     stdio,
@@ -84,4 +98,18 @@ export async function spawnSupervised(options: SpawnSupervisedOptions): Promise<
     })());
 
   return { child, completion, stop, ...(report === undefined ? {} : { report }) };
+}
+
+function assertScriptAvailable(): void {
+  try {
+    accessSync(SCRIPT_BINARY, constants.X_OK);
+  } catch {
+    throw new Error(
+      `interactive Linux sandboxes require ${SCRIPT_BINARY} (util-linux) to isolate the controlling terminal`,
+    );
+  }
+}
+
+function shellQuote(value: string): string {
+  return `'${value.replaceAll("'", "'\\''")}'`;
 }

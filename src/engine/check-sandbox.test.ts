@@ -77,7 +77,11 @@ test(
       const denied = await dirs.run(["/bin/sh", "-c", 'printf denied > "$1"', "sh", path]);
       assert.equal(denied.kind, "exited", label);
       assert.notEqual(denied.kind === "exited" ? denied.exitCode : 0, 0, label);
-      assert.match(denied.output, /Operation not permitted|Read-only file system|Permission denied/, label);
+      assert.match(
+        denied.output,
+        /Operation not permitted|Read-only file system|Permission denied|Directory nonexistent|No such file or directory/,
+        label,
+      );
     }
   },
 );
@@ -134,6 +138,25 @@ test(
     assert.equal(outcome.kind, "exited", outcome.output);
     assert.equal(outcome.kind === "exited" ? outcome.exitCode : 1, 0, outcome.output);
     assert.match(outcome.output.trim(), /^(?:EPERM|ECONNREFUSED|ENETUNREACH)$/);
+
+    // Host pathname AF_UNIX sockets in /tmp must also be unreachable.
+    const socketPath = join(dirs.outside, "host.sock");
+    const unixServer = createServer(() => {});
+    await new Promise<void>((resolve) => unixServer.listen(socketPath, resolve));
+    t.after(() => {
+      unixServer.close();
+    });
+    const unixScript = [
+      "const net = require('node:net');",
+      `const socket = net.connect(${JSON.stringify(socketPath)});`,
+      "socket.on('error', (error) => { console.log(error.code); process.exit(['EPERM', 'ENOENT', 'EACCES'].includes(error.code) ? 0 : 1); });",
+      "socket.on('connect', () => { console.log('connected'); process.exit(1); });",
+      "setTimeout(() => { console.log('timeout'); process.exit(1); }, 5000);",
+    ].join(" ");
+    const unixOutcome = await dirs.run([process.execPath, "-e", unixScript]);
+    assert.equal(unixOutcome.kind, "exited", unixOutcome.output);
+    assert.equal(unixOutcome.kind === "exited" ? unixOutcome.exitCode : 1, 0, unixOutcome.output);
+    assert.match(unixOutcome.output.trim(), /^(?:EPERM|ENOENT|EACCES)$/);
   },
 );
 

@@ -96,10 +96,25 @@ async function runLookupCommand(
       const chunks: Buffer[] = [];
       let bytes = 0;
       let settled = false;
-      let timedOut = false;
-      let aborted = false;
+      let terminating: Error | undefined;
+      let reapTimer: NodeJS.Timeout | undefined;
 
-      const killGroup = (): void => {
+      const finish = (fn: () => void): void => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        if (reapTimer !== undefined) clearTimeout(reapTimer);
+        signal?.removeEventListener("abort", onAbort);
+        fn();
+      };
+
+      const terminate = (reason: Error): void => {
+        if (terminating !== undefined) return;
+        terminating = reason;
+        clearTimeout(timer);
+        signal?.removeEventListener("abort", onAbort);
+        child.stdout.destroy();
+        child.stderr.destroy();
         if (child.pid !== undefined) {
           try {
             process.kill(-child.pid, "SIGKILL");
@@ -107,35 +122,27 @@ async function runLookupCommand(
             // Already exited.
           }
         }
-      };
-
-      const finish = (fn: () => void): void => {
-        if (settled) return;
-        settled = true;
-        clearTimeout(timer);
-        signal?.removeEventListener("abort", onAbort);
-        fn();
+        // Wait briefly for the direct child to be reaped, without hanging on detached
+        // descendants that may still hold inherited file descriptors.
+        reapTimer = setTimeout(() => finish(() => reject(reason)), 200);
+        reapTimer.unref();
       };
 
       const onAbort = (): void => {
-        aborted = true;
-        killGroup();
+        terminate(Object.assign(new Error("aborted"), { code: "ABORT_ERR" }));
       };
 
       const timer = setTimeout(() => {
-        timedOut = true;
-        killGroup();
+        terminate(Object.assign(new Error("timed out"), { killed: true }));
       }, COMMAND_TIMEOUT_MS);
 
       signal?.addEventListener("abort", onAbort, { once: true });
 
       const onData = (chunk: Buffer, collect: boolean): void => {
+        if (terminating !== undefined) return;
         bytes += chunk.length;
         if (bytes > COMMAND_MAX_OUTPUT_BYTES) {
-          killGroup();
-          finish(() =>
-            reject(Object.assign(new Error("maxBuffer exceeded"), { code: "ERR_CHILD_PROCESS_STDIO_MAXBUFFER" })),
-          );
+          terminate(Object.assign(new Error("maxBuffer exceeded"), { code: "ERR_CHILD_PROCESS_STDIO_MAXBUFFER" }));
           return;
         }
         if (collect) chunks.push(chunk);
@@ -144,14 +151,28 @@ async function runLookupCommand(
       child.stdout.on("data", (chunk: Buffer) => onData(chunk, true));
       child.stderr.on("data", (chunk: Buffer) => onData(chunk, false));
       child.on("error", (error) => {
-        finish(() => reject(error));
+        finish(() => reject(terminating ?? error));
+      });
+      child.on("exit", (code, exitSignal) => {
+        if (terminating !== undefined) {
+          const reason = terminating;
+          finish(() => reject(reason));
+          return;
+        }
+        if (code !== 0) {
+          finish(() => {
+            if (code !== null) {
+              reject(Object.assign(new Error("non-zero exit"), { code }));
+            } else {
+              reject(Object.assign(new Error("signalled"), { signal: exitSignal ?? "SIGKILL" }));
+            }
+          });
+        }
       });
       child.on("close", (code, exitSignal) => {
         finish(() => {
-          if (aborted) {
-            reject(Object.assign(new Error("aborted"), { code: "ABORT_ERR" }));
-          } else if (timedOut) {
-            reject(Object.assign(new Error("timed out"), { killed: true }));
+          if (terminating !== undefined) {
+            reject(terminating);
           } else if (code === 0) {
             resolve(Buffer.concat(chunks).toString("utf8"));
           } else if (code !== null) {

@@ -221,12 +221,23 @@ export async function harnessEnvironment(
   const mocks = options.mocks;
   const depsLink = join(dirs.runRootDir, "deps");
   const pathEntries = [...source.path.map((path) => join(depsLink, path)), ...SYSTEM_PATH];
+  let denyExecutables: readonly string[] = [];
+  if (mocks !== undefined) {
+    denyExecutables = await resolveDeniedExecutables(mocks.denyTargets, pathEntries);
+    const runtimeNode = await realpath(process.execPath);
+    if (denyExecutables.includes(runtimeNode)) {
+      throw new ConfigError(
+        `cannot deny ${runtimeNode} while mocks are active because mock forwarders execute with this Node interpreter`,
+      );
+    }
+  }
   const policy = createSandboxPolicy({
     writableRoots: [dirs.home, dirs.workspace, dirs.tmp],
     // A mocked command's forwarder is readable and executable, never writable.
-    readableRoots: mocks === undefined ? [depsLink] : [depsLink, mocks.forwarderDir, ...(mocks.readableRoots ?? [])],
+    readableRoots: mocks === undefined ? [depsLink] : [depsLink, mocks.forwarderDir],
+    ...(mocks?.readableFiles === undefined ? {} : { readableFiles: mocks.readableFiles }),
     ...(mocks === undefined ? {} : { writableFiles: [mocks.socketPath] }),
-    denyExecutables: mocks === undefined ? [] : await resolveDeniedExecutables(mocks.denyTargets, pathEntries),
+    denyExecutables,
     allowNetwork: true,
     interactive: options.interactive,
   });

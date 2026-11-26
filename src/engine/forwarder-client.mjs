@@ -1,17 +1,17 @@
 import { spawnSync } from "node:child_process";
 import { accessSync, appendFileSync, constants, realpathSync, statSync } from "node:fs";
 import { createConnection } from "node:net";
-import { basename, dirname, join } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 
 /**
  * Cross-platform mock forwarder client.
  *
  * Invoked by a tiny POSIX shell wrapper as:
- *   node forwarder-client.mjs <bindir> <socket> <fault> <self> [...args]
+ *   node .forwarder-client.mjs <bindir> <socket> <fault> <self> [...args]
  *
  * Reports the canonicalised invocation path and arguments to the engine's host socket over
- * a half-closed Unix domain connection, then either replays the host's mocked result or runs
- * the real command on `pass`.
+ * a half-closed Unix domain connection, then either replays the host's mocked result or execs
+ * the real command in place on `pass`.
  */
 
 const [bindir, socketPath, faultPath, rawSelf, ...args] = process.argv.slice(2);
@@ -41,7 +41,7 @@ function failUnavailable() {
   } catch {
     // Fault log is best-effort when the temporary directory is inaccessible.
   }
-  process.exit(126);
+  process.exitCode = 126;
 }
 
 function isExecutableFile(path) {
@@ -58,14 +58,15 @@ function findPassTarget() {
   if (self.startsWith(`${bindir}/`)) {
     for (const folder of (process.env.PATH ?? "").split(":")) {
       if (folder.length === 0) continue;
-      const candidate = join(folder, name);
+      // Resolve to an absolute path so relative entries such as `.` never trigger a PATH re-lookup.
+      const candidate = resolve(folder, name);
       if (!isExecutableFile(candidate)) continue;
       if (canonicalSelf(candidate) === self) continue;
       return candidate;
     }
     return undefined;
   }
-  const real = join(dirname(self), `.${name}`);
+  const real = resolve(dirname(self), `.${name}`);
   return isExecutableFile(real) ? real : undefined;
 }
 
@@ -73,17 +74,28 @@ function runPass() {
   const target = findPassTarget();
   if (target === undefined) {
     process.stderr.write(`${name}: Operation not permitted\n`);
-    process.exit(126);
+    process.exitCode = 126;
+    return;
+  }
+  if (typeof process.execve === "function") {
+    try {
+      process.execve(target, [target, ...args], process.env);
+    } catch {
+      process.stderr.write(`${name}: Operation not permitted\n`);
+      process.exitCode = 126;
+      return;
+    }
   }
   const result = spawnSync(target, args, { stdio: "inherit" });
   if (result.error !== undefined) {
     process.stderr.write(`${name}: Operation not permitted\n`);
-    process.exit(126);
+    process.exitCode = 126;
+    return;
   }
   if (result.signal !== null) {
     process.kill(process.pid, result.signal);
   }
-  process.exit(result.status ?? 1);
+  process.exitCode = result.status ?? 1;
 }
 
 const socket = createConnection(socketPath);
@@ -93,6 +105,7 @@ let settled = false;
 socket.on("error", () => {
   if (settled) return;
   settled = true;
+  socket.destroy();
   failUnavailable();
 });
 
@@ -103,23 +116,32 @@ socket.on("data", (chunk) => {
 socket.on("end", () => {
   if (settled) return;
   settled = true;
+  socket.destroy();
   const reply = Buffer.concat(chunks)
     .toString("utf8")
     .replace(/\r?\n$/, "");
-  if (reply.length === 0) failUnavailable();
+  if (reply.length === 0) {
+    failUnavailable();
+    return;
+  }
   const [kind, codeText, outText, errText] = reply.split(" ");
   if (kind === "pass") {
     runPass();
+    return;
   }
   const code = Number(codeText);
-  if (!Number.isInteger(code)) failUnavailable();
+  if (!Number.isInteger(code)) {
+    failUnavailable();
+    return;
+  }
   if (outText !== undefined && outText !== "" && outText !== "-") {
     process.stdout.write(Buffer.from(outText, "base64"));
   }
   if (errText !== undefined && errText !== "" && errText !== "-") {
     process.stderr.write(Buffer.from(errText, "base64"));
   }
-  process.exit(code);
+  // Leave the event loop to drain stdout/stderr naturally before exiting.
+  process.exitCode = code;
 });
 
 const payload = [self, ...args].map(encode).join("\n") + "\n";
