@@ -157,7 +157,6 @@ test("Windows Job Object kills backgrounded descendants on exit", { skip: !IS_WI
   const script = `
     const { spawn } = require("node:child_process");
     const child = spawn(process.execPath, ["-e", "setTimeout(() => {}, 60000)"], {
-      detached: true,
       stdio: "ignore",
     });
     child.unref();
@@ -250,7 +249,7 @@ for await (const line of rl) {
   const proc = await spawnSupervised({
     policy,
     policyDirectory: engine,
-    command: [process.execPath, fakeAgentPath],
+    command: [process.execPath, "--preserve-symlinks-main", "--preserve-symlinks", fakeAgentPath],
     cwd: workspace,
     env: { TEMP: workspace, TMP: workspace },
     interactive: false,
