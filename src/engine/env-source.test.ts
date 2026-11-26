@@ -1,15 +1,15 @@
 import assert from "node:assert/strict";
-import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { test } from "node:test";
 import { makeTempDir } from "../../tests/helpers/fake-pi-control.ts";
 import { createEnvSource } from "./env-source.ts";
 import { ConfigError } from "./config.ts";
 
-async function script(dir: string, name: string, body: string): Promise<void> {
+async function nodeScript(dir: string, name: string, body: string): Promise<string> {
   const path = join(dir, name);
-  await writeFile(path, `#!/bin/sh\n${body}\n`);
-  await chmod(path, 0o755);
+  await writeFile(path, `${body}\n`);
+  return `"${process.execPath}" "${path}"`;
 }
 
 function delay(ms: number): Promise<void> {
@@ -54,16 +54,24 @@ async function expectDead(pids: readonly number[]): Promise<void> {
 
 test("plain and command environment values are lazy, cached per key, and unused commands do not run", async (t) => {
   const dir = await makeTempDir(t, "ae-credentials-");
-  await script(dir, "emit.sh", "printf 'synthetic-command-key\\n'");
-  await script(dir, "count.sh", "printf x >> count\nprintf 'synthetic-count-key\\n'");
-  await script(dir, "unused.sh", "touch unused-ran\nprintf 'unused-key\\n'");
+  const emitCmd = await nodeScript(dir, "emit.mjs", 'process.stdout.write("synthetic-command-key\\n");');
+  const countCmd = await nodeScript(
+    dir,
+    "count.mjs",
+    'import { appendFileSync } from "node:fs"; appendFileSync("count", "x"); process.stdout.write("synthetic-count-key\\n");',
+  );
+  const unusedCmd = await nodeScript(
+    dir,
+    "unused.mjs",
+    'import { writeFileSync } from "node:fs"; writeFileSync("unused-ran", "1"); process.stdout.write("unused-key\\n");',
+  );
   await writeFile(
     join(dir, ".env"),
     [
       "AE_PLAIN_TEST=synthetic-plain-key",
-      'AE_COMMAND_TEST="!./emit.sh"',
-      'AE_COUNT_TEST="!./count.sh"',
-      'AE_UNUSED_TEST="!./unused.sh"',
+      `AE_COMMAND_TEST='!${emitCmd}'`,
+      `AE_COUNT_TEST='!${countCmd}'`,
+      `AE_UNUSED_TEST='!${unusedCmd}'`,
     ].join("\n") + "\n",
   );
 
@@ -79,12 +87,12 @@ test("plain and command environment values are lazy, cached per key, and unused 
 
 test("environment-value failures are actionable and do not expose command output", async (t) => {
   const dir = await makeTempDir(t, "ae-credentials-fail-");
-  await script(dir, "fail.sh", "printf 'STDERR-SENTINEL' >&2\nexit 7");
-  await script(dir, "empty.sh", "exit 0");
-  await script(dir, "large.sh", "node -e 'process.stdout.write(\"x\".repeat(70000))'");
+  const failCmd = await nodeScript(dir, "fail.mjs", 'process.stderr.write("STDERR-SENTINEL"); process.exit(7);');
+  const emptyCmd = await nodeScript(dir, "empty.mjs", "process.exit(0);");
+  const largeCmd = await nodeScript(dir, "large.mjs", 'process.stdout.write("x".repeat(70000));');
   await writeFile(
     join(dir, ".env"),
-    ['AE_FAIL_TEST="!./fail.sh"', 'AE_EMPTY_TEST="!./empty.sh"', 'AE_LARGE_TEST="!./large.sh"'].join("\n") + "\n",
+    [`AE_FAIL_TEST='!${failCmd}'`, `AE_EMPTY_TEST='!${emptyCmd}'`, `AE_LARGE_TEST='!${largeCmd}'`].join("\n") + "\n",
   );
   const source = createEnvSource(dir);
 
@@ -125,8 +133,12 @@ test("environment-value failures are actionable and do not expose command output
 
 test("cancelled and timed-out environment commands terminate the direct command", async (t) => {
   const dir = await makeTempDir(t, "ae-credentials-hang-");
-  await script(dir, "hang.sh", "printf '%s\\n' \"$$\" > hang.pid\nexec /bin/sleep 30");
-  await writeFile(join(dir, ".env"), 'AE_HANG_TEST="!./hang.sh"\n');
+  const hangCmd = await nodeScript(
+    dir,
+    "hang.mjs",
+    'import { writeFileSync } from "node:fs"; writeFileSync("hang.pid", String(process.pid) + "\\n"); setTimeout(() => {}, 30000);',
+  );
+  await writeFile(join(dir, ".env"), `AE_HANG_TEST='!${hangCmd}'\n`);
 
   const controller = new AbortController();
   const source = createEnvSource(dir, controller.signal);
@@ -143,8 +155,12 @@ test("cancelled and timed-out environment commands terminate the direct command"
   await assert.rejects(() => pending, /was cancelled/);
   await expectDead([cancelledPid]);
 
-  await script(dir, "timeout.sh", "printf '%s\\n' \"$$\" > timeout.pid\nexec /bin/sleep 30");
-  await writeFile(join(dir, ".env"), 'AE_TIMEOUT_TEST="!./timeout.sh"\n');
+  const timeoutCmd = await nodeScript(
+    dir,
+    "timeout.mjs",
+    'import { writeFileSync } from "node:fs"; writeFileSync("timeout.pid", String(process.pid) + "\\n"); setTimeout(() => {}, 30000);',
+  );
+  await writeFile(join(dir, ".env"), `AE_TIMEOUT_TEST='!${timeoutCmd}'\n`);
   const timeoutSource = createEnvSource(dir);
   const timeoutPending = timeoutSource.require("AE_TIMEOUT_TEST");
   const timeoutPid = await waitForPid(join(dir, "timeout.pid"));

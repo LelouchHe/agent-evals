@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import { closeSync, openSync, writeSync } from "node:fs";
 import { copyFile, lstat, mkdir, readdir, unlink } from "node:fs/promises";
 import { join } from "node:path";
+import { checkChildEnv } from "../platform/index.ts";
 
 /**
  * In-sandbox check-program launcher.
@@ -139,30 +140,9 @@ async function main(): Promise<void> {
     return;
   }
   try {
-    const childEnv: NodeJS.ProcessEnv = {
-      PATH: process.env.PATH,
-      HOME: process.env.HOME,
-      TMPDIR: process.env.TMPDIR,
-    };
-    if (process.platform === "win32") {
-      for (const key of [
-        "SystemRoot",
-        "WINDIR",
-        "SystemDrive",
-        "ComSpec",
-        "PATHEXT",
-        "TEMP",
-        "TMP",
-        "USERPROFILE",
-        "LOCALAPPDATA",
-        "APPDATA",
-      ]) {
-        if (process.env[key] !== undefined) childEnv[key] = process.env[key];
-      }
-    }
     const child = spawn(program, args, {
       cwd: process.cwd(),
-      env: childEnv,
+      env: checkChildEnv(process.env),
       stdio: ["ignore", "inherit", "inherit"],
       windowsHide: true,
     });

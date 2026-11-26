@@ -72,19 +72,11 @@ function finish(code: number): void {
   process.exit(code);
 }
 
-const isNodeScript = process.platform === "win32" && /\.(?:[cm]?js|[cm]?ts)$/iu.test(command);
-const isBatchScript = process.platform === "win32" && /\.(?:cmd|bat)$/iu.test(command);
-const child = isNodeScript
-  ? spawn(process.execPath, [command, ...args], {
-      stdio: ["inherit", "inherit", "inherit"],
-      env: process.env,
-      windowsHide: true,
-    })
-  : spawn(command, args, {
-      stdio: ["inherit", "inherit", "inherit"],
-      env: process.env,
-      ...(isBatchScript ? { shell: true, windowsHide: true } : {}),
-    });
+const child = spawn(command, args, {
+  stdio: ["inherit", "inherit", "inherit"],
+  env: process.env,
+  windowsHide: true,
+});
 
 let stopping = false;
 function stop(): void {

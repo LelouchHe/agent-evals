@@ -482,7 +482,7 @@ export const runner = {
   assert.equal(record.status, "pass", record.error);
   assert.equal(record.runner.finalText, "runner:external-runner");
   assert.equal(record.checks[0]?.subject, "checker:external-checker");
-  assert.match(result.stdout, /results: .*\/\.agent-evals\/[^/]+\/result\.json/);
+  assert.match(result.stdout, /results: .*[/\\]\.agent-evals[/\\][^/\\]+[/\\]result\.json/);
   assert.deepEqual(await readdir(tempParent), []);
 });
 

@@ -51,7 +51,7 @@ test("package metadata and built runtime assets point at the sole CLI implementa
     scripts?: Record<string, string>;
   };
   assert.equal(pkg.name, "@lelouchhe/agent-evals");
-  assert.deepEqual(pkg.os, ["darwin", "linux"]);
+  assert.deepEqual(pkg.os, ["darwin", "linux", "win32"]);
   assert.equal(pkg.bin?.["agent-evals"], "dist/cli.js");
   assert.equal(pkg.scripts?.eval, "node dist/cli.js");
   assert.deepEqual(pkg.files, ["dist", ".env.example"]);
@@ -141,7 +141,7 @@ test("built CLI runs packaged supervisor, wrapper, and judge assets", async (t) 
           matches: [
             '"supervisor.js"',
             '"safe-process-group.js"',
-            '"shell-wrapper.sh"',
+            ...(process.platform === "win32" ? [] : ['"shell-wrapper.sh"']),
             '"shellHasStateDir":true',
             // Every staged tool is a built .js/.sh asset, never a .ts source file.
             '/^\\{"names":\\["[a-z-]+\\.(js|sh)"(,"[a-z-]+\\.(js|sh)")*\\],"shellHasStateDir":true\\}$/',
@@ -194,7 +194,9 @@ test("built CLI runs packaged supervisor, wrapper, and judge assets", async (t) 
   assert.equal(record.cleanup.status, "removed");
   assert.deepEqual(
     record.checks.map((check) => check.status),
-    ["pass", "pass", "pass", "pass", "pass", "pass", "pass", "pass"],
+    process.platform === "win32"
+      ? ["pass", "pass", "pass", "pass", "pass", "pass", "pass"]
+      : ["pass", "pass", "pass", "pass", "pass", "pass", "pass", "pass"],
   );
   assert.ok(record.checks.some((check) => check.checker === "judge"));
 });
@@ -202,10 +204,15 @@ test("built CLI runs packaged supervisor, wrapper, and judge assets", async (t) 
 /** Run one command to completion, keeping its last stderr line for the failure message. */
 async function run(command: string, args: readonly string[], cwd: string): Promise<void> {
   await new Promise<void>((resolve, reject) => {
-    execFile(command, args, { cwd, maxBuffer: 10 * 1024 * 1024 }, (error, _stdout, stderr) => {
-      if (error === null) resolve();
-      else reject(new Error(`${command} ${args[0] ?? ""} failed: ${stderr.trim() || error.message}`));
-    });
+    execFile(
+      command,
+      args,
+      { cwd, maxBuffer: 10 * 1024 * 1024, ...(process.platform === "win32" ? { shell: true } : {}) },
+      (error, _stdout, stderr) => {
+        if (error === null) resolve();
+        else reject(new Error(`${command} ${args[0] ?? ""} failed: ${stderr.trim() || error.message}`));
+      },
+    );
   });
 }
 
@@ -217,7 +224,11 @@ test(
     await run("npm", ["pack", "--ignore-scripts", "--pack-destination", packDir], root);
     const [tarball] = (await readdir(packDir)).filter((name) => name.endsWith(".tgz"));
     assert.ok(tarball !== undefined, "npm pack produced a tarball");
-    await run("/usr/bin/tar", ["-xzf", join(packDir, tarball), "-C", packDir], packDir);
+    await run(
+      process.platform === "win32" ? "tar" : "/usr/bin/tar",
+      ["-xzf", join(packDir, tarball), "-C", packDir],
+      packDir,
+    );
     const packageRoot = join(packDir, "package");
     const mocksModule = pathToFileURL(join(packageRoot, "dist", "engine", "mocks.js"));
     // The host must resolve the asset beside itself inside the package, not from this worktree.

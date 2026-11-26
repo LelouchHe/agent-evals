@@ -1,6 +1,7 @@
+import { spawnSync } from "node:child_process";
 import { accessSync, appendFileSync, constants, realpathSync, statSync, writeSync } from "node:fs";
 import { createConnection } from "node:net";
-import { basename, dirname, join, resolve } from "node:path";
+import { basename, delimiter, dirname, join, resolve, sep } from "node:path";
 
 /**
  * Cross-platform mock forwarder client.
@@ -19,8 +20,13 @@ if (bindir === undefined || socketPath === undefined || faultPath === undefined 
   process.exit(126);
 }
 
+const isWindows = process.platform === "win32";
 const self = canonicalSelf(rawSelf);
-const name = basename(self);
+const inBinDir = isWindows
+  ? self.toLowerCase().startsWith(`${bindir.toLowerCase()}${sep}`)
+  : self.startsWith(`${bindir}/`);
+const name =
+  isWindows && inBinDir && self.toLowerCase().endsWith(".cmd") ? basename(self).slice(0, -4) : basename(self);
 
 function canonicalSelf(path) {
   try {
@@ -47,26 +53,33 @@ function failUnavailable() {
 function isExecutableFile(path) {
   try {
     if (!statSync(path).isFile()) return false;
-    accessSync(path, constants.X_OK);
+    if (!isWindows) accessSync(path, constants.X_OK);
     return true;
   } catch {
     return false;
   }
 }
 
+function samePath(a, b) {
+  return isWindows ? a.toLowerCase() === b.toLowerCase() : a === b;
+}
+
 function findPassTarget() {
-  if (self.startsWith(`${bindir}/`)) {
-    for (const folder of (process.env.PATH ?? "").split(":")) {
+  if (inBinDir) {
+    const extensions = isWindows ? ["", ".exe", ".cmd", ".bat", ".com"] : [""];
+    for (const folder of (process.env.PATH ?? "").split(delimiter)) {
       if (folder.length === 0) continue;
-      // Resolve to an absolute path so relative entries such as `.` never trigger a PATH re-lookup.
-      const candidate = resolve(folder, name);
-      if (!isExecutableFile(candidate)) continue;
-      if (canonicalSelf(candidate) === self) continue;
-      return candidate;
+      for (const ext of extensions) {
+        // Resolve to an absolute path so relative entries such as `.` never trigger a PATH re-lookup.
+        const candidate = resolve(folder, `${name}${ext}`);
+        if (!isExecutableFile(candidate)) continue;
+        if (samePath(canonicalSelf(candidate), self)) continue;
+        return candidate;
+      }
     }
     return undefined;
   }
-  const real = resolve(dirname(self), `.${name}`);
+  const real = resolve(dirname(self), `.${basename(self)}`);
   return isExecutableFile(real) ? real : undefined;
 }
 
@@ -77,11 +90,36 @@ function runPass() {
     process.exitCode = 126;
     return;
   }
+  if (isWindows) {
+    const res = spawnSync(target, args, {
+      stdio: "inherit",
+      shell: /\.(?:cmd|bat)$/iu.test(target),
+      windowsHide: true,
+    });
+    if (res.error !== undefined) {
+      process.stderr.write(`${name}: ${res.error.message}\n`);
+      process.exitCode = 126;
+    } else {
+      process.exitCode = res.status ?? 1;
+    }
+    return;
+  }
   writeSync(4, target);
   process.exitCode = 0;
 }
 
-const socket = createConnection(socketPath);
+function openTransport(endpoint) {
+  if (endpoint.startsWith("tcp://127.0.0.1:")) {
+    const rest = endpoint.slice("tcp://127.0.0.1:".length);
+    const slash = rest.indexOf("/");
+    const port = Number(slash === -1 ? rest : rest.slice(0, slash));
+    const nonce = slash === -1 ? undefined : rest.slice(slash + 1);
+    return { socket: createConnection({ host: "127.0.0.1", port }), nonce };
+  }
+  return { socket: createConnection(endpoint), nonce: undefined };
+}
+
+const { socket, nonce } = openTransport(socketPath);
 const chunks = [];
 let settled = false;
 
@@ -127,5 +165,6 @@ socket.on("end", () => {
   process.exitCode = code;
 });
 
-const payload = [self, ...args].map(encode).join("\n") + "\n";
+const payloadLines = nonce === undefined ? [self, ...args] : [`nonce:${nonce}`, self, ...args];
+const payload = payloadLines.map(encode).join("\n") + "\n";
 socket.end(payload);

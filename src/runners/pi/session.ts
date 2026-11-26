@@ -1,11 +1,20 @@
-import { access, mkdir, readFile, realpath, stat, writeFile } from "node:fs/promises";
-import { constants } from "node:fs";
-import { basename, delimiter, dirname, join, resolve } from "node:path";
+import { mkdir, readFile, realpath, stat, writeFile } from "node:fs/promises";
+import { basename, delimiter, dirname, join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { ConfigError, errorMessage } from "../../engine/config.ts";
 import { truncate } from "../../engine/truncate.ts";
 import { siblingRuntimeModule } from "../../engine/runtime-assets.ts";
-import { createSandboxPolicy, spawnSandboxed, SYSTEM_PATH, type SandboxPolicy } from "../../platform/index.ts";
+import {
+  createSandboxPolicy,
+  dirEnv,
+  executableExtensions,
+  isExecutableAccessible,
+  spawnSandboxed,
+  SYSTEM_PATH,
+  usesPiShellWrapper,
+  wrapExecutableCommand,
+  type SandboxPolicy,
+} from "../../platform/index.ts";
 import { PiProcess, PiRpcError } from "./rpc.ts";
 
 export const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
@@ -56,9 +65,7 @@ export async function resolvePiExecutable(executable: string): Promise<string> {
     throw new ConfigError("pi executable must be a non-empty string");
   }
   const candidate =
-    executable.includes("/") || (process.platform === "win32" && executable.includes("\\"))
-      ? resolve(executable)
-      : await findOnPath(executable);
+    executable.includes("/") || executable.includes(sep) ? resolve(executable) : await findOnPath(executable);
   if (candidate === undefined) {
     throw new ConfigError(`pi executable not found on PATH: ${executable}`);
   }
@@ -154,7 +161,7 @@ export async function createPiProcess(config: PiSessionConfig): Promise<PiProces
   await writeFile(safeGroupPath, await readFile(safeGroupSource, "utf8"), { mode: 0o700 });
 
   let shellPath: string | undefined;
-  if (config.tools !== null && process.platform !== "win32") {
+  if (config.tools !== null && usesPiShellWrapper) {
     shellPath = join(toolsDir, "shell-wrapper.sh");
     await writeFile(shellPath, await readFile(new URL("./shell-wrapper.sh", import.meta.url), "utf8"), { mode: 0o700 });
     await mkdir(shellStateDirectory(config), { recursive: true, mode: 0o700 });
@@ -168,11 +175,12 @@ export async function createPiProcess(config: PiSessionConfig): Promise<PiProces
   const args = buildPiArgs(config);
   const env = buildEnvironment(config);
   const nodeExecutable = await realpath(process.execPath);
+  const [wrappedExecutable, ...wrappedArgs] = wrapExecutableCommand(executable, args);
   const child = await spawnSandboxed({
     policy,
     policyDirectory: config.dirs.scratchDir,
     command: nodeExecutable,
-    args: [supervisorPath, executable, ...args],
+    args: [supervisorPath, wrappedExecutable, ...wrappedArgs],
     cwd: config.dirs.workspaceDir,
     env,
   });
@@ -235,9 +243,7 @@ function buildEnvironment(config: PiSessionConfig): NodeJS.ProcessEnv {
   const nodeDirectory = dirname(process.execPath);
   const env: NodeJS.ProcessEnv = {
     PATH: [nodeDirectory, ...SYSTEM_PATH].join(delimiter),
-    HOME: config.dirs.homeDir,
-    ...(process.platform === "win32" ? { USERPROFILE: config.dirs.homeDir } : {}),
-    TMPDIR: config.dirs.scratchDir,
+    ...dirEnv({ home: config.dirs.homeDir, tmp: config.dirs.scratchDir }),
     TMP: config.dirs.scratchDir,
     TEMP: config.dirs.scratchDir,
     PI_CODING_AGENT_DIR: config.dirs.configDir,
@@ -278,18 +284,14 @@ async function writeIsolatedSettings(configDir: string, shellPath?: string): Pro
 
 async function findOnPath(name: string): Promise<string | undefined> {
   const path = process.env.PATH ?? "";
-  const extensions = process.platform === "win32" ? ["", ".exe", ".cmd", ".bat"] : [""];
   for (const directory of path.split(delimiter)) {
     if (directory.length === 0) {
       continue;
     }
-    for (const ext of extensions) {
+    for (const ext of executableExtensions) {
       const candidate = join(directory, `${name}${ext}`);
-      try {
-        await access(candidate, process.platform === "win32" ? constants.F_OK : constants.X_OK);
+      if (await isExecutableAccessible(candidate)) {
         return candidate;
-      } catch {
-        // Keep searching.
       }
     }
   }

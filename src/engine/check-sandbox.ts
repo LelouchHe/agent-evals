@@ -5,7 +5,7 @@ import { errorMessage } from "./config.ts";
 import { stageCheckFiles } from "./files.ts";
 import type { CheckSandbox, CheckSandboxOutcome } from "./registry.ts";
 import { siblingRuntimeModule } from "./runtime-assets.ts";
-import { SYSTEM_PATH, spawnSupervised, type SupervisedProcess } from "../platform/index.ts";
+import { dirEnv, SYSTEM_PATH, spawnSupervised, type SupervisedProcess } from "../platform/index.ts";
 
 /** How much of a program's combined output a check may keep as its reason. */
 const MAX_OUTPUT_LENGTH = 4_096;
@@ -86,9 +86,7 @@ async function runProgram(
       cwd: options.workspaceDir,
       env: {
         PATH: path,
-        HOME: homeDir,
-        TMPDIR: tmpDir,
-        ...(process.platform === "win32" ? { TEMP: tmpDir, TMP: tmpDir, USERPROFILE: homeDir } : {}),
+        ...dirEnv({ home: homeDir, tmp: tmpDir }),
       },
       interactive: false,
       report: true,

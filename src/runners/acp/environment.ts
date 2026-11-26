@@ -1,6 +1,5 @@
-import { constants } from "node:fs";
 import { randomUUID } from "node:crypto";
-import { lstat, mkdir, open, realpath, rename, rm, symlink, writeFile } from "node:fs/promises";
+import { lstat, mkdir, realpath, rename, rm, symlink, writeFile } from "node:fs/promises";
 import { basename, delimiter, dirname, join, resolve } from "node:path";
 import { ConfigError, errorMessage, expectPlacementDestination, expectRelativePath } from "../../engine/config.ts";
 import { copyPlacement, homePathOf, isHomeDestination, placedPaths, stageEntries } from "../../engine/files.ts";
@@ -9,6 +8,8 @@ import { isMissing, isWithin, openRunRoot, resolveWorkspacePath, type RunRoot } 
 import {
   assertSandboxAvailable,
   createSandboxPolicy,
+  dirEnv,
+  openRegularFileNoFollow,
   resolveDeniedExecutables,
   SYSTEM_PATH,
 } from "../../platform/index.ts";
@@ -244,9 +245,7 @@ export async function harnessEnvironment(
   const env: NodeJS.ProcessEnv = {
     ...source.environment,
     ...(process.env.TERM === undefined ? {} : { TERM: process.env.TERM }),
-    HOME: dirs.home,
-    TMPDIR: dirs.tmp,
-    ...(process.platform === "win32" ? { TEMP: dirs.tmp, TMP: dirs.tmp, USERPROFILE: dirs.home } : {}),
+    ...dirEnv({ home: dirs.home, tmp: dirs.tmp }),
     PATH: [...(mocks === undefined ? [] : [mocks.forwarderDir]), ...pathEntries].join(delimiter),
   };
   return { env, policy };
@@ -295,18 +294,7 @@ async function canonicalPath(path: string): Promise<string> {
 
 async function readRegular(root: RunRoot, file: string): Promise<Buffer> {
   const path = await resolveWorkspacePath(root, file);
-  if (process.platform === "win32") {
-    const info = await lstat(path);
-    if (info.isSymbolicLink() || !info.isFile()) {
-      throw new ConfigError(`login path is not a regular file: ${file}`);
-    }
-  }
-  // NONBLOCK avoids opening a FIFO being substituted for a credential file on POSIX.
-  const openFlags =
-    process.platform === "win32"
-      ? constants.O_RDONLY
-      : constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK;
-  const handle = await open(path, openFlags);
+  const handle = await openRegularFileNoFollow(path);
   try {
     if (!(await handle.stat()).isFile()) throw new ConfigError(`login path is not a regular file: ${file}`);
     return await handle.readFile();

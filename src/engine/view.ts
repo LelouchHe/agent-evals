@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto";
-import { basename } from "node:path";
+import { basename, sep } from "node:path";
 import { Document, isMap, isNode, isScalar, isSeq, type Pair } from "yaml";
 import type { FieldOrigin, ResolvedCase, SourceOrigin } from "./config.ts";
 import type { PlacementSummary } from "./placement.ts";
@@ -33,11 +33,11 @@ export function formatResolvedCase(resolved: ResolvedCase, options: ViewOptions)
       continue;
     }
     for (const placed of summary.placed) {
-      lines.push(`    place   ${placed.path} <- ${placed.source}`);
+      lines.push(`    place   ${toPosix(placed.path)} <- ${toPosix(placed.source)}`);
     }
     for (const excluded of summary.excluded) {
       const kind = excluded.directory ? " (directory)" : "";
-      lines.push(`    exclude ${excluded.path}${kind} <- .agentevalsignore at ${excluded.ignoreDir}`);
+      lines.push(`    exclude ${toPosix(excluded.path)}${kind} <- .agentevalsignore at ${toPosix(excluded.ignoreDir)}`);
     }
   }
   return lines.join("\n") + "\n";
@@ -156,4 +156,8 @@ function formatSource(origin: SourceOrigin, marker: string): string {
 
 function count(value: number, label: string): string {
   return `${value} ${label}`;
+}
+
+function toPosix(path: string): string {
+  return sep === "/" ? path : path.split(sep).join("/");
 }

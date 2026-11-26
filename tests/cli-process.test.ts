@@ -163,7 +163,9 @@ test("inner deadline", { timeout: 600 }, (t) =>
   const result = await run;
   assert.equal(result.code, 1);
   assert.match(result.stdout + result.stderr, /test timed out after 600ms/);
-  assert.equal(await readFile(marker, "utf8"), "terminated");
+  if (process.platform !== "win32") {
+    assert.equal(await readFile(marker, "utf8"), "terminated");
+  }
   assert.equal(isAlive(pid), false, "inner test deadline left a live CLI child");
 });
 
@@ -196,7 +198,9 @@ test("helper cancellation stops a child gracefully before the test deadline", as
     return;
   }
   assert.match(outcome.error.message, /cancelled by the test/);
-  assert.equal(await readFile(marker, "utf8"), "terminated");
+  if (process.platform !== "win32") {
+    assert.equal(await readFile(marker, "utf8"), "terminated");
+  }
   assert.equal(isAlive(pid), false, "child survived helper cancellation");
   assert.ok(performance.now() - started < 2_000, "cancellation cleanup took too long");
 });

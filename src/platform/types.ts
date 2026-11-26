@@ -1,5 +1,31 @@
-import type { ChildProcess, ChildProcessWithoutNullStreams } from "node:child_process";
+import type { ChildProcess, ChildProcessByStdio, ChildProcessWithoutNullStreams } from "node:child_process";
+import type { FileHandle } from "node:fs/promises";
+import type { Server } from "node:net";
 import type { Readable } from "node:stream";
+
+export interface DirectoryIdentity {
+  readonly dev: bigint;
+  readonly ino: bigint;
+}
+
+export interface ShellLookupHandle {
+  readonly child: ChildProcessByStdio<null, Readable, Readable>;
+  readonly terminate: () => void;
+}
+
+export interface MockForwarderSpec {
+  readonly assetName: "forwarder.sh" | "forwarder.cmd";
+  readonly templateName: string;
+  readonly quote: (value: string) => string;
+  readonly targetFileName: (target: string) => string;
+  readonly resolvePathTargetName: (selfPath: string, forwarderRoot: string) => string | undefined;
+}
+
+export interface MockEndpoint {
+  readonly socketPath: string;
+  readonly expectedNonce?: string;
+  readonly cleanup: () => Promise<void>;
+}
 
 export interface SandboxPolicy {
   /** Read and write access. */
@@ -68,7 +94,18 @@ export interface SpawnSandboxedOptions {
 export interface PlatformBackend {
   readonly systemPath: readonly string[];
   readonly caseInsensitivePaths: boolean;
+  readonly executableExtensions: readonly string[];
+  readonly usesPiShellWrapper: boolean;
   defaultTempParent?(): string;
+  dirEnv(dirs: { readonly home: string; readonly tmp: string }): Record<string, string>;
+  checkChildEnv(sourceEnv: NodeJS.ProcessEnv): NodeJS.ProcessEnv;
+  openDirectoryIdentity(canonicalPath: string): Promise<DirectoryIdentity>;
+  openRegularFileNoFollow(absolutePath: string): Promise<FileHandle>;
+  isExecutableAccessible(path: string): Promise<boolean>;
+  wrapExecutableCommand(executable: string, args: readonly string[]): readonly [string, ...string[]];
+  spawnShellLookup(command: string, cwd: string): ShellLookupHandle;
+  mockForwarderSpec(): MockForwarderSpec;
+  listenMockServer(server: Server, runRootDir: string): Promise<MockEndpoint>;
   assertSandboxAvailable(): void;
   createSandboxPolicy(options: CreateSandboxPolicyOptions): SandboxPolicy;
   resolveDeniedExecutables(targets: readonly string[], pathEntries: readonly string[]): Promise<readonly string[]>;

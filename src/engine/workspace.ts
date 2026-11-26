@@ -1,8 +1,8 @@
-import { constants, type Stats } from "node:fs";
-import { lstat, open, readdir, realpath } from "node:fs/promises";
+import type { Stats } from "node:fs";
+import { lstat, readdir, realpath } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, posix, relative, resolve, sep } from "node:path";
 import { ConfigError, errorMessage } from "./config.ts";
-import { caseInsensitivePaths } from "../platform/index.ts";
+import { caseInsensitivePaths, openDirectoryIdentity, openRegularFileNoFollow } from "../platform/index.ts";
 
 /** Largest file a check will read. Checks stay bounded and predictable. */
 export const MAX_CHECK_BYTES = 1024 * 1024;
@@ -26,32 +26,11 @@ export interface RunRoot {
 
 export async function openRunRoot(path: string): Promise<RunRoot> {
   const canonical = await realpath(path);
-  if (process.platform === "win32") {
-    let stats;
-    try {
-      stats = await lstat(canonical, { bigint: true });
-    } catch (error) {
-      throw new WorkspacePathError(`could not open run directory ${path}: ${errorMessage(error)}`);
-    }
-    if (stats.isSymbolicLink() || !stats.isDirectory()) {
-      throw new WorkspacePathError(`run path is not a directory: ${path}`);
-    }
-    return { path: canonical, dev: stats.dev, ino: stats.ino };
-  }
-  let handle;
   try {
-    handle = await open(canonical, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);
+    const identity = await openDirectoryIdentity(canonical);
+    return { path: canonical, dev: identity.dev, ino: identity.ino };
   } catch (error) {
     throw new WorkspacePathError(`could not open run directory ${path}: ${errorMessage(error)}`);
-  }
-  try {
-    const stats = await handle.stat({ bigint: true });
-    if (!stats.isDirectory()) {
-      throw new WorkspacePathError(`run path is not a directory: ${path}`);
-    }
-    return { path: canonical, dev: stats.dev, ino: stats.ino };
-  } finally {
-    await handle.close();
   }
 }
 
@@ -69,23 +48,15 @@ export async function assertRunRoot(root: RunRoot): Promise<void> {
   if (entry.isSymbolicLink() || !entry.isDirectory() || entry.dev !== root.dev || entry.ino !== root.ino) {
     throw new WorkspacePathError(`run directory was replaced after preparation: ${root.path}`);
   }
-  if (process.platform === "win32") {
-    return;
-  }
 
-  let handle;
+  let identity;
   try {
-    handle = await open(root.path, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);
+    identity = await openDirectoryIdentity(root.path);
   } catch (error) {
     throw new WorkspacePathError(`run directory can no longer be opened safely: ${root.path}: ${errorMessage(error)}`);
   }
-  try {
-    const stats = await handle.stat({ bigint: true });
-    if (!stats.isDirectory() || stats.dev !== root.dev || stats.ino !== root.ino) {
-      throw new WorkspacePathError(`run directory was replaced while opening it: ${root.path}`);
-    }
-  } finally {
-    await handle.close();
+  if (identity.dev !== root.dev || identity.ino !== root.ino) {
+    throw new WorkspacePathError(`run directory was replaced while opening it: ${root.path}`);
   }
 }
 
@@ -253,13 +224,9 @@ export async function readRunTree(root: RunRoot, requestedPath: string): Promise
 
 /** Read one regular file with the size ceiling and the same no-follow open as `readRunFile`. */
 async function readBoundedFile(absolute: string, requestedPath: string): Promise<Buffer> {
-  const openFlags =
-    process.platform === "win32"
-      ? constants.O_RDONLY
-      : constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK;
   let handle;
   try {
-    handle = await open(absolute, openFlags);
+    handle = await openRegularFileNoFollow(absolute);
   } catch (error) {
     if (isMissing(error)) {
       throw error;

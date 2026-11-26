@@ -1,10 +1,10 @@
 import { spawn, type ChildProcess } from "node:child_process";
-import { link, mkdir, readFile, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
-import { createServer, type Server, type Socket } from "node:net";
+import { link, mkdir, readFile, realpath, rename, stat, writeFile } from "node:fs/promises";
+import { createServer, type Socket } from "node:net";
 import { basename, dirname, join, relative, sep } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
-import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
+import { listenMockServer, mockForwarderSpec, type MockForwarderSpec } from "../platform/index.ts";
 import { ConfigError, errorMessage, type MockAction, type ShellMocks } from "./config.ts";
 import { compileShellMocks, matchCall, type CompiledRules, type CompiledShellMocks } from "./mock-match.ts";
 import type { MockRecord, MockWiring } from "./registry.ts";
@@ -23,7 +23,6 @@ const EMPTY = Buffer.alloc(0);
 // source and built runs read one text. It reports the call over the run's socket and reads the
 // reply from a single line: capturing the reply would strip the trailing newlines that make an
 // empty stdout or stderr distinguishable. The name it is executed under selects the target.
-const FORWARDER_ASSET = new URL("./forwarder.sh", import.meta.url);
 const FORWARDER_CLIENT = fileURLToPath(new URL("./forwarder-client.mjs", import.meta.url));
 
 export interface MockOutcome {
@@ -62,15 +61,11 @@ export interface MockHostOptions {
  * runs this before the baseline snapshot, so the snapshot already holds the forwarders.
  */
 export async function startMockHost(options: MockHostOptions): Promise<MockHost> {
+  const spec = mockForwarderSpec();
   const forwarderDir = options.mocksDir;
-  // A Unix socket path is limited to about 100 bytes, so it cannot live under the run root.
-  const socketPath =
-    process.platform === "win32"
-      ? `\\\\.\\pipe\\agent-evals-mock-${basename(options.runRootDir)}`
-      : join(tmpdir(), `${basename(options.runRootDir)}.sock`);
   const faultPath = join(options.tmpDir, ".forward-fault");
   // The template lives in engine-private state; only its hard links are runnable in mocks/.
-  const scriptPath = join(options.engineDir, "forward");
+  const scriptPath = join(options.engineDir, spec.templateName);
   const rules = compileShellMocks(options.shell);
   const workspaceRoot = await openRunRoot(options.workspaceDir);
   await mkdir(forwarderDir, { recursive: true, mode: 0o700 });
@@ -80,33 +75,6 @@ export async function startMockHost(options: MockHostOptions): Promise<MockHost>
   const nodeExecutable = await realpath(process.execPath);
   const clientPath = await realpath(FORWARDER_CLIENT);
 
-  const replacements: Readonly<Record<string, string>> = {
-    __NODE__: quote(nodeExecutable),
-    __CLIENT__: quote(clientPath),
-    __BINDIR__: quote(forwarderRoot),
-    __SOCKET__: quote(socketPath),
-    __FAULT__: quote(faultPath),
-  };
-  const forwarder = (await readFile(FORWARDER_ASSET, "utf8")).replace(
-    /__NODE__|__CLIENT__|__BINDIR__|__SOCKET__|__FAULT__/g,
-    (token) => replacements[token]!,
-  );
-  await writeFile(scriptPath, forwarder, { mode: 0o500, flag: "wx" });
-
-  for (const target of Object.keys(options.shell).sort()) {
-    if (target.includes("/")) {
-      await placeWorkspaceForwarder(workspaceRoot.path, options, target, forwarder);
-    } else {
-      await link(scriptPath, join(forwarderDir, target));
-    }
-  }
-
-  const wiring: MockWiring = {
-    forwarderDir,
-    socketPath,
-    denyTargets: denyTargetsOf(options.shell),
-    readableFiles: [nodeExecutable, clientPath],
-  };
   const records: MockRecord[] = [];
   const faults: string[] = [];
   /** Process-group leaders still owning descendants we must not leave behind. */
@@ -136,7 +104,44 @@ export async function startMockHost(options: MockHostOptions): Promise<MockHost>
       });
     });
   });
-  await listen(server, socketPath);
+
+  const endpoint = await listenMockServer(server, options.runRootDir);
+  const { socketPath, expectedNonce } = endpoint;
+
+  const replacements: Readonly<Record<string, string>> = {
+    __NODE__: spec.quote(nodeExecutable),
+    __CLIENT__: spec.quote(clientPath),
+    __BINDIR__: spec.quote(forwarderRoot),
+    __SOCKET__: spec.quote(socketPath),
+    __FAULT__: spec.quote(faultPath),
+  };
+  const forwarderAsset = new URL(`./${spec.assetName}`, import.meta.url);
+  const forwarder = (await readFile(forwarderAsset, "utf8")).replace(
+    /__NODE__|__CLIENT__|__BINDIR__|__SOCKET__|__FAULT__/g,
+    (token) => replacements[token]!,
+  );
+  try {
+    await writeFile(scriptPath, forwarder, { mode: 0o500, flag: "wx" });
+
+    for (const target of Object.keys(options.shell).sort()) {
+      if (target.includes("/")) {
+        await placeWorkspaceForwarder(workspaceRoot.path, options, target, forwarder);
+      } else {
+        await link(scriptPath, join(forwarderDir, spec.targetFileName(target)));
+      }
+    }
+  } catch (error) {
+    server.close();
+    await endpoint.cleanup().catch(() => {});
+    throw error;
+  }
+
+  const wiring: MockWiring = {
+    forwarderDir,
+    socketPath,
+    denyTargets: denyTargetsOf(options.shell),
+    readableFiles: [nodeExecutable, clientPath],
+  };
 
   async function answer(socket: Socket, message: Buffer): Promise<void> {
     const lines = message.toString("utf8").split("\n");
@@ -144,12 +149,20 @@ export async function startMockHost(options: MockHostOptions): Promise<MockHost>
       socket.end(denied("call"));
       return;
     }
-    const call = resolveCall(decode(lines[0] as string), forwarderRoot, workspaceRoot.path, rules);
+    let startIndex = 0;
+    if (expectedNonce !== undefined) {
+      if (decode(lines[0] as string) !== `nonce:${expectedNonce}` || lines.length < 2) {
+        socket.end(denied("call"));
+        return;
+      }
+      startIndex = 1;
+    }
+    const call = resolveCall(decode(lines[startIndex] as string), forwarderRoot, workspaceRoot.path, rules, spec);
     if (call === undefined) {
       socket.end(denied("call"));
       return;
     }
-    const argv = lines.slice(1).map(decode);
+    const argv = lines.slice(startIndex + 1).map(decode);
     records.push({ target: call.target, arguments: argv });
     const action = matchCall(call.rules, argv);
     socket.end(action === undefined ? denied(call.target) : await reply(action, call.target, argv));
@@ -201,9 +214,7 @@ export async function startMockHost(options: MockHostOptions): Promise<MockHost>
     }
     for (const socket of sockets) socket.destroy();
     await closed;
-    if (process.platform !== "win32") {
-      await rm(socketPath, { force: true });
-    }
+    await endpoint.cleanup();
     faults.push(...(await transportFaults(faultPath)));
     return { records: [...records], faults: [...faults] };
   }
@@ -238,11 +249,12 @@ function resolveCall(
   forwarderRoot: string,
   workspaceDir: string,
   rules: CompiledShellMocks,
+  spec: MockForwarderSpec,
 ): ResolvedCall | undefined {
-  if (dirname(self) === forwarderRoot) {
-    const name = basename(self);
-    const targetRules = rules.path.get(name);
-    return targetRules === undefined ? undefined : { target: name, rules: targetRules };
+  const pathTarget = spec.resolvePathTargetName(self, forwarderRoot);
+  if (pathTarget !== undefined) {
+    const targetRules = rules.path.get(pathTarget);
+    return targetRules === undefined ? undefined : { target: pathTarget, rules: targetRules };
   }
   if (isWithin(workspaceDir, self)) {
     const path = relative(workspaceDir, self).split(sep).join("/");
@@ -414,21 +426,6 @@ function field(bytes: Buffer): string {
   return bytes.length === 0 ? "-" : bytes.toString("base64");
 }
 
-/** Quote a value as one POSIX shell word. */
-function quote(value: string): string {
-  return `'${value.replaceAll("'", "'\\''")}'`;
-}
-
 function decode(line: string): string {
   return Buffer.from(line, "base64").toString("utf8");
-}
-
-function listen(server: Server, path: string): Promise<void> {
-  return new Promise((resolve, reject) => {
-    server.once("error", reject);
-    server.listen(path, () => {
-      server.off("error", reject);
-      resolve();
-    });
-  });
 }

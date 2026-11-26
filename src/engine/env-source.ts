@@ -1,7 +1,7 @@
-import { spawn } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { parseEnv } from "node:util";
+import { spawnShellLookup } from "../platform/index.ts";
 import { ConfigError, errorMessage } from "./config.ts";
 
 const COMMAND_TIMEOUT_MS = 5_000;
@@ -85,22 +85,8 @@ async function runLookupCommand(
   let stdout: string;
   try {
     stdout = await new Promise<string>((resolve, reject) => {
-      const isWindows = process.platform === "win32";
-      // On POSIX, spawn in its own process group so abort/timeout kills the shell and any direct
-      // child regardless of whether `/bin/sh` exec-optimizes simple commands (dash vs bash).
-      const child = isWindows
-        ? spawn(process.env.ComSpec ?? "cmd.exe", ["/d", "/c", command], {
-            cwd,
-            env: process.env,
-            stdio: ["ignore", "pipe", "pipe"],
-            windowsHide: true,
-          })
-        : spawn("/bin/sh", ["-c", command], {
-            cwd,
-            env: process.env,
-            stdio: ["ignore", "pipe", "pipe"],
-            detached: true,
-          });
+      const lookup = spawnShellLookup(command, cwd);
+      const { child } = lookup;
       const chunks: Buffer[] = [];
       let bytes = 0;
       let settled = false;
@@ -123,30 +109,7 @@ async function runLookupCommand(
         signal?.removeEventListener("abort", onAbort);
         child.stdout.destroy();
         child.stderr.destroy();
-        if (child.pid !== undefined) {
-          if (isWindows) {
-            try {
-              const killer = spawn("taskkill", ["/pid", String(child.pid), "/T", "/F"], {
-                stdio: "ignore",
-                windowsHide: true,
-              });
-              killer.unref();
-            } catch {
-              // Fall back to direct kill below.
-            }
-            try {
-              child.kill();
-            } catch {
-              // Already exited.
-            }
-          } else {
-            try {
-              process.kill(-child.pid, "SIGKILL");
-            } catch {
-              // Already exited.
-            }
-          }
-        }
+        lookup.terminate();
         // Wait briefly for the direct child to be reaped, without hanging on detached
         // descendants that may still hold inherited file descriptors.
         reapTimer = setTimeout(() => finish(() => reject(reason)), 200);
