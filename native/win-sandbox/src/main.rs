@@ -41,8 +41,8 @@ mod windows_impl {
     use windows_sys::Win32::Security::{
         AllocateAndInitializeSid, CreateRestrictedToken, CreateWellKnownSid, FreeSid,
         GetTokenInformation, SetTokenInformation, TokenDefaultDacl, TokenLogonSid,
-        WinAuthenticatedUserSid, WinBuiltinUsersSid, WinWorldSid, ACL, DACL_SECURITY_INFORMATION,
-        DISABLE_MAX_PRIVILEGE, NO_INHERITANCE, PSID, SID_AND_ATTRIBUTES, SID_IDENTIFIER_AUTHORITY,
+        WinBuiltinUsersSid, WinWorldSid, ACL, DACL_SECURITY_INFORMATION, DISABLE_MAX_PRIVILEGE,
+        LUA_TOKEN, NO_INHERITANCE, PSID, SID_AND_ATTRIBUTES, SID_IDENTIFIER_AUTHORITY,
         SUB_CONTAINERS_AND_OBJECTS_INHERIT, TOKEN_ADJUST_DEFAULT, TOKEN_ADJUST_SESSIONID,
         TOKEN_ASSIGN_PRIMARY, TOKEN_DEFAULT_DACL, TOKEN_DUPLICATE, TOKEN_GROUPS, TOKEN_QUERY,
         WRITE_RESTRICTED,
@@ -298,7 +298,6 @@ mod windows_impl {
 
         let world_sid = well_known_sid(WinWorldSid)?;
         let users_sid = well_known_sid(WinBuiltinUsersSid)?;
-        let auth_user_sid = well_known_sid(WinAuthenticatedUserSid)?;
         let logon_buf = query_logon_sid_buf(base_token.0)?;
 
         let mut sids_to_restrict: Vec<SID_AND_ATTRIBUTES> = vec![
@@ -312,24 +311,22 @@ mod windows_impl {
             },
         ];
 
-        // In full restricted mode (read+write restricted), include BUILTIN\Users and
-        // Authenticated Users so system binaries and kernel devices (\Device\NamedPipe) work,
-        // while private user directories (%USERPROFILE%) remain inaccessible.
+        // In full restricted mode (read+write restricted), include BUILTIN\Users so the process
+        // can read/execute Windows system binaries (C:\Windows\System32), while still blocking
+        // reads of private user directories (%USERPROFILE%) which do not grant BUILTIN\Users.
         if !write_restricted_only {
             sids_to_restrict.push(SID_AND_ATTRIBUTES {
                 Sid: users_sid.as_ptr() as PSID,
                 Attributes: 0,
             });
-            sids_to_restrict.push(SID_AND_ATTRIBUTES {
-                Sid: auth_user_sid.as_ptr() as PSID,
-                Attributes: 0,
-            });
         }
 
+        let mut logon_sid: Option<PSID> = None;
         if let Some(ref buf) = logon_buf {
             let groups = unsafe { &*(buf.as_ptr() as *const TOKEN_GROUPS) };
             if groups.GroupCount > 0 {
                 let first = unsafe { &*groups.Groups.as_ptr() };
+                logon_sid = Some(first.Sid);
                 sids_to_restrict.push(SID_AND_ATTRIBUTES {
                     Sid: first.Sid,
                     Attributes: 0,
@@ -337,7 +334,7 @@ mod windows_impl {
             }
         }
 
-        let mut flags = DISABLE_MAX_PRIVILEGE;
+        let mut flags = DISABLE_MAX_PRIVILEGE | LUA_TOKEN;
         if write_restricted_only {
             flags |= WRITE_RESTRICTED;
         }
@@ -361,15 +358,19 @@ mod windows_impl {
         }
 
         let restricted = SafeHandle(restricted_raw);
-        // Add the synthetic SID to the restricted token's DefaultDacl so objects created by the
-        // sandboxed process with default security (such as libuv's stdio named pipes) can be
-        // opened by the process itself under the restricted SID check.
-        grant_default_dacl_sid(restricted.0, synthetic_sid)?;
+        // Add logon SID (present in BOTH normal groups and restricted SIDs) and synthetic SID
+        // to TokenDefaultDacl so kernel objects created with default security (e.g. libuv's
+        // stdio named pipes) pass both access-check passes.
+        grant_default_dacl_sids(restricted.0, synthetic_sid, logon_sid)?;
 
         Ok(restricted)
     }
 
-    fn grant_default_dacl_sid(token: HANDLE, sid: PSID) -> Result<(), String> {
+    fn grant_default_dacl_sids(
+        token: HANDLE,
+        synthetic_sid: PSID,
+        logon_sid: Option<PSID>,
+    ) -> Result<(), String> {
         let mut len: u32 = 0;
         let ok = unsafe { GetTokenInformation(token, TokenDefaultDacl, null_mut(), 0, &mut len) };
         if ok == 0 && last_error() != ERROR_INSUFFICIENT_BUFFER {
@@ -395,7 +396,7 @@ mod windows_impl {
             ));
         }
         let old_dacl = unsafe { (*(buf.as_ptr() as *const TOKEN_DEFAULT_DACL)).DefaultDacl };
-        let ea = EXPLICIT_ACCESS_W {
+        let make_ea = |sid: PSID| EXPLICIT_ACCESS_W {
             grfAccessPermissions: GENERIC_ALL,
             grfAccessMode: SET_ACCESS,
             grfInheritance: NO_INHERITANCE,
@@ -407,8 +408,13 @@ mod windows_impl {
                 ptstrName: sid as *mut u16,
             },
         };
+        let mut eas = vec![make_ea(synthetic_sid)];
+        if let Some(lsid) = logon_sid {
+            eas.push(make_ea(lsid));
+        }
         let mut new_dacl: *mut ACL = null_mut();
-        let status = unsafe { SetEntriesInAclW(1, &ea, old_dacl, &mut new_dacl) };
+        let status =
+            unsafe { SetEntriesInAclW(eas.len() as u32, eas.as_ptr(), old_dacl, &mut new_dacl) };
         if status != ERROR_SUCCESS {
             return Err(format!("SetEntriesInAclW(TokenDefaultDacl) error {status}"));
         }
