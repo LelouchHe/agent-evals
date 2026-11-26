@@ -22,7 +22,7 @@ jobs:
         run: cargo build --release
 
       - name: Install Node dependencies
-        run: npm ci
+        run: npm ci --force
 
       - name: Typecheck
         run: npm run typecheck
