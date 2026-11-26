@@ -1,0 +1,46 @@
+name: Windows Support CI
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - "feat/windows-support"
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "24"
+          cache: npm
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: native/win-sandbox
+
+      - name: Build win-sandbox.exe (Rust)
+        working-directory: native/win-sandbox
+        run: cargo build --release
+
+      - name: Provision agent-evals-online and agent-evals-offline sandbox users
+        run: pwsh -File scripts/windows-sandbox-setup.ps1
+
+      - name: Install Node dependencies
+        run: npm ci --force
+
+      - name: Lint, format, typecheck, build
+        run: npm run lint && npm run format:check && npm run typecheck && npm run build
+
+      - name: Run Windows sandbox & check-sandbox tests
+        run: node --test --test-timeout=60000 src/platform/windows/sandbox.test.ts
+
+      - name: Run platform-agnostic engine unit tests on Windows
+        run: node --test --test-timeout=30000 src/engine/authoring.test.ts src/engine/files.test.ts src/engine/ignore.test.ts src/engine/registry.test.ts src/engine/report.test.ts src/engine/skills.test.ts src/engine/values.test.ts src/engine/workspace.test.ts src/checkers/file/index.test.ts src/checkers/trace/index.test.ts src/checkers/mock/index.test.ts tests/noop-runner.test.ts tests/run.test.ts
+
+      - name: Teardown sandbox users
+        if: always()
+        run: pwsh -File scripts/windows-sandbox-setup.ps1 -Teardown

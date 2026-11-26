@@ -2,6 +2,7 @@ import type { ChildProcessWithoutNullStreams } from "node:child_process";
 import { tmpdir } from "node:os";
 import { linuxBackend } from "./linux/index.ts";
 import { macosBackend } from "./macos/index.ts";
+import { windowsBackend } from "./windows/index.ts";
 import type {
   CreateSandboxPolicyOptions,
   PlatformBackend,
@@ -21,7 +22,7 @@ export type {
 };
 
 function unsupportedPlatform(): never {
-  throw new Error(`unsupported host platform: ${process.platform}; supported platforms are darwin and linux`);
+  throw new Error(`unsupported host platform: ${process.platform}; supported platforms are darwin, linux, and win32`);
 }
 
 const unsupportedBackend: PlatformBackend = {
@@ -35,9 +36,16 @@ const unsupportedBackend: PlatformBackend = {
 };
 
 const backend: PlatformBackend =
-  process.platform === "darwin" ? macosBackend : process.platform === "linux" ? linuxBackend : unsupportedBackend;
+  process.platform === "darwin"
+    ? macosBackend
+    : process.platform === "linux"
+      ? linuxBackend
+      : process.platform === "win32"
+        ? windowsBackend
+        : unsupportedBackend;
 
-export const isSandboxPlatformSupported = process.platform === "darwin" || process.platform === "linux";
+export const isSandboxPlatformSupported =
+  process.platform === "darwin" || process.platform === "linux" || process.platform === "win32";
 export const SYSTEM_PATH: readonly string[] = backend.systemPath;
 export const caseInsensitivePaths: boolean = backend.caseInsensitivePaths;
 
