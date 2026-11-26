@@ -58,7 +58,7 @@ mod windows_impl {
         JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
     };
     use windows_sys::Win32::System::Threading::{
-        CreateProcessAsUserW, GetCurrentProcessId, GetExitCodeProcess, ResumeThread,
+        CreateProcessWithTokenW, GetCurrentProcessId, GetExitCodeProcess, ResumeThread,
         WaitForSingleObject, CREATE_SUSPENDED, CREATE_UNICODE_ENVIRONMENT, INFINITE,
         PROCESS_INFORMATION, STARTF_USESTDHANDLES, STARTUPINFOW,
     };
@@ -250,13 +250,11 @@ mod windows_impl {
         let flags = CREATE_SUSPENDED | CREATE_UNICODE_ENVIRONMENT;
 
         let created = unsafe {
-            CreateProcessAsUserW(
+            CreateProcessWithTokenW(
                 restricted_token.0,
+                0,
                 null(),
                 cmd_line_w.as_mut_ptr(),
-                null(),
-                null(),
-                TRUE,
                 flags,
                 env_block.as_mut_ptr() as *const _,
                 cwd_w.as_ptr(),
@@ -267,7 +265,7 @@ mod windows_impl {
         if created == 0 {
             ACTIVE_JOB.store(0, Ordering::SeqCst);
             return Err(format!(
-                "CreateProcessAsUserW({}, user={}) failed: {}",
+                "CreateProcessWithTokenW({}, user={}) failed: {}",
                 config.command,
                 account.username,
                 last_error()
