@@ -123,7 +123,7 @@ jobs:
           ./examples/agents/pi-setup.sh "$SMOKE_DIR/pi"
           umask 077
           printf 'OPENCODE_API_KEY=%s\nPI_DEPS=%s\n' "$OPENCODE_API_KEY" "$SMOKE_DIR/pi/deps" > .env
-          node dist/cli.js run examples/cases/deploy-runbook-posix/case.yml --case pi-with-skill
+          PATH="$SMOKE_DIR/pi/deps/bin:$PATH" node dist/cli.js run examples/cases/deploy-runbook-posix/case.yml --case pi-with-skill
 
       - name: Run ACP live smoke (Windows)
         if: steps.gate.outputs.enabled == 'true' && runner.os == 'Windows'
@@ -140,6 +140,17 @@ jobs:
             $currentUser = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
             icacls ".env" /inheritance:r /grant:r "${currentUser}:(F)" "SYSTEM:(F)" "Administrators:(F)" | Out-Null
             node dist/cli.js run examples/cases/deploy-runbook-windows/case.yml --case pi-with-skill
+            $exitCode = $LASTEXITCODE
+            if ($exitCode -ne 0) {
+              $latest = Get-ChildItem ".agent-evals" -Directory -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+              if ($latest) {
+                Write-Host "=== trace.json ==="
+                Get-Content -Raw (Join-Path $latest.FullName "trace.json") -ErrorAction SilentlyContinue
+                Write-Host "=== mocks.json ==="
+                Get-Content -Raw (Join-Path $latest.FullName "mocks.json") -ErrorAction SilentlyContinue
+              }
+              exit $exitCode
+            }
           } finally {
             Remove-Item -Force -ErrorAction SilentlyContinue ".env"
             Remove-Item -Recurse -Force -ErrorAction SilentlyContinue $SmokeDir
