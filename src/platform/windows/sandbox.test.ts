@@ -336,66 +336,111 @@ for await (const line of rl) {
   assert.equal(await readFile(join(workspace, "hello.txt"), "utf8"), "Hello from Windows sandbox!\n");
 });
 
-test("Windows AppContainer allows child process with piped stdio (execFileSync)", { skip: !IS_WINDOWS }, async (t) => {
-  const root = await mkdtemp(join(tmpdir(), "ae-win-pipe-"));
-  t.after(() => rm(root, { recursive: true, force: true }));
+test(
+  "Windows AppContainer allows child process with piped stdio (spawn / spawnSync)",
+  { skip: !IS_WINDOWS },
+  async (t) => {
+    const root = await mkdtemp(join(tmpdir(), "ae-win-pipe-"));
+    t.after(() => rm(root, { recursive: true, force: true }));
 
-  const workspace = join(root, "workspace");
-  const engine = join(root, "engine");
-  await Promise.all([mkdir(workspace), mkdir(engine)]);
+    const workspace = join(root, "workspace");
+    const engine = join(root, "engine");
+    await Promise.all([mkdir(workspace), mkdir(engine)]);
 
-  const script = `
-    const { execFileSync, spawnSync } = require("node:child_process");
+    const script = `
+    const { spawn, spawnSync } = require("node:child_process");
     const cmd = process.env.ComSpec || "C:\\\\Windows\\\\System32\\\\cmd.exe";
-    const res = spawnSync(cmd, ["/d", "/c", "echo piped-ok"], {
-      encoding: "utf8",
-      windowsHide: true,
-      timeout: 5000,
+    const results = {};
+    // 1. Async spawn with stdio: "pipe"
+    const p = spawn(cmd, ["/d", "/c", "echo piped-ok"], { stdio: "pipe", windowsHide: true });
+    let out = "";
+    let err = "";
+    p.stdout.on("data", (d) => { out += d.toString(); });
+    p.stderr.on("data", (d) => { err += d.toString(); });
+    p.on("error", (e) => {
+      results.asyncPipe = { error: e.code || e.message };
+      finish();
     });
-    process.stdout.write(JSON.stringify({
-      status: res.status,
-      signal: res.signal,
-      stdout: (res.stdout || "").trim(),
-      stderr: (res.stderr || "").trim(),
-      error: res.error ? (res.error.code || res.error.message) : null,
-    }));
+    p.on("close", (code) => {
+      results.asyncPipe = { code, out: out.trim(), err: err.trim() };
+      finish();
+    });
+    const timer = setTimeout(() => {
+      results.asyncPipe = { timeout: true, out, err };
+      p.kill();
+      finish();
+    }, 4000);
+    let done = false;
+    function finish() {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      const syncRes = spawnSync(cmd, ["/d", "/c", "echo sync-ok"], {
+        encoding: "utf8",
+        windowsHide: true,
+        timeout: 4000,
+      });
+      results.syncPipe = {
+        status: syncRes.status,
+        stdout: (syncRes.stdout || "").trim(),
+        stderr: (syncRes.stderr || "").trim(),
+        error: syncRes.error ? (syncRes.error.code || syncRes.error.message) : null,
+      };
+      process.stdout.write(JSON.stringify(results));
+      process.exit(0);
+    }
   `;
 
-  const policy = createSandboxPolicy({
-    writableRoots: [workspace],
-    readableRoots: [],
-    readableFiles: [process.execPath],
-    allowNetwork: false,
-    interactive: false,
-  });
+    const policy = createSandboxPolicy({
+      writableRoots: [workspace],
+      readableRoots: [],
+      readableFiles: [process.execPath],
+      allowNetwork: false,
+      interactive: false,
+    });
 
-  const proc = await spawnSupervised({
-    policy,
-    policyDirectory: engine,
-    command: [process.execPath, "-e", script],
-    cwd: workspace,
-    env: { TEMP: workspace, TMP: workspace },
-    interactive: false,
-  });
-  t.after(() => proc.stop());
+    const proc = await spawnSupervised({
+      policy,
+      policyDirectory: engine,
+      command: [process.execPath, "-e", script],
+      cwd: workspace,
+      env: { TEMP: workspace, TMP: workspace },
+      interactive: false,
+    });
+    proc.child.stdin?.end();
+    t.after(() => proc.stop());
 
-  const [stdout, stderr, code] = await Promise.all([
-    collectOutput(proc.child.stdout),
-    collectOutput(proc.child.stderr),
-    proc.completion,
-  ]);
-
-  assert.equal(code, 0, `stderr: ${stderr}`);
-  const parsed = JSON.parse(stdout) as {
-    status: number | null;
-    stdout: string;
-    stderr: string;
-    error: string | null;
-  };
-  assert.equal(parsed.error, null, `spawnSync error: ${stdout}`);
-  assert.equal(parsed.status, 0, `spawnSync status: ${stdout}`);
-  assert.equal(parsed.stdout, "piped-ok", `spawnSync output: ${stdout}`);
-});
+    const stdoutPromise = collectOutput(proc.child.stdout);
+    const stderrPromise = collectOutput(proc.child.stderr);
+    const deadline = new AbortController();
+    let timedOut: boolean;
+    let code: number | undefined;
+    try {
+      const result = await Promise.race([
+        proc.completion.then((c) => ({ timedOut: false as const, code: c })),
+        delay(10_000, { timedOut: true as const, code: undefined }, { signal: deadline.signal }),
+      ]);
+      timedOut = result.timedOut;
+      code = result.code;
+    } finally {
+      deadline.abort();
+    }
+    if (timedOut) {
+      await proc.stop();
+    }
+    const [stdout, stderr] = await Promise.all([stdoutPromise, stderrPromise]);
+    assert.equal(timedOut, false, `sandboxed process timed out; stdout=${stdout} stderr=${stderr}`);
+    assert.equal(code, 0, `stderr: ${stderr}`);
+    const parsed = JSON.parse(stdout) as {
+      asyncPipe: { code?: number; out?: string; error?: string; timeout?: boolean };
+      syncPipe: { status: number | null; stdout: string; error: string | null };
+    };
+    assert.deepEqual(parsed.asyncPipe, { code: 0, out: "piped-ok", err: "" }, `asyncPipe: ${stdout}`);
+    assert.equal(parsed.syncPipe.error, null, `syncPipe: ${stdout}`);
+    assert.equal(parsed.syncPipe.status, 0, `syncPipe: ${stdout}`);
+    assert.equal(parsed.syncPipe.stdout, "sync-ok", `syncPipe: ${stdout}`);
+  },
+);
 
 test("Windows sandbox revokes NTFS ACLs on normal exit and graceful stop()", { skip: !IS_WINDOWS }, async (t) => {
   const root = await mkdtemp(join(tmpdir(), "ae-win-acl-"));

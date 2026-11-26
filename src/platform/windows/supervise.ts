@@ -24,6 +24,7 @@ export async function spawnSupervised(options: SpawnSupervisedOptions): Promise<
       socket.end("stop\n");
     }
   });
+  controlServer.unref();
   await new Promise<void>((resolveListen, rejectListen) => {
     controlServer.once("error", rejectListen);
     controlServer.listen(controlPipe, () => {
