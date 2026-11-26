@@ -138,10 +138,10 @@ On native Windows, run the one-time setup from an elevated PowerShell prompt to 
 
 ```powershell
 cargo build --release --manifest-path native/win-sandbox/Cargo.toml
-pwsh -NoProfile -File scripts/windows-sandbox-setup.ps1
+agent-evals setup sandbox # or from a checkout: npm run eval -- setup sandbox
 ```
 
-Normal `agent-evals` runs execute as your standard non-admin user (no elevation required). To remove the local accounts, firewall rule, and credentials file later, run `pwsh -NoProfile -File scripts/windows-sandbox-setup.ps1 -Teardown` as Administrator.
+Normal `agent-evals` runs execute as your standard non-admin user (no elevation required). To remove the local accounts, firewall rule, and credentials file later, run `agent-evals setup sandbox --teardown` as Administrator.
 
 To prepare Pi on Windows and run the native Windows ACP example:
 

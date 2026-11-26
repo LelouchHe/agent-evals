@@ -117,6 +117,7 @@ export interface PlatformBackend {
   mockForwarderSpec(): MockForwarderSpec;
   listenMockServer(server: Server, runRootDir: string): Promise<MockEndpoint>;
   assertSandboxAvailable(): void;
+  setupSandbox(options: { readonly teardown: boolean }): Promise<string>;
   createSandboxPolicy(options: CreateSandboxPolicyOptions): SandboxPolicy;
   resolveDeniedExecutables(targets: readonly string[], pathEntries: readonly string[]): Promise<readonly string[]>;
   spawnSupervised(options: SpawnSupervisedOptions): Promise<SupervisedProcess>;

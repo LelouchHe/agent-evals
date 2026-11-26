@@ -16,12 +16,13 @@ import { formatMatrix, formatReport } from "./engine/report.ts";
 import { runOutcome, type EvaluationRecord, type RetainArtifacts } from "./engine/results.ts";
 import { describePlacement } from "./engine/placement.ts";
 import { formatResolvedCase } from "./engine/view.ts";
+import { setupSandbox } from "./platform/index.ts";
 import { piRunner } from "./runners/pi/index.ts";
 import { noopRunner } from "./runners/noop/index.ts";
 import { runAgentCommand } from "./runners/acp/commands.ts";
 import { acpRunner } from "./runners/acp/index.ts";
 
-const USAGE = `Usage: agent-evals <command> <config.yml> [options]
+const USAGE = `Usage: agent-evals <command> [arguments] [options]
 
 Commands:
   run <config.yml>         Execute the selected case, or every case when --case is omitted
@@ -29,6 +30,7 @@ Commands:
   report <results-dir>...  Print a session report from retained run records
   config <agent.yml>       Query ACP configuration values without prompting
   login <agent.yml>        Run the declared native command and save login files
+  setup <target>           Prepare host prerequisites (sandbox)
 
 Options:
   --case <name>            Named case to select (omitting selects every case in a cases document)
@@ -39,13 +41,14 @@ Options:
   --extension-dir <path>   Trusted extension root, one implementation per subdirectory (repeatable)
   --files                  With view: list every placed and excluded path
   --matrix                 With report: one table of checks by case instead of the session report
+  --teardown               With setup: remove host sandbox setup instead of provisioning it
   --version, -V            Show version
   --help                   Show this help
 
 Configuration errors exit with code 2 before any run resource is created.
 `;
 
-type Command = "run" | "view" | "report" | "config" | "login";
+type Command = "run" | "view" | "report" | "config" | "login" | "setup";
 
 interface CliOptions {
   readonly command: Command;
@@ -55,6 +58,7 @@ interface CliOptions {
   readonly extensionDirs: readonly string[];
   readonly showFiles: boolean;
   readonly matrix: boolean;
+  readonly teardown: boolean;
   readonly reps: number;
   readonly jobs: number;
   readonly retain: RetainArtifacts;
@@ -118,6 +122,11 @@ async function main(argv: readonly string[]): Promise<number> {
         process.off("SIGINT", onSignal);
         process.off("SIGTERM", onSignal);
       }
+    }
+    if (options.command === "setup") {
+      const output = await setupSandbox({ teardown: options.teardown });
+      if (output.length > 0) process.stdout.write(output);
+      return 0;
     }
     return await runCommand(options);
   } catch (error) {
@@ -274,6 +283,7 @@ function parseArguments(argv: readonly string[]): CliOptions {
         "extension-dir": { type: "string", multiple: true },
         files: { type: "boolean" },
         matrix: { type: "boolean" },
+        teardown: { type: "boolean" },
         reps: { type: "string" },
         jobs: { type: "string" },
         retain: { type: "string" },
@@ -294,16 +304,30 @@ function parseArguments(argv: readonly string[]): CliOptions {
   }
 
   const [command, rawConfigPath, ...unexpected] = positionals;
-  if (command !== "run" && command !== "view" && command !== "report" && command !== "config" && command !== "login") {
+  if (
+    command !== "run" &&
+    command !== "view" &&
+    command !== "report" &&
+    command !== "config" &&
+    command !== "login" &&
+    command !== "setup"
+  ) {
     throw new ConfigError(command === undefined ? "a command is required" : `unknown command: ${command}`);
   }
   if (rawConfigPath === undefined) {
     throw new ConfigError(
-      command === "report" ? "a results directory is required" : "a configuration file is required",
+      command === "report"
+        ? "a results directory is required"
+        : command === "setup"
+          ? "a setup target is required (supported: sandbox)"
+          : "a configuration file is required",
     );
   }
   if (command !== "report" && unexpected.length > 0) {
     throw new ConfigError(`unexpected argument: ${unexpected[0]}`);
+  }
+  if (command === "setup" && rawConfigPath !== "sandbox") {
+    throw new ConfigError(`unknown setup target: ${rawConfigPath} (supported: sandbox)`);
   }
 
   if (
@@ -334,6 +358,20 @@ function parseArguments(argv: readonly string[]): CliOptions {
   if (command !== "report" && values.matrix === true) {
     throw new ConfigError("--matrix applies only to report");
   }
+  if (command !== "setup" && values.teardown === true) {
+    throw new ConfigError("--teardown applies only to setup");
+  }
+  if (
+    command === "setup" &&
+    (values.case !== undefined ||
+      values["results-dir"] !== undefined ||
+      extensionDirs.length > 0 ||
+      values.reps !== undefined ||
+      values.jobs !== undefined ||
+      values.retain !== undefined)
+  ) {
+    throw new ConfigError("setup accepts only a target and optional --teardown");
+  }
   if (
     command === "report" &&
     (values.case !== undefined ||
@@ -351,12 +389,13 @@ function parseArguments(argv: readonly string[]): CliOptions {
 
   return {
     command,
-    configPath: resolve(rawConfigPath),
+    configPath: command === "setup" ? rawConfigPath : resolve(rawConfigPath),
     ...(values.case === undefined ? {} : { caseName: values.case }),
     ...(values["results-dir"] === undefined ? {} : { resultsDir: resolve(values["results-dir"]) }),
     extensionDirs,
     showFiles: values.files === true,
     matrix: values.matrix === true,
+    teardown: values.teardown === true,
     reps,
     jobs,
     retain,

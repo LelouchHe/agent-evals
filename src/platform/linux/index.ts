@@ -30,6 +30,11 @@ export const linuxBackend: PlatformBackend = {
   systemPath: SYSTEM_PATH,
   caseInsensitivePaths: false,
   assertSandboxAvailable: assertBwrapAvailable,
+  async setupSandbox({ teardown }): Promise<string> {
+    if (teardown) return "Linux bubblewrap requires no host teardown.\n";
+    assertBwrapAvailable();
+    return "Linux bubblewrap sandbox is ready.\n";
+  },
   createSandboxPolicy,
   resolveDeniedExecutables,
   spawnSupervised,

@@ -57,7 +57,7 @@ export function winSandboxCredentialsPath(): string {
     return join(localAppData, "agent-evals", "sandbox-users.json");
   }
   throw new Error(
-    "Cannot locate Windows sandbox credentials file; run scripts/windows-sandbox-setup.ps1 or set AGENT_EVALS_WIN_SANDBOX_CREDENTIALS.",
+    "Cannot locate Windows sandbox credentials file; run `agent-evals setup sandbox` as Administrator or set AGENT_EVALS_WIN_SANDBOX_CREDENTIALS.",
   );
 }
 
@@ -75,7 +75,7 @@ export function assertWinSandboxAvailable(): void {
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
     throw new Error(
-      `Windows sandbox-user preflight failed (${helper} --probe ${credsPath}): ${detail}. Run scripts/windows-sandbox-setup.ps1 as Administrator.`,
+      `Windows sandbox-user preflight failed (${helper} --probe ${credsPath}): ${detail}. Run \`agent-evals setup sandbox\` as Administrator.`,
       { cause: error },
     );
   }

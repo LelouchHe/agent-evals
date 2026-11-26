@@ -49,6 +49,11 @@ export const macosBackend: PlatformBackend = {
   systemPath: SYSTEM_PATH,
   caseInsensitivePaths: true,
   assertSandboxAvailable: assertSeatbeltAvailable,
+  async setupSandbox({ teardown }): Promise<string> {
+    if (teardown) return "macOS Seatbelt requires no host teardown.\n";
+    assertSeatbeltAvailable();
+    return "macOS Seatbelt sandbox is ready (/usr/bin/sandbox-exec).\n";
+  },
   createSandboxPolicy,
   resolveDeniedExecutables,
   spawnSupervised,

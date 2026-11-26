@@ -201,6 +201,40 @@ export const windowsBackend: PlatformBackend = {
   },
 
   assertSandboxAvailable: assertWinSandboxAvailable,
+  async setupSandbox({ teardown }): Promise<string> {
+    const setupScript = fileURLToPath(new URL("./setup.ps1", import.meta.url));
+    const scriptArgs = [
+      "-NoLogo",
+      "-NoProfile",
+      "-ExecutionPolicy",
+      "Bypass",
+      "-File",
+      setupScript,
+      ...(teardown ? ["-Teardown"] : []),
+    ];
+    const runShell = (shell: string): Promise<number> =>
+      new Promise<number>((resolveCode, reject) => {
+        const child = spawn(shell, scriptArgs, { stdio: "inherit", windowsHide: false });
+        child.once("error", reject);
+        child.once("close", (code) => resolveCode(code ?? 1));
+      });
+    let code: number;
+    try {
+      code = await runShell("pwsh.exe");
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+        code = await runShell("powershell.exe");
+      } else {
+        throw error;
+      }
+    }
+    if (code !== 0) {
+      throw new Error(
+        `Windows sandbox ${teardown ? "teardown" : "setup"} failed with exit code ${code} (run from an Administrator prompt)`,
+      );
+    }
+    return "";
+  },
   createSandboxPolicy,
   resolveDeniedExecutables,
   spawnSupervised,

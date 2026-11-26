@@ -52,6 +52,7 @@ const unsupportedBackend: PlatformBackend = {
   mockForwarderSpec: () => unsupportedPlatform(),
   listenMockServer: async () => unsupportedPlatform(),
   assertSandboxAvailable: unsupportedPlatform,
+  setupSandbox: async () => unsupportedPlatform(),
   createSandboxPolicy: unsupportedPlatform,
   resolveDeniedExecutables: async () => unsupportedPlatform(),
   spawnSupervised: async () => unsupportedPlatform(),
@@ -116,6 +117,10 @@ export function listenMockServer(server: Server, runRootDir: string): Promise<Mo
 
 export function assertSandboxAvailable(): void {
   backend.assertSandboxAvailable();
+}
+
+export function setupSandbox(options: { readonly teardown: boolean }): Promise<string> {
+  return backend.setupSandbox(options);
 }
 
 export function createSandboxPolicy(options: CreateSandboxPolicyOptions): SandboxPolicy {
