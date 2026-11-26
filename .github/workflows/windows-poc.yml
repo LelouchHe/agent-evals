@@ -27,5 +27,10 @@ jobs:
       - name: Typecheck
         run: npm run typecheck
 
+      - name: Inspect C:\ and D:\ ACLs (diagnostic)
+        run: |
+          icacls C:\
+          icacls D:\
+
       - name: Run Windows sandbox PoC & fake agent tests
         run: node --test --test-timeout=30000 src/platform/windows/sandbox.test.ts
