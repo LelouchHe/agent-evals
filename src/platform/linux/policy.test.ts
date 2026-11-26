@@ -1,10 +1,46 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdir, readFile, realpath, symlink, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, realpath, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { test } from "node:test";
 import { makeTempDir } from "../../../tests/helpers/fake-pi-control.ts";
-import { buildBwrapArgs, bwrapExecutablePath, resolveExternalSymlinkTarget } from "./policy.ts";
+import {
+  buildBwrapArgs,
+  buildBwrapOptions,
+  bwrapExecutablePath,
+  prepareBwrapLaunch,
+  resolveExternalSymlinkTarget,
+} from "./policy.ts";
+
+test("buildBwrapOptions rejects embedded NUL bytes without leaking values", () => {
+  assert.throws(
+    () =>
+      buildBwrapOptions(
+        { writableRoots: [], readableRoots: [], readAll: true, allowNetwork: false },
+        { env: { SECRET_TOKEN: "top-secret\0--bind" } },
+      ),
+    (error: unknown) =>
+      error instanceof Error &&
+      /SECRET_TOKEN/.test(error.message) &&
+      /NUL/.test(error.message) &&
+      !error.message.includes("top-secret"),
+  );
+});
+
+test("prepareBwrapLaunch unlinks backing files before returning so no credentials remain on disk", async (t) => {
+  const dir = await makeTempDir(t, "ae-bwrap-unlinked-");
+  const launch = await prepareBwrapLaunch(
+    dir,
+    { writableRoots: [], readableRoots: [], readAll: true, allowNetwork: false },
+    { SYNTHETIC_SECRET: "must-not-stay-on-disk" },
+  );
+  try {
+    assert.deepEqual(await readdir(dir), []);
+  } finally {
+    launch.closeFds();
+  }
+  assert.deepEqual(await readdir(dir), []);
+});
 
 test("resolveExternalSymlinkTarget handles multi-hop chains starting inside mounted directories", async (t) => {
   const root = await makeTempDir(t, "ae-resolv-hops-");

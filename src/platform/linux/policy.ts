@@ -1,5 +1,16 @@
 import { spawnSync } from "node:child_process";
-import { accessSync, closeSync, constants, lstatSync, openSync, readlinkSync, realpathSync, statSync } from "node:fs";
+import { randomUUID } from "node:crypto";
+import {
+  accessSync,
+  closeSync,
+  constants,
+  lstatSync,
+  openSync,
+  readlinkSync,
+  realpathSync,
+  statSync,
+  unlinkSync,
+} from "node:fs";
 import { writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import type { CreateSandboxPolicyOptions, SandboxPolicy } from "../types.ts";
@@ -69,19 +80,20 @@ export function bwrapExecutablePath(): string {
 }
 
 /**
- * Build a minimal cBPF seccomp filter that denies `connect(2)` with `EPERM`, blocking both
- * pathname and abstract `AF_UNIX` sockets (which `--unshare-net` does not isolate) everywhere
- * on the filesystem while keeping ordinary read-only files accessible.
+ * Build a minimal cBPF seccomp filter for network-disabled sandboxes. Denies `socket(2)`,
+ * `connect(2)`, `io_uring_setup(2)`, and (on x86_64) x32 ABI syscalls with `EPERM`, blocking
+ * stream and connectionless `AF_UNIX` sockets across the entire filesystem while keeping
+ * `pipe2`/`socketpair` and ordinary read-only files working.
  */
-export function buildDenyConnectSeccomp(arch: string = process.arch): Buffer {
+export function buildNoNetworkSeccomp(arch: string = process.arch): Buffer {
   let auditArch: number;
-  let sysConnect: number;
+  let deniedSyscalls: readonly number[];
   if (arch === "arm64") {
     auditArch = 0xc00000b7; // AUDIT_ARCH_AARCH64
-    sysConnect = 203;
+    deniedSyscalls = [198, 203, 425]; // socket, connect, io_uring_setup
   } else if (arch === "x64") {
     auditArch = 0xc000003e; // AUDIT_ARCH_X86_64
-    sysConnect = 42;
+    deniedSyscalls = [41, 42, 425]; // socket, connect, io_uring_setup
   } else {
     throw new Error(`unsupported Linux architecture for seccomp network isolation: ${arch}`);
   }
@@ -95,15 +107,23 @@ export function buildDenyConnectSeccomp(arch: string = process.arch): Buffer {
     buf.writeUInt32LE(k >>> 0, 4);
     return buf;
   };
-  return Buffer.concat([
+  const ops: Buffer[] = [
     insn(0x20, 0, 0, 4), // LD seccomp_data.arch
     insn(0x15, 1, 0, auditArch), // JEQ auditArch -> +1
     insn(0x06, 0, 0, SECCOMP_RET_ERRNO_EPERM), // unknown arch: fail closed
     insn(0x20, 0, 0, 0), // LD seccomp_data.nr
-    insn(0x15, 0, 1, sysConnect), // JEQ SYS_connect -> next else +1
-    insn(0x06, 0, 0, SECCOMP_RET_ERRNO_EPERM),
-    insn(0x06, 0, 0, SECCOMP_RET_ALLOW),
-  ]);
+  ];
+  if (arch === "x64") {
+    // Reject x32 ABI syscalls (nr >= 0x40000000) sharing AUDIT_ARCH_X86_64.
+    ops.push(insn(0x35, 0, 1, 0x40000000)); // JGE 0x40000000 -> next else +1
+    ops.push(insn(0x06, 0, 0, SECCOMP_RET_ERRNO_EPERM));
+  }
+  for (const nr of deniedSyscalls) {
+    ops.push(insn(0x15, 0, 1, nr)); // JEQ nr -> next else +1
+    ops.push(insn(0x06, 0, 0, SECCOMP_RET_ERRNO_EPERM));
+  }
+  ops.push(insn(0x06, 0, 0, SECCOMP_RET_ALLOW));
+  return Buffer.concat(ops);
 }
 
 /** Build the `bwrap` option list (everything before `-- <command>`) implementing `policy`. */
@@ -216,14 +236,22 @@ export function buildBwrapOptions(
   if (options.env !== undefined) {
     flags.push("--clearenv");
     for (const [key, value] of Object.entries(options.env)) {
-      if (value !== undefined) {
-        flags.push("--setenv", key, value);
+      if (value === undefined) continue;
+      if (key.includes("\0") || value.includes("\0")) {
+        throw new Error(`sandbox environment variable "${key.replaceAll("\0", "")}" contains a NUL byte`);
       }
+      flags.push("--setenv", key, value);
     }
   }
 
   if (options.seccompFd !== undefined) {
     flags.push("--seccomp", String(options.seccompFd));
+  }
+
+  for (const token of flags) {
+    if (token.includes("\0")) {
+      throw new Error("sandbox argument list contains an embedded NUL byte");
+    }
   }
 
   return flags;
@@ -241,9 +269,9 @@ export interface PreparedBwrapLaunch {
 }
 
 /**
- * Write `bwrap` options (including `--clearenv`/`--setenv` workload env) and optional seccomp
- * BPF program into `policyDirectory` and return open read-only file descriptors for FDs 3 & 4.
- * Host launchers (`bwrap`, `script`) thus never receive workload env vars or secrets on argv.
+ * Create unlinked read-only FDs for `bwrap --args` (including `--clearenv`/`--setenv` workload
+ * env) and optional `--seccomp` BPF program. Each backing file is created exclusively with mode
+ * 0600, opened, and unlinked immediately before spawning so no credentials ever remain on disk.
  */
 export async function prepareBwrapLaunch(
   policyDirectory: string,
@@ -259,16 +287,18 @@ export async function prepareBwrapLaunch(
     ...(seccompFd === undefined ? {} : { seccompFd }),
   });
 
-  const argsPath = join(policyDirectory, "bwrap.args");
-  await writeFile(argsPath, bwrapOptions.join("\0") + "\0", { mode: 0o600 });
-  const openArgsFd = openSync(argsPath, constants.O_RDONLY);
+  const openArgsFd = await openUnlinkedTempFd(
+    join(policyDirectory, `.bwrap-args-${randomUUID()}`),
+    bwrapOptions.join("\0") + "\0",
+  );
 
   let openSeccompFd: number | undefined;
   if (needsSeccomp) {
     try {
-      const bpfPath = join(policyDirectory, "bwrap.seccomp");
-      await writeFile(bpfPath, buildDenyConnectSeccomp(), { mode: 0o600 });
-      openSeccompFd = openSync(bpfPath, constants.O_RDONLY);
+      openSeccompFd = await openUnlinkedTempFd(
+        join(policyDirectory, `.bwrap-seccomp-${randomUUID()}`),
+        buildNoNetworkSeccomp(),
+      );
     } catch (error) {
       closeSync(openArgsFd);
       throw error;
@@ -298,6 +328,19 @@ export async function prepareBwrapLaunch(
     ...(openSeccompFd === undefined ? {} : { seccompFd: openSeccompFd }),
     closeFds,
   };
+}
+
+async function openUnlinkedTempFd(path: string, content: string | Buffer): Promise<number> {
+  await writeFile(path, content, { mode: 0o600, flag: "wx" });
+  try {
+    return openSync(path, constants.O_RDONLY);
+  } finally {
+    try {
+      unlinkSync(path);
+    } catch {
+      // Best-effort cleanup if already removed.
+    }
+  }
 }
 
 /**

@@ -108,3 +108,79 @@ exit ${trigger === "failure" ? 7 : 0}
     },
   );
 }
+
+test(
+  "Linux no-network seccomp denies AF_UNIX datagram socket creation with EPERM",
+  { skip: process.platform !== "linux" },
+  async (t) => {
+    const root = await mkdtemp(join(tmpdir(), "ae-linux-seccomp-"));
+    t.after(() => rm(root, { recursive: true, force: true }));
+    const supervised = await spawnSupervised({
+      policy: { writableRoots: [root], readableRoots: [], readAll: true, allowNetwork: false },
+      policyDirectory: root,
+      command: [
+        "/usr/bin/perl",
+        "-MSocket",
+        "-e",
+        'socket(my $s, PF_UNIX, SOCK_DGRAM, 0) and exit 2; $!{EPERM} or die "unexpected: $!"; print "EPERM\n"; exit 0;',
+      ],
+      cwd: root,
+      env: { PATH: "/usr/bin:/bin" },
+      interactive: false,
+    });
+    t.after(() => supervised.stop());
+    let out = "";
+    supervised.child.stdout!.on("data", (d: Buffer) => {
+      out += d.toString("utf8");
+    });
+    assert.equal(await supervised.completion, 0);
+    assert.equal(out.trim(), "EPERM");
+  },
+);
+
+test(
+  "Linux interactive supervisor allocates a private PTY where /dev/tty and input work",
+  { skip: process.platform !== "linux" },
+  async (t) => {
+    const root = await mkdtemp(join(tmpdir(), "ae-linux-pty-"));
+    t.after(() => rm(root, { recursive: true, force: true }));
+    const driver = join(root, "pty-driver.mjs");
+    const marker = join(root, "got-input.txt");
+    const superviseModule = new URL("./supervise.ts", import.meta.url).href;
+    await writeFile(
+      driver,
+      `import { spawnSupervised } from ${JSON.stringify(superviseModule)};
+const proc = await spawnSupervised({
+  policy: { writableRoots: [${JSON.stringify(root)}], readableRoots: [], readAll: true, allowNetwork: false },
+  policyDirectory: ${JSON.stringify(root)},
+  command: [
+    "/bin/sh",
+    "-c",
+    'exec 3<>/dev/tty || exit 11; printf "tty-ready\\n" >&3; IFS= read -r line; printf "%s" "$line" > ' + ${JSON.stringify(marker)},
+  ],
+  cwd: ${JSON.stringify(root)},
+  env: { PATH: "/usr/bin:/bin" },
+  interactive: true,
+});
+process.exit(await proc.completion);
+`,
+    );
+    // Run the driver itself attached to a PTY via util-linux `script` so stdin.isTTY is true.
+    const child = spawn("/usr/bin/script", ["-q", "-e", "-f", "-c", `${process.execPath} ${driver}`, "/dev/null"], {
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+    let out = "";
+    child.stdout.on("data", (chunk: Buffer) => {
+      out += chunk.toString("utf8");
+      if (out.includes("tty-ready")) {
+        child.stdin.write("confirm-pty\n");
+      }
+    });
+    const code = await new Promise<number | null>((resolve, reject) => {
+      child.once("exit", resolve);
+      child.once("error", reject);
+    });
+    assert.equal(code, 0, out);
+    assert.equal((await readFile(marker, "utf8")).trim(), "confirm-pty");
+  },
+);
