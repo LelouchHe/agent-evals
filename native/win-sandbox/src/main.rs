@@ -41,8 +41,8 @@ mod windows_impl {
     use windows_sys::Win32::Security::{
         AllocateAndInitializeSid, CreateRestrictedToken, CreateWellKnownSid, FreeSid,
         GetTokenInformation, SetTokenInformation, TokenDefaultDacl, TokenLogonSid,
-        WinBuiltinUsersSid, WinWorldSid, ACL, DACL_SECURITY_INFORMATION, DISABLE_MAX_PRIVILEGE,
-        NO_INHERITANCE, PSID, SID_AND_ATTRIBUTES, SID_IDENTIFIER_AUTHORITY,
+        WinAuthenticatedUserSid, WinBuiltinUsersSid, WinWorldSid, ACL, DACL_SECURITY_INFORMATION,
+        DISABLE_MAX_PRIVILEGE, NO_INHERITANCE, PSID, SID_AND_ATTRIBUTES, SID_IDENTIFIER_AUTHORITY,
         SUB_CONTAINERS_AND_OBJECTS_INHERIT, TOKEN_ADJUST_DEFAULT, TOKEN_ADJUST_SESSIONID,
         TOKEN_ASSIGN_PRIMARY, TOKEN_DEFAULT_DACL, TOKEN_DUPLICATE, TOKEN_GROUPS, TOKEN_QUERY,
         WRITE_RESTRICTED,
@@ -298,6 +298,7 @@ mod windows_impl {
 
         let world_sid = well_known_sid(WinWorldSid)?;
         let users_sid = well_known_sid(WinBuiltinUsersSid)?;
+        let auth_user_sid = well_known_sid(WinAuthenticatedUserSid)?;
         let logon_buf = query_logon_sid_buf(base_token.0)?;
 
         let mut sids_to_restrict: Vec<SID_AND_ATTRIBUTES> = vec![
@@ -311,12 +312,16 @@ mod windows_impl {
             },
         ];
 
-        // In full restricted mode (read+write restricted), include BUILTIN\Users so the process
-        // can read/execute Windows system binaries (C:\Windows\System32), while still blocking
-        // reads of private user directories (%USERPROFILE%) which do not grant BUILTIN\Users.
+        // In full restricted mode (read+write restricted), include BUILTIN\Users and
+        // Authenticated Users so system binaries and kernel devices (\Device\NamedPipe) work,
+        // while private user directories (%USERPROFILE%) remain inaccessible.
         if !write_restricted_only {
             sids_to_restrict.push(SID_AND_ATTRIBUTES {
                 Sid: users_sid.as_ptr() as PSID,
+                Attributes: 0,
+            });
+            sids_to_restrict.push(SID_AND_ATTRIBUTES {
+                Sid: auth_user_sid.as_ptr() as PSID,
                 Attributes: 0,
             });
         }
