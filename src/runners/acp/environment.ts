@@ -1,7 +1,7 @@
 import { constants } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { lstat, mkdir, open, realpath, rename, rm, symlink, writeFile } from "node:fs/promises";
-import { basename, dirname, join, resolve } from "node:path";
+import { basename, delimiter, dirname, join, resolve } from "node:path";
 import { ConfigError, errorMessage, expectPlacementDestination, expectRelativePath } from "../../engine/config.ts";
 import { copyPlacement, homePathOf, isHomeDestination, placedPaths, stageEntries } from "../../engine/files.ts";
 import type { MockWiring } from "../../engine/registry.ts";
@@ -246,7 +246,8 @@ export async function harnessEnvironment(
     ...(process.env.TERM === undefined ? {} : { TERM: process.env.TERM }),
     HOME: dirs.home,
     TMPDIR: dirs.tmp,
-    PATH: [...(mocks === undefined ? [] : [mocks.forwarderDir]), ...pathEntries].join(":"),
+    ...(process.platform === "win32" ? { TEMP: dirs.tmp, TMP: dirs.tmp, USERPROFILE: dirs.home } : {}),
+    PATH: [...(mocks === undefined ? [] : [mocks.forwarderDir]), ...pathEntries].join(delimiter),
   };
   return { env, policy };
 }
@@ -294,8 +295,18 @@ async function canonicalPath(path: string): Promise<string> {
 
 async function readRegular(root: RunRoot, file: string): Promise<Buffer> {
   const path = await resolveWorkspacePath(root, file);
-  // NONBLOCK avoids opening a FIFO being substituted for a credential file.
-  const handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+  if (process.platform === "win32") {
+    const info = await lstat(path);
+    if (info.isSymbolicLink() || !info.isFile()) {
+      throw new ConfigError(`login path is not a regular file: ${file}`);
+    }
+  }
+  // NONBLOCK avoids opening a FIFO being substituted for a credential file on POSIX.
+  const openFlags =
+    process.platform === "win32"
+      ? constants.O_RDONLY
+      : constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK;
+  const handle = await open(path, openFlags);
   try {
     if (!(await handle.stat()).isFile()) throw new ConfigError(`login path is not a regular file: ${file}`);
     return await handle.readFile();

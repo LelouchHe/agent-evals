@@ -1,5 +1,5 @@
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
-import { join } from "node:path";
+import { delimiter, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { errorMessage } from "./config.ts";
 import { stageCheckFiles } from "./files.ts";
@@ -47,7 +47,7 @@ async function runProgram(
   if (program === undefined) {
     return { kind: "failed", reason: "the check named no program", output: "" };
   }
-  const path = process.env.PATH ?? SYSTEM_PATH.join(":");
+  const path = process.env.PATH ?? SYSTEM_PATH.join(delimiter);
   const directory = await mkdtemp(join(options.engineDir, "check-"));
   const homeDir = join(directory, "home");
   const tmpDir = join(directory, "tmp");
@@ -77,13 +77,19 @@ async function runProgram(
       policy: {
         writableRoots: [options.workspaceDir, homeDir, tmpDir],
         readableRoots: stagingDir === undefined ? [] : [stagingDir],
+        readableFiles: [process.execPath, CHECK_RUNNER],
         readAll: true,
         allowNetwork: false,
       },
       policyDirectory: directory,
       command: [process.execPath, CHECK_RUNNER, stagingDir ?? "-", program, ...args],
       cwd: options.workspaceDir,
-      env: { PATH: path, HOME: homeDir, TMPDIR: tmpDir },
+      env: {
+        PATH: path,
+        HOME: homeDir,
+        TMPDIR: tmpDir,
+        ...(process.platform === "win32" ? { TEMP: tmpDir, TMP: tmpDir, USERPROFILE: homeDir } : {}),
+      },
       interactive: false,
       report: true,
     });

@@ -68,6 +68,7 @@ export interface SpawnSandboxedOptions {
 export interface PlatformBackend {
   readonly systemPath: readonly string[];
   readonly caseInsensitivePaths: boolean;
+  defaultTempParent?(): string;
   assertSandboxAvailable(): void;
   createSandboxPolicy(options: CreateSandboxPolicyOptions): SandboxPolicy;
   resolveDeniedExecutables(targets: readonly string[], pathEntries: readonly string[]): Promise<readonly string[]>;

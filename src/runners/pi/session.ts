@@ -1,6 +1,6 @@
 import { access, mkdir, readFile, realpath, stat, writeFile } from "node:fs/promises";
 import { constants } from "node:fs";
-import { basename, dirname, join, resolve } from "node:path";
+import { basename, delimiter, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { ConfigError, errorMessage } from "../../engine/config.ts";
 import { truncate } from "../../engine/truncate.ts";
@@ -55,7 +55,10 @@ export async function resolvePiExecutable(executable: string): Promise<string> {
   if (executable.length === 0) {
     throw new ConfigError("pi executable must be a non-empty string");
   }
-  const candidate = executable.includes("/") ? resolve(executable) : await findOnPath(executable);
+  const candidate =
+    executable.includes("/") || (process.platform === "win32" && executable.includes("\\"))
+      ? resolve(executable)
+      : await findOnPath(executable);
   if (candidate === undefined) {
     throw new ConfigError(`pi executable not found on PATH: ${executable}`);
   }
@@ -151,7 +154,7 @@ export async function createPiProcess(config: PiSessionConfig): Promise<PiProces
   await writeFile(safeGroupPath, await readFile(safeGroupSource, "utf8"), { mode: 0o700 });
 
   let shellPath: string | undefined;
-  if (config.tools !== null) {
+  if (config.tools !== null && process.platform !== "win32") {
     shellPath = join(toolsDir, "shell-wrapper.sh");
     await writeFile(shellPath, await readFile(new URL("./shell-wrapper.sh", import.meta.url), "utf8"), { mode: 0o700 });
     await mkdir(shellStateDirectory(config), { recursive: true, mode: 0o700 });
@@ -231,8 +234,9 @@ function buildPiArgs(config: PiSessionConfig): string[] {
 function buildEnvironment(config: PiSessionConfig): NodeJS.ProcessEnv {
   const nodeDirectory = dirname(process.execPath);
   const env: NodeJS.ProcessEnv = {
-    PATH: [nodeDirectory, ...SYSTEM_PATH].join(":"),
+    PATH: [nodeDirectory, ...SYSTEM_PATH].join(delimiter),
     HOME: config.dirs.homeDir,
+    ...(process.platform === "win32" ? { USERPROFILE: config.dirs.homeDir } : {}),
     TMPDIR: config.dirs.scratchDir,
     TMP: config.dirs.scratchDir,
     TEMP: config.dirs.scratchDir,
@@ -274,16 +278,19 @@ async function writeIsolatedSettings(configDir: string, shellPath?: string): Pro
 
 async function findOnPath(name: string): Promise<string | undefined> {
   const path = process.env.PATH ?? "";
-  for (const directory of path.split(":")) {
+  const extensions = process.platform === "win32" ? ["", ".exe", ".cmd", ".bat"] : [""];
+  for (const directory of path.split(delimiter)) {
     if (directory.length === 0) {
       continue;
     }
-    const candidate = join(directory, name);
-    try {
-      await access(candidate, constants.X_OK);
-      return candidate;
-    } catch {
-      // Keep searching.
+    for (const ext of extensions) {
+      const candidate = join(directory, `${name}${ext}`);
+      try {
+        await access(candidate, process.platform === "win32" ? constants.F_OK : constants.X_OK);
+        return candidate;
+      } catch {
+        // Keep searching.
+      }
     }
   }
   return undefined;

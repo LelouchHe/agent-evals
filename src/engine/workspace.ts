@@ -26,6 +26,18 @@ export interface RunRoot {
 
 export async function openRunRoot(path: string): Promise<RunRoot> {
   const canonical = await realpath(path);
+  if (process.platform === "win32") {
+    let stats;
+    try {
+      stats = await lstat(canonical, { bigint: true });
+    } catch (error) {
+      throw new WorkspacePathError(`could not open run directory ${path}: ${errorMessage(error)}`);
+    }
+    if (stats.isSymbolicLink() || !stats.isDirectory()) {
+      throw new WorkspacePathError(`run path is not a directory: ${path}`);
+    }
+    return { path: canonical, dev: stats.dev, ino: stats.ino };
+  }
   let handle;
   try {
     handle = await open(canonical, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);
@@ -56,6 +68,9 @@ export async function assertRunRoot(root: RunRoot): Promise<void> {
   }
   if (entry.isSymbolicLink() || !entry.isDirectory() || entry.dev !== root.dev || entry.ino !== root.ino) {
     throw new WorkspacePathError(`run directory was replaced after preparation: ${root.path}`);
+  }
+  if (process.platform === "win32") {
+    return;
   }
 
   let handle;
@@ -238,9 +253,13 @@ export async function readRunTree(root: RunRoot, requestedPath: string): Promise
 
 /** Read one regular file with the size ceiling and the same no-follow open as `readRunFile`. */
 async function readBoundedFile(absolute: string, requestedPath: string): Promise<Buffer> {
+  const openFlags =
+    process.platform === "win32"
+      ? constants.O_RDONLY
+      : constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK;
   let handle;
   try {
-    handle = await open(absolute, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+    handle = await open(absolute, openFlags);
   } catch (error) {
     if (isMissing(error)) {
       throw error;
@@ -293,7 +312,7 @@ export async function runPathExists(root: RunRoot, requestedPath: string): Promi
 }
 
 export function requireConfigurationPath(declaringDir: string, relativePath: string, label: string): string {
-  if (relativePath.startsWith("/") || relativePath.includes("\0")) {
+  if (isAbsolute(relativePath) || relativePath.startsWith("/") || relativePath.includes("\0")) {
     throw new ConfigError(`${label} must be a relative path`);
   }
   return resolve(declaringDir, relativePath);

@@ -85,14 +85,22 @@ async function runLookupCommand(
   let stdout: string;
   try {
     stdout = await new Promise<string>((resolve, reject) => {
-      // Spawn in its own process group so abort/timeout kills the shell and any direct child
-      // regardless of whether `/bin/sh` exec-optimizes simple commands (dash vs bash).
-      const child = spawn("/bin/sh", ["-c", command], {
-        cwd,
-        env: process.env,
-        stdio: ["ignore", "pipe", "pipe"],
-        detached: true,
-      });
+      const isWindows = process.platform === "win32";
+      // On POSIX, spawn in its own process group so abort/timeout kills the shell and any direct
+      // child regardless of whether `/bin/sh` exec-optimizes simple commands (dash vs bash).
+      const child = isWindows
+        ? spawn(process.env.ComSpec ?? "cmd.exe", ["/d", "/c", command], {
+            cwd,
+            env: process.env,
+            stdio: ["ignore", "pipe", "pipe"],
+            windowsHide: true,
+          })
+        : spawn("/bin/sh", ["-c", command], {
+            cwd,
+            env: process.env,
+            stdio: ["ignore", "pipe", "pipe"],
+            detached: true,
+          });
       const chunks: Buffer[] = [];
       let bytes = 0;
       let settled = false;
@@ -116,10 +124,27 @@ async function runLookupCommand(
         child.stdout.destroy();
         child.stderr.destroy();
         if (child.pid !== undefined) {
-          try {
-            process.kill(-child.pid, "SIGKILL");
-          } catch {
-            // Already exited.
+          if (isWindows) {
+            try {
+              const killer = spawn("taskkill", ["/pid", String(child.pid), "/T", "/F"], {
+                stdio: "ignore",
+                windowsHide: true,
+              });
+              killer.unref();
+            } catch {
+              // Fall back to direct kill below.
+            }
+            try {
+              child.kill();
+            } catch {
+              // Already exited.
+            }
+          } else {
+            try {
+              process.kill(-child.pid, "SIGKILL");
+            } catch {
+              // Already exited.
+            }
           }
         }
         // Wait briefly for the direct child to be reaped, without hanging on detached

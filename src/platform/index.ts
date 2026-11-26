@@ -1,4 +1,5 @@
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
+import { tmpdir } from "node:os";
 import { linuxBackend } from "./linux/index.ts";
 import { macosBackend } from "./macos/index.ts";
 import type {
@@ -39,6 +40,10 @@ const backend: PlatformBackend =
 export const isSandboxPlatformSupported = process.platform === "darwin" || process.platform === "linux";
 export const SYSTEM_PATH: readonly string[] = backend.systemPath;
 export const caseInsensitivePaths: boolean = backend.caseInsensitivePaths;
+
+export function defaultTempParent(): string {
+  return backend.defaultTempParent?.() ?? tmpdir();
+}
 
 export function assertSandboxAvailable(): void {
   backend.assertSandboxAvailable();
