@@ -2,6 +2,7 @@ import { execFile } from "node:child_process";
 import { realpath, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { promisify } from "node:util";
+import { posixPlatformHelpers } from "../posix-helpers.ts";
 import type { PlatformBackend } from "../types.ts";
 import { spawnSandboxed } from "./launch.ts";
 import { assertSeatbeltAvailable, createSandboxPolicy, SYSTEM_PATH } from "./policy.ts";
@@ -44,9 +45,15 @@ async function activeDeveloperDir(): Promise<string | undefined> {
 }
 
 export const macosBackend: PlatformBackend = {
+  ...posixPlatformHelpers,
   systemPath: SYSTEM_PATH,
   caseInsensitivePaths: true,
   assertSandboxAvailable: assertSeatbeltAvailable,
+  async setupSandbox({ teardown }): Promise<string> {
+    if (teardown) return "macOS Seatbelt requires no host teardown.\n";
+    assertSeatbeltAvailable();
+    return "macOS Seatbelt sandbox is ready (/usr/bin/sandbox-exec).\n";
+  },
   createSandboxPolicy,
   resolveDeniedExecutables,
   spawnSupervised,

@@ -1,12 +1,11 @@
 import { randomBytes } from "node:crypto";
 import { mkdir, realpath, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { stringify } from "yaml";
 import { loadImplementationParameters } from "../../engine/authoring.ts";
 import { ConfigError, errorMessage } from "../../engine/config.ts";
 import { createEnvSource } from "../../engine/env-source.ts";
-import { spawnSupervised, type SupervisedProcess } from "../../platform/index.ts";
+import { defaultTempParent, spawnSupervised, type SupervisedProcess } from "../../platform/index.ts";
 import { agentSchema } from "./agent.ts";
 import { harnessEnvironment, prepareHarnessHome, resolveHarnessHome, saveLogin } from "./environment.ts";
 import { withSession } from "./session.ts";
@@ -15,7 +14,7 @@ import { withSession } from "./session.ts";
 export async function runAgentCommand(command: "config" | "login", path: string, signal: AbortSignal): Promise<string> {
   // Placeholders need the directories' paths; they are created only after validation. The
   // parent is canonical so the sandbox authorizes traversal through the `deps` link.
-  const directory = join(await realpath(tmpdir()), `ae-acp-${randomBytes(6).toString("hex")}`);
+  const directory = join(await realpath(defaultTempParent()), `ae-acp-${randomBytes(6).toString("hex")}`);
   const dirs = {
     home: join(directory, "home"),
     workspace: join(directory, "workspace"),

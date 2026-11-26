@@ -75,6 +75,7 @@ function finish(code: number): void {
 const child = spawn(command, args, {
   stdio: ["inherit", "inherit", "inherit"],
   env: process.env,
+  windowsHide: true,
 });
 
 let stopping = false;

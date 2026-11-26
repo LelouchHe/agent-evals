@@ -3,7 +3,7 @@ import { execFile, spawn } from "node:child_process";
 import { cp, mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { test } from "node:test";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { pathToFileURL } from "node:url";
 import { stringify } from "yaml";
 import { isSandboxPlatformSupported } from "../src/platform/index.ts";
 import { runCliProcess } from "./helpers/cli-process.ts";
@@ -51,7 +51,7 @@ test("package metadata and built runtime assets point at the sole CLI implementa
     scripts?: Record<string, string>;
   };
   assert.equal(pkg.name, "@lelouchhe/agent-evals");
-  assert.deepEqual(pkg.os, ["darwin", "linux"]);
+  assert.deepEqual(pkg.os, ["darwin", "linux", "win32"]);
   assert.equal(pkg.bin?.["agent-evals"], "dist/cli.js");
   assert.equal(pkg.scripts?.eval, "node dist/cli.js");
   assert.deepEqual(pkg.files, ["dist", ".env.example"]);
@@ -70,10 +70,13 @@ test("package metadata and built runtime assets point at the sole CLI implementa
   assert.ok(cli.startsWith("#!/usr/bin/env node\n"), "dist/cli.js must keep its executable shebang");
   for (const asset of [
     "dist/engine/check-runner.js",
-    "dist/engine/forwarder-client.mjs",
-    "dist/engine/forwarder.sh",
     "dist/engine/regex.js",
     "dist/engine/runtime-assets.js",
+    "dist/platform/posix-forwarder.sh",
+    "dist/platform/posix-forwarder-client.mjs",
+    "dist/platform/windows/forwarder.cmd",
+    "dist/platform/windows/forwarder.ps1",
+    "dist/platform/windows/forwarder-client.mjs",
     "dist/platform/macos/supervisor.sh",
     "dist/runners/pi/supervisor.js",
     "dist/runners/pi/safe-process-group.js",
@@ -141,7 +144,7 @@ test("built CLI runs packaged supervisor, wrapper, and judge assets", async (t) 
           matches: [
             '"supervisor.js"',
             '"safe-process-group.js"',
-            '"shell-wrapper.sh"',
+            ...(process.platform === "win32" ? [] : ['"shell-wrapper.sh"']),
             '"shellHasStateDir":true',
             // Every staged tool is a built .js/.sh asset, never a .ts source file.
             '/^\\{"names":\\["[a-z-]+\\.(js|sh)"(,"[a-z-]+\\.(js|sh)")*\\],"shellHasStateDir":true\\}$/',
@@ -194,7 +197,9 @@ test("built CLI runs packaged supervisor, wrapper, and judge assets", async (t) 
   assert.equal(record.cleanup.status, "removed");
   assert.deepEqual(
     record.checks.map((check) => check.status),
-    ["pass", "pass", "pass", "pass", "pass", "pass", "pass", "pass"],
+    process.platform === "win32"
+      ? ["pass", "pass", "pass", "pass", "pass", "pass", "pass"]
+      : ["pass", "pass", "pass", "pass", "pass", "pass", "pass", "pass"],
   );
   assert.ok(record.checks.some((check) => check.checker === "judge"));
 });
@@ -202,10 +207,15 @@ test("built CLI runs packaged supervisor, wrapper, and judge assets", async (t) 
 /** Run one command to completion, keeping its last stderr line for the failure message. */
 async function run(command: string, args: readonly string[], cwd: string): Promise<void> {
   await new Promise<void>((resolve, reject) => {
-    execFile(command, args, { cwd, maxBuffer: 10 * 1024 * 1024 }, (error, _stdout, stderr) => {
-      if (error === null) resolve();
-      else reject(new Error(`${command} ${args[0] ?? ""} failed: ${stderr.trim() || error.message}`));
-    });
+    execFile(
+      command,
+      args,
+      { cwd, maxBuffer: 10 * 1024 * 1024, ...(process.platform === "win32" ? { shell: true } : {}) },
+      (error, _stdout, stderr) => {
+        if (error === null) resolve();
+        else reject(new Error(`${command} ${args[0] ?? ""} failed: ${stderr.trim() || error.message}`));
+      },
+    );
   });
 }
 
@@ -217,15 +227,25 @@ test(
     await run("npm", ["pack", "--ignore-scripts", "--pack-destination", packDir], root);
     const [tarball] = (await readdir(packDir)).filter((name) => name.endsWith(".tgz"));
     assert.ok(tarball !== undefined, "npm pack produced a tarball");
-    await run("/usr/bin/tar", ["-xzf", join(packDir, tarball), "-C", packDir], packDir);
+    await run(
+      process.platform === "win32" ? "tar" : "/usr/bin/tar",
+      ["-xzf", join(packDir, tarball), "-C", packDir],
+      packDir,
+    );
     const packageRoot = join(packDir, "package");
     const mocksModule = pathToFileURL(join(packageRoot, "dist", "engine", "mocks.js"));
-    // The host must resolve the asset beside itself inside the package, not from this worktree.
-    assert.equal(
-      fileURLToPath(new URL("./forwarder.sh", mocksModule)),
-      join(packageRoot, "dist", "engine", "forwarder.sh"),
-    );
-    await readFile(join(packageRoot, "dist", "engine", "forwarder.sh"), "utf8");
+    const platformModule = pathToFileURL(join(packageRoot, "dist", "platform", "index.js"));
+    const { mockForwarderSpec, wrapExecutableCommand } = (await import(
+      platformModule.href
+    )) as typeof import("../src/platform/index.ts");
+    const spec = mockForwarderSpec();
+    const { realpath } = await import("node:fs/promises");
+    const expectedPlatformDir = await realpath(join(packageRoot, "dist", "platform"));
+    // The host must resolve the forwarder assets inside the unpacked package, not from this worktree.
+    assert.ok((await realpath(spec.assetPath)).startsWith(expectedPlatformDir));
+    assert.ok((await realpath(spec.clientPath)).startsWith(expectedPlatformDir));
+    await readFile(spec.assetPath, "utf8");
+    await readFile(spec.clientPath, "utf8");
     // A package resolves its declared dependency from its own tree; give the unpacked copy the
     // installed re2js the engine imports, so the test never falls back to this worktree.
     await cp(join(root, "node_modules", "re2js"), join(packageRoot, "node_modules", "re2js"), { recursive: true });
@@ -263,7 +283,11 @@ test(
 
     const calls = [];
     for (const args of [["--now", ""], ["next"]]) {
-      calls.push(await callForwarder(join(host.wiring.forwarderDir, "release"), args));
+      const [cmd, ...cmdArgs] = wrapExecutableCommand(
+        join(host.wiring.forwarderDir, spec.targetFileName("release")),
+        args,
+      );
+      calls.push(await callForwarder(cmd, cmdArgs));
     }
     const { records: mockRecords } = await closeHost();
 

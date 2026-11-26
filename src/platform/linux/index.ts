@@ -1,5 +1,6 @@
 import { realpath, stat } from "node:fs/promises";
 import { join } from "node:path";
+import { posixPlatformHelpers } from "../posix-helpers.ts";
 import type { PlatformBackend } from "../types.ts";
 import { spawnSandboxed } from "./launch.ts";
 import { assertBwrapAvailable, createSandboxPolicy, SYSTEM_PATH } from "./policy.ts";
@@ -25,9 +26,15 @@ async function resolveDeniedExecutables(
 }
 
 export const linuxBackend: PlatformBackend = {
+  ...posixPlatformHelpers,
   systemPath: SYSTEM_PATH,
   caseInsensitivePaths: false,
   assertSandboxAvailable: assertBwrapAvailable,
+  async setupSandbox({ teardown }): Promise<string> {
+    if (teardown) return "Linux bubblewrap requires no host teardown.\n";
+    assertBwrapAvailable();
+    return "Linux bubblewrap sandbox is ready.\n";
+  },
   createSandboxPolicy,
   resolveDeniedExecutables,
   spawnSupervised,

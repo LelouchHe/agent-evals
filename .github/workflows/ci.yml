@@ -3,6 +3,7 @@ name: CI
 # Reused by the publish workflow, so a tag cannot publish a tree that the gate did not pass.
 on:
   workflow_call:
+  workflow_dispatch:
   pull_request:
   push:
     branches:
@@ -11,12 +12,14 @@ on:
 jobs:
   check:
     if: github.event_name != 'pull_request' || !github.event.pull_request.draft
+    timeout-minutes: 10
     strategy:
       fail-fast: false
       matrix:
         os:
           - macos-latest
           - ubuntu-latest
+          - windows-latest
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v5
@@ -25,11 +28,125 @@ jobs:
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y bubblewrap
 
+      - uses: Swatinem/rust-cache@v2
+        if: runner.os == 'Windows'
+        with:
+          workspaces: native/win-sandbox
+
+      - name: Build win-sandbox.exe (Windows)
+        if: runner.os == 'Windows'
+        working-directory: native/win-sandbox
+        run: cargo build --release
+
       - uses: actions/setup-node@v5
         with:
           node-version: "24"
           cache: npm
 
       - run: npm ci
+
+      - name: Provision Windows sandbox users
+        if: runner.os == 'Windows'
+        run: node src/cli.ts setup sandbox
+
       - run: npm run check
       - run: npm run test:package
+
+      - name: Teardown Windows sandbox users
+        if: always() && runner.os == 'Windows'
+        run: node src/cli.ts setup sandbox --teardown
+
+  smoke:
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
+    timeout-minutes: 10
+    needs: check
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - macos-latest
+          - ubuntu-latest
+          - windows-latest
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Check whether OPENCODE_API_KEY secret is configured
+        id: gate
+        shell: bash
+        env:
+          OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
+        run: |
+          if [ -n "$OPENCODE_API_KEY" ]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "OPENCODE_API_KEY secret is empty or not set; skipping live smoke."
+          fi
+
+      - uses: actions/checkout@v5
+        if: steps.gate.outputs.enabled == 'true'
+
+      - name: Install bubblewrap (Linux)
+        if: steps.gate.outputs.enabled == 'true' && runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y bubblewrap
+
+      - uses: Swatinem/rust-cache@v2
+        if: steps.gate.outputs.enabled == 'true' && runner.os == 'Windows'
+        with:
+          workspaces: native/win-sandbox
+
+      - name: Build win-sandbox.exe (Windows)
+        if: steps.gate.outputs.enabled == 'true' && runner.os == 'Windows'
+        working-directory: native/win-sandbox
+        run: cargo build --release
+
+      - uses: actions/setup-node@v5
+        if: steps.gate.outputs.enabled == 'true'
+        with:
+          node-version: "24"
+          cache: npm
+
+      - name: Install dependencies and build
+        if: steps.gate.outputs.enabled == 'true'
+        run: npm ci && npm run build
+
+      - name: Provision Windows sandbox users
+        if: steps.gate.outputs.enabled == 'true' && runner.os == 'Windows'
+        run: node dist/cli.js setup sandbox
+
+      - name: Run ACP live smoke (POSIX)
+        if: steps.gate.outputs.enabled == 'true' && runner.os != 'Windows'
+        shell: bash
+        env:
+          OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
+        run: |
+          SMOKE_DIR="$(mktemp -d)"
+          trap 'rm -rf "$SMOKE_DIR" .env' EXIT
+          ./examples/agents/pi-setup.sh "$SMOKE_DIR/pi"
+          umask 077
+          printf 'OPENCODE_API_KEY=%s\nPI_DEPS=%s\n' "$OPENCODE_API_KEY" "$SMOKE_DIR/pi/deps" > .env
+          PATH="$SMOKE_DIR/pi/deps/bin:$PATH" node dist/cli.js run examples/cases/deploy-runbook-posix/case.yml --case pi-with-skill
+
+      - name: Run ACP live smoke (Windows)
+        if: steps.gate.outputs.enabled == 'true' && runner.os == 'Windows'
+        shell: pwsh
+        env:
+          OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          $SmokeDir = Join-Path $env:ProgramData "agent-evals\smoke-pi"
+          try {
+            pwsh -File examples/agents/pi-setup.ps1 -TargetDir $SmokeDir
+            $PiDeps = Join-Path $SmokeDir "deps"
+            Set-Content -Path ".env" -Value "OPENCODE_API_KEY=$env:OPENCODE_API_KEY`nPI_DEPS=$PiDeps" -Encoding UTF8
+            $currentUser = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
+            icacls ".env" /inheritance:r /grant:r "${currentUser}:(F)" "SYSTEM:(F)" "Administrators:(F)" | Out-Null
+            node dist/cli.js run examples/cases/deploy-runbook-windows/case.yml --case pi-with-skill
+            exit $LASTEXITCODE
+          } finally {
+            Remove-Item -Force -ErrorAction SilentlyContinue ".env"
+            Remove-Item -Recurse -Force -ErrorAction SilentlyContinue $SmokeDir
+          }
+
+      - name: Teardown Windows sandbox users
+        if: always() && steps.gate.outputs.enabled == 'true' && runner.os == 'Windows'
+        run: node dist/cli.js setup sandbox --teardown

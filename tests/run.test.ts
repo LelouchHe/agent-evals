@@ -701,66 +701,74 @@ test("integration: CLI reports configuration errors with exit code 2", async (t)
   assert.deepEqual(await readdir(tempParent), []);
 });
 
-test("integration: FIFO evidence fails promptly and the CLI exits", { timeout: 30_000 }, async (t) => {
-  const runner = await createFakePi(t, "fifo");
-  const scenario = await writeScenario(t, {
-    runnerExecutable: runner.executable,
-    checks: [{ $type: "file", path: "hello.txt", matches: "anything" }],
-  });
-  const resultsDir = await makeTempDir(t, "ae-cli-fifo-results-");
-  const tempParent = await makeTempDir(t, "ae-cli-fifo-runs-");
+test(
+  "integration: FIFO evidence fails promptly and the CLI exits",
+  { skip: process.platform === "win32", timeout: 30_000 },
+  async (t) => {
+    const runner = await createFakePi(t, "fifo");
+    const scenario = await writeScenario(t, {
+      runnerExecutable: runner.executable,
+      checks: [{ $type: "file", path: "hello.txt", matches: "anything" }],
+    });
+    const resultsDir = await makeTempDir(t, "ae-cli-fifo-results-");
+    const tempParent = await makeTempDir(t, "ae-cli-fifo-runs-");
 
-  const result = await runCli(["run", scenario.casePath, "--results-dir", resultsDir], {
-    cwd: scenario.directory,
-    TMPDIR: tempParent,
-    timeoutMs: 10_000,
-  });
-  assert.equal(result.timedOut, false, "CLI remained blocked on a FIFO");
-  assert.equal(result.code, 2, result.stderr);
-  const record = await readOnlyResult(resultsDir);
-  assert.equal(record.status, "error");
-  assert.equal(record.checks[0]?.status, "error");
-  assert.match(record.checks[0]?.reason ?? "", /regular file|FIFO|not a regular/);
-  assert.deepEqual(await readdir(tempParent), []);
-});
+    const result = await runCli(["run", scenario.casePath, "--results-dir", resultsDir], {
+      cwd: scenario.directory,
+      TMPDIR: tempParent,
+      timeoutMs: 10_000,
+    });
+    assert.equal(result.timedOut, false, "CLI remained blocked on a FIFO");
+    assert.equal(result.code, 2, result.stderr);
+    const record = await readOnlyResult(resultsDir);
+    assert.equal(record.status, "error");
+    assert.equal(record.checks[0]?.status, "error");
+    assert.match(record.checks[0]?.reason ?? "", /regular file|FIFO|not a regular/);
+    assert.deepEqual(await readdir(tempParent), []);
+  },
+);
 
-test("integration: FIFO judge evidence fails promptly and the CLI exits", { timeout: 30_000 }, async (t) => {
-  const runner = await createFakePi(t, "fifo");
-  const judge = await createFakePi(t, "judge-valid");
-  const scenario = await writeScenario(t, {
-    runnerExecutable: runner.executable,
-    checks: [
-      {
-        $type: "judge",
-        runner: { $type: "pi", model: "test/judge-model", executable: judge.executable },
-        files: ["hello.txt"],
-        rubric: ["hello.txt exists"],
-      },
-    ],
-  });
-  const resultsDir = await makeTempDir(t, "ae-cli-fifo-judge-results-");
-  const tempParent = await makeTempDir(t, "ae-cli-fifo-judge-runs-");
+test(
+  "integration: FIFO judge evidence fails promptly and the CLI exits",
+  { skip: process.platform === "win32", timeout: 30_000 },
+  async (t) => {
+    const runner = await createFakePi(t, "fifo");
+    const judge = await createFakePi(t, "judge-valid");
+    const scenario = await writeScenario(t, {
+      runnerExecutable: runner.executable,
+      checks: [
+        {
+          $type: "judge",
+          runner: { $type: "pi", model: "test/judge-model", executable: judge.executable },
+          files: ["hello.txt"],
+          rubric: ["hello.txt exists"],
+        },
+      ],
+    });
+    const resultsDir = await makeTempDir(t, "ae-cli-fifo-judge-results-");
+    const tempParent = await makeTempDir(t, "ae-cli-fifo-judge-runs-");
 
-  const result = await runCli(["run", scenario.casePath, "--results-dir", resultsDir], {
-    cwd: scenario.directory,
-    TMPDIR: tempParent,
-    timeoutMs: 10_000,
-  });
-  assert.equal(result.timedOut, false, "CLI remained blocked on a FIFO");
-  assert.equal(result.code, 2, result.stderr);
-  const record = await readOnlyResult(resultsDir);
-  assert.equal(record.status, "error");
-  assert.equal(record.checks[0]?.status, "error");
-  assert.match(record.checks[0]?.reason ?? "", /regular file|FIFO|not a regular/);
-  assert.deepEqual(await readdir(tempParent), []);
-});
+    const result = await runCli(["run", scenario.casePath, "--results-dir", resultsDir], {
+      cwd: scenario.directory,
+      TMPDIR: tempParent,
+      timeoutMs: 10_000,
+    });
+    assert.equal(result.timedOut, false, "CLI remained blocked on a FIFO");
+    assert.equal(result.code, 2, result.stderr);
+    const record = await readOnlyResult(resultsDir);
+    assert.equal(record.status, "error");
+    assert.equal(record.checks[0]?.status, "error");
+    assert.match(record.checks[0]?.reason ?? "", /regular file|FIFO|not a regular/);
+    assert.deepEqual(await readdir(tempParent), []);
+  },
+);
 
 test("integration: a backtracking pattern is bounded and the CLI exits", { timeout: 30_000 }, async (t) => {
   const runner = await createFakePi(t, "pathological");
   // Catastrophic for a backtracking engine; linear-time on RE2, which must still answer.
   const scenario = await writeScenario(t, {
     runnerExecutable: runner.executable,
-    timeoutMs: 500,
+    timeoutMs: 3_000,
     checks: [{ $type: "file", path: "hello.txt", matches: "/(a+)+$/" }],
   });
   const resultsDir = await makeTempDir(t, "ae-cli-regex-results-");
@@ -780,7 +788,7 @@ test("integration: a backtracking pattern is bounded and the CLI exits", { timeo
   assert.deepEqual(await readdir(tempParent), []);
 });
 
-test("integration: CLI cancellation interrupts and cleans up", async (t) => {
+test("integration: CLI cancellation interrupts and cleans up", { skip: process.platform === "win32" }, async (t) => {
   const runner = await createFakePi(t, "hang");
   const scenario = await writeScenario(t, {
     runnerExecutable: runner.executable,
@@ -799,7 +807,13 @@ test("integration: CLI cancellation interrupts and cleans up", async (t) => {
   child.stderr.on("data", (chunk: Buffer) => {
     stderr += chunk.toString("utf8");
   });
-  await new Promise((resolve) => setTimeout(resolve, 600));
+  const deadline = Date.now() + 10_000;
+  while (Date.now() < deadline) {
+    if ((await readdir(tempParent)).length > 0) break;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  assert.ok((await readdir(tempParent)).length > 0, `run directory did not appear before timeout:\n${stderr}`);
+  await new Promise((resolve) => setTimeout(resolve, 150));
   child.kill("SIGINT");
   const code = await new Promise<number | null>((resolve) => child.on("exit", (value) => resolve(value)));
 

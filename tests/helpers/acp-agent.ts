@@ -15,13 +15,20 @@ export async function makeAcpAgent(t: TestContext, scenario = "success") {
     mkdir(join(deps, "share"), { recursive: true }),
     mkdir(runtime),
   ]);
-  const executable = join(deps, "bin/agent");
-  await writeFile(executable, '#!/bin/sh\nexec /usr/bin/perl "$(dirname "$0")/../share/agent.pl" "$@"\n');
-  await chmod(executable, 0o755);
+  if (process.platform === "win32") {
+    const cmdShim = `@echo off\r\n"${process.execPath}" "%~dp0..\\share\\agent.mjs" %*\r\nexit /b %ERRORLEVEL%\r\n`;
+    await writeFile(join(deps, "bin", "agent.cmd"), cmdShim, "ascii");
+    await writeFile(join(deps, "share", "agent.mjs"), WINDOWS_AGENT_MJS, "utf8");
+  } else {
+    const executable = join(deps, "bin/agent");
+    await writeFile(executable, '#!/bin/sh\nexec /usr/bin/perl "$(dirname "$0")/../share/agent.pl" "$@"\n');
+    await chmod(executable, 0o755);
+  }
   await writeFile(join(root, "agent-settings.json"), '{"model":"synthetic"}\n');
-  await writeFile(
-    join(deps, "share/agent.pl"),
-    `use strict;
+  if (process.platform !== "win32") {
+    await writeFile(
+      join(deps, "share/agent.pl"),
+      `use strict;
 use warnings;
 use JSON::PP;
 use File::Path qw(make_path);
@@ -207,7 +214,8 @@ printf x >"$(dirname "$fwd")/added" 2>/dev/null; printf '%s' $? >probe-write
   print encode_json({jsonrpc => "2.0", id => $request->{id}, result => $result}), "\\n";
 }
 `,
-  );
+    );
+  }
   const config = {
     acpCommand: ["agent", "acp", scenario],
     deps,
@@ -223,3 +231,256 @@ printf x >"$(dirname "$fwd")/added" 2>/dev/null; printf '%s' $? >probe-write
   await writeFile(path, stringify(config));
   return { root, deps, login, runtime, path, config };
 }
+
+const WINDOWS_AGENT_MJS = `import { spawnSync } from "node:child_process";
+import {
+  appendFileSync,
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
+import { delimiter, join } from "node:path";
+import { createInterface } from "node:readline";
+
+const [mode, scenario = "success", ...data] = process.argv.slice(2);
+const home = process.env.HOME || process.env.USERPROFILE || process.cwd();
+mkdirSync(join(home, ".auth"), { recursive: true });
+
+function save(rel, value) {
+  writeFileSync(join(home, rel), value);
+}
+function saveLog(name, value) {
+  writeFileSync(join(home, ".auth", name), value);
+}
+
+if (mode === "login") {
+  if (scenario === "refresh-failure") {
+    save(".auth/token", "refreshed-token");
+    process.exit(7);
+  }
+  process.stdout.write("login-ready\\n");
+  if (scenario === "wait") {
+    setTimeout(() => process.exit(0), 600_000);
+  } else if (scenario === "failure") {
+    process.exit(7);
+  } else if (scenario === "forgery") {
+    process.stdout.write("0\\n");
+    save("status", "0");
+    process.exit(7);
+  } else if (scenario === "symlink") {
+    symlinkSync(data[0], join(home, ".auth", "token"));
+    save("cache", "must-not-persist");
+    process.exit(0);
+  } else {
+    save(".auth/token", "synthetic-token");
+    save("cache", "must-not-persist");
+    process.exit(0);
+  }
+} else {
+  const methods = [];
+  let model = "model-a";
+  const rl = createInterface({ input: process.stdin });
+  for await (const line of rl) {
+    if (!line.trim()) continue;
+    const request = JSON.parse(line);
+    methods.push(request.method);
+    saveLog("requests", JSON.stringify(methods));
+    let result;
+    if (request.method === "initialize") {
+      saveLog("environment", (process.env.AGENT_EVALS_TEST ?? "") + "|" + (process.env.TMPDIR ?? ""));
+      const settingsPath = join(home, "settings.json");
+      const settings = existsSync(settingsPath) ? readFileSync(settingsPath, "utf8") : "";
+      const entries = readdirSync(home).sort();
+      saveLog("home", JSON.stringify({ settings, entries }));
+      if (scenario === "security") {
+        let depsWrite = 0;
+        try {
+          appendFileSync(join(home, "..", "deps", "share", "agent.mjs"), "");
+          depsWrite = 1;
+        } catch {}
+        let outsideRead = 0;
+        try {
+          readFileSync(data[0], "utf8");
+          outsideRead = 1;
+        } catch {}
+        save(".auth/security", JSON.stringify({ deps_write: depsWrite, outside_read: outsideRead }));
+      }
+      result = {
+        protocolVersion: 1,
+        agentCapabilities: {},
+        authMethods: [{ id: "interactive", name: "Interactive login" }],
+      };
+    } else if (request.method === "session/new") {
+      if (scenario === "auth") {
+        process.stdout.write(
+          JSON.stringify({ jsonrpc: "2.0", id: request.id, error: { code: -32000, message: "Authentication required" } }) +
+            "\\n",
+        );
+        continue;
+      }
+      result = {
+        sessionId: "session-test",
+        configOptions: [
+          {
+            id: "model_id",
+            category: "model",
+            name: "Model",
+            description: "Select a model",
+            type: "select",
+            currentValue: "model-a",
+            options: [
+              { value: "model-a", name: "Model A" },
+              { value: "model-b", name: "Model B" },
+            ],
+          },
+          {
+            id: "custom",
+            name: (data[0] ?? "Custom") + ":" + (data[1] ?? ""),
+            type: "select",
+            currentValue: "x",
+            options: [{ group: "g", name: "Grouped", options: [{ value: "x", name: "Choice X" }] }],
+          },
+        ],
+      };
+    } else if (request.method === "session/set_config_option") {
+      model = request.params.value;
+      result = { configOptions: [] };
+    } else if (request.method === "session/prompt") {
+      writeFileSync("answer.txt", model + ": " + request.params.prompt[0].text);
+      if (scenario === "hang") {
+        await new Promise((r) => setTimeout(r, 600_000));
+      }
+      if (scenario === "sandbox") {
+        const depsDir = join(home, "..", "deps");
+        const engineDir = join(home, "..", "engine");
+        const tryWrite = (p) => {
+          try {
+            writeFileSync(p, "1");
+            return 1;
+          } catch {
+            return 0;
+          }
+        };
+        const tryRead = (p) => {
+          try {
+            readFileSync(p);
+            return 1;
+          } catch {
+            return 0;
+          }
+        };
+        const pathEntries = (process.env.PATH ?? "").split(delimiter);
+        const agentDir = pathEntries.find((d) => existsSync(join(d, "agent.cmd"))) ?? "";
+        saveLog(
+          "sandbox",
+          JSON.stringify({
+            path: process.env.PATH ?? "",
+            home,
+            deps: depsDir,
+            engine: engineDir,
+            canary: tryWrite(join(depsDir, "CANARY")),
+            engine_read: tryRead(join(engineDir, "sandbox.sb")),
+            home_write: tryWrite(join(home, "probe-home.txt")),
+            workspace_write: tryWrite("probe-workspace.txt"),
+            tmp_write: tryWrite(join(process.env.TMPDIR || process.env.TEMP || "", "probe-tmp.txt")),
+            agent_bin: join(agentDir, "agent.cmd"),
+          }),
+        );
+      }
+      if (scenario.startsWith("usage")) {
+        const usageUpdates =
+          scenario === "usage-cleared"
+            ? [
+                { used: 10, size: 100, cost: { amount: 0.01, currency: "USD" } },
+                { used: 20, size: 200, cost: null },
+              ]
+            : scenario === "usage-malformed"
+              ? [{ used: 5, size: 50 }]
+              : [
+                  {
+                    used: 10,
+                    size: 100,
+                    cost: { amount: 0.01, currency: "USD", _meta: { private: 1 } },
+                    _meta: { claude: "state" },
+                  },
+                  { used: 20, size: 200 },
+                ];
+        for (const u of usageUpdates) {
+          process.stdout.write(
+            JSON.stringify({
+              jsonrpc: "2.0",
+              method: "session/update",
+              params: { sessionId: "session-test", update: { ...u, sessionUpdate: "usage_update" } },
+            }) + "\\n",
+          );
+        }
+        if (scenario === "usage-timeout") {
+          await new Promise((r) => setTimeout(r, 600_000));
+        }
+      }
+      if (scenario === "mocks") {
+        const r1 = spawnSync("cmd.exe", ["/d", "/c", 'id "arg with space"'], { encoding: "utf8", windowsHide: true });
+        writeFileSync("call-out", r1.stdout ?? "");
+        writeFileSync("call-err", r1.stderr ?? "");
+        writeFileSync("call-status", String(r1.status ?? 1));
+      }
+      for (const update of [
+        { sessionUpdate: "agent_thought_chunk", content: { type: "text", text: "plan " } },
+        { sessionUpdate: "agent_thought_chunk", content: { type: "text", text: "it" } },
+        { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "draft" } },
+        { sessionUpdate: "tool_call", toolCallId: "call-1", title: "Terminal", kind: "execute", rawInput: {} },
+        {
+          sessionUpdate: "tool_call_update",
+          toolCallId: "call-1",
+          title: "echo hi",
+          rawInput: { command: "echo hi" },
+          status: "in_progress",
+        },
+        {
+          sessionUpdate: "tool_call_update",
+          toolCallId: "call-1",
+          content: [{ type: "content", content: { type: "text", text: "h" } }],
+        },
+        {
+          sessionUpdate: "tool_call_update",
+          toolCallId: "call-1",
+          status: "completed",
+          title: null,
+          content: [{ type: "content", content: { type: "text", text: "hi" } }],
+        },
+        { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "wrote " } },
+        { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "answer" } },
+      ]) {
+        process.stdout.write(
+          JSON.stringify({
+            jsonrpc: "2.0",
+            method: "session/update",
+            params: { sessionId: "session-test", update },
+          }) + "\\n",
+        );
+      }
+      result = { stopReason: "end_turn" };
+      if (scenario === "usage") {
+        result.usage = {
+          totalTokens: 350,
+          inputTokens: 300,
+          outputTokens: 50,
+          thoughtTokens: 5,
+          cachedReadTokens: 200,
+          cachedWriteTokens: 100,
+          _meta: { ignored: 1 },
+        };
+      }
+      if (scenario === "usage-malformed") {
+        result.usage = { totalTokens: "lots" };
+      }
+    } else {
+      throw new Error("unexpected method: " + request.method);
+    }
+    process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: request.id, result }) + "\\n");
+  }
+}
+`;

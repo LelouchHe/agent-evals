@@ -1,7 +1,8 @@
 import { spawn } from "node:child_process";
-import { writeSync } from "node:fs";
+import { closeSync, openSync, writeSync } from "node:fs";
 import { copyFile, lstat, mkdir, readdir, unlink } from "node:fs/promises";
 import { join } from "node:path";
+import { checkChildEnv } from "../platform/index.ts";
 
 /**
  * In-sandbox check-program launcher.
@@ -18,13 +19,24 @@ type Outcome =
   | { readonly kind: "failed"; readonly reason: string };
 
 const [stagingDir, program, ...args] = process.argv.slice(2);
+const REPORT_PIPE = process.env.AGENT_EVALS_REPORT_PIPE;
 let settled = false;
 
 function report(outcome: Outcome): void {
   if (settled) return;
   settled = true;
+  const line = JSON.stringify(outcome) + "\n";
   try {
-    writeSync(5, JSON.stringify(outcome) + "\n");
+    if (typeof REPORT_PIPE === "string" && REPORT_PIPE.length > 0) {
+      const fd = openSync(REPORT_PIPE, "w");
+      try {
+        writeSync(fd, line);
+      } finally {
+        closeSync(fd);
+      }
+    } else {
+      writeSync(5, line);
+    }
   } catch {
     // Host closed the report pipe (for example on timeout or cancellation).
   }
@@ -130,8 +142,9 @@ async function main(): Promise<void> {
   try {
     const child = spawn(program, args, {
       cwd: process.cwd(),
-      env: { PATH: process.env.PATH, HOME: process.env.HOME, TMPDIR: process.env.TMPDIR },
+      env: checkChildEnv(process.env),
       stdio: ["ignore", "inherit", "inherit"],
+      windowsHide: true,
     });
     child.on("error", (error) => {
       report({ kind: "failed", reason: `could not start ${program}: ${errorCode(error)}` });

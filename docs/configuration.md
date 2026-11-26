@@ -242,7 +242,7 @@ Each run links `deps` at the run root, copies the agent file's `files` and decla
 
 The run completes only when the turn ends with `end_turn`; any other stop reason, an agent exit or a protocol error is an execution error. The runner records a [trace](#inspecting-and-recording); output is the agent's text after its last tool call. Permission requests are approved (`allow_once`, else `allow_always`): the sandbox is the boundary. On completion, timeout or cancellation the whole sandbox is stopped, then changed original login files are copied back. `deps` and `mocks` are readable but never writable; `home`, `workspace` and `tmp` are writable; `engine/` — the baseline, policy, placement staging and check state — is unreadable. With [`mocks`](#mocks), the runner puts the forwarder directory first on the process `PATH`.
 
-Example: [`deploy-runbook`](../examples/cases/deploy-runbook/case.yml), whose Pi, Claude and Copilot cases share one fixture and one [`mocks`](mocks.md) declaration and differ in agent, model and whether `files` places `skill` where that harness discovers it (`.agents/skills/` or `.claude/skills/`).
+Example: [`deploy-runbook-posix`](../examples/cases/deploy-runbook-posix/case.yml), whose Pi, Claude and Copilot cases share one fixture and one [`mocks`](mocks.md) declaration and differ in agent, model and whether `files` places `skill` where that harness discovers it (`.agents/skills/` or `.claude/skills/`).
 
 ### Noop Runner (`$type: noop`)
 

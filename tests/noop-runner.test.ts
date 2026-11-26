@@ -118,7 +118,7 @@ test(
         { $type: "file", path: "deploy.log", changed: false },
         { $type: "mock", shell: ["tool"] },
         { $type: "mock", shell: ["tool", "deploy"], times: 0 },
-        { $type: "shell", run: ["/bin/sh", "-c", "exit 1"] },
+        { $type: "shell", run: [process.execPath, "-e", "process.exit(1)"] },
       ],
     });
     assert.equal(record.status, "fail");
@@ -162,7 +162,10 @@ test(
       {
         checks: [
           { $type: "file", path: "kept.txt", exists: true },
-          { $type: "shell", run: ["/bin/sh", "-c", "test ! -e cases"] },
+          {
+            $type: "shell",
+            run: [process.execPath, "-e", "process.exit(require('node:fs').existsSync('cases') ? 1 : 0)"],
+          },
         ],
       },
       undefined,

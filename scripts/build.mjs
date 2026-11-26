@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { chmod, cp, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { access, chmod, cp, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -12,14 +12,28 @@ execFileSync(process.execPath, [tsc, "-p", join(root, "tsconfig.build.json")], {
 
 // Non-TypeScript runtime assets are copied unchanged into their compiled location.
 for (const asset of [
-  "engine/forwarder.sh",
-  "engine/forwarder-client.mjs",
+  "platform/posix-forwarder.sh",
+  "platform/posix-forwarder-client.mjs",
+  "platform/windows/forwarder.cmd",
+  "platform/windows/forwarder.ps1",
+  "platform/windows/forwarder.sh",
+  "platform/windows/forwarder-client.mjs",
+  "platform/windows/setup.ps1",
   "platform/macos/supervisor.sh",
   "runners/pi/shell-wrapper.sh",
 ]) {
   const target = join(dist, asset);
   await mkdir(dirname(target), { recursive: true });
   await cp(join(root, "src", asset), target);
+}
+
+// Bundle the prebuilt Windows sandbox helper when present (Windows CI and release builds).
+const winSandboxBinary = join(root, "native", "win-sandbox", "target", "release", "win-sandbox.exe");
+try {
+  await access(winSandboxBinary);
+  await cp(winSandboxBinary, join(dist, "platform", "windows", "win-sandbox.exe"));
+} catch {
+  // Not built on non-Windows local checkouts.
 }
 
 // Declaration files keep the source's `.ts` specifiers, which a consumer's TypeScript only

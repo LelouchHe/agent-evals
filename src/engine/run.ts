@@ -1,8 +1,7 @@
 import { randomBytes } from "node:crypto";
 import { copyFile, cp, lstat, mkdir, readdir, realpath, rm, stat } from "node:fs/promises";
 import { join } from "node:path";
-import { tmpdir } from "node:os";
-import { assertSandboxAvailable } from "../platform/index.ts";
+import { assertSandboxAvailable, defaultTempParent } from "../platform/index.ts";
 import {
   ConfigError,
   errorMessage,
@@ -113,7 +112,7 @@ export async function prepareEvaluation(request: RunRequest): Promise<PreparedEv
   // Placeholders need the run directories' paths; they are created only after validation.
   // The parent is canonicalized first: the sandbox authorizes the `deps` link only when the
   // run-root path and its target carry no symlink spelling such as `/tmp` for `/private/tmp`.
-  const parent = await realpath(request.tempParent ?? tmpdir());
+  const parent = await realpath(request.tempParent ?? defaultTempParent());
   const root = join(parent, `run-${randomBytes(6).toString("hex")}`);
   const workspaceDir = join(root, "workspace");
   const homeDir = join(root, "home");

@@ -1,7 +1,7 @@
 import { chmod, copyFile, mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { TestContext } from "node:test";
+import { defaultTempParent } from "../../src/platform/index.ts";
 
 export interface FakePi {
   readonly executable: string;
@@ -11,7 +11,7 @@ export interface FakePi {
 
 /** Create a temp directory with cleanup registered on the test context. */
 export async function makeTempDir(t: TestContext, prefix = "ae-test-"): Promise<string> {
-  const directory = await mkdtemp(join(tmpdir(), prefix));
+  const directory = await mkdtemp(join(defaultTempParent(), prefix));
   t.after(async () => {
     await rm(directory, { recursive: true, force: true, maxRetries: 3 });
   });

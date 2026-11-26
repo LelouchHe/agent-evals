@@ -3,12 +3,18 @@ import { createHash, randomUUID } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import { mkdir, readFile, readdir, realpath, rm, stat, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
-import { dirname, join, sep } from "node:path";
+import { delimiter, dirname, join, sep } from "node:path";
 import { test } from "node:test";
 import { parse, stringify } from "yaml";
 import { runCliProcess } from "./helpers/cli-process.ts";
 import { createFakePi, makeTempDir } from "./helpers/fake-pi-control.ts";
-import { isSandboxPlatformSupported } from "../src/platform/index.ts";
+import {
+  checkChildEnv,
+  dirEnv,
+  isSandboxPlatformSupported,
+  SYSTEM_PATH,
+  wrapExecutableCommand,
+} from "../src/platform/index.ts";
 import { makeAcpAgent } from "./helpers/acp-agent.ts";
 
 // Deliberately separate from *.test.ts: npm run test:package performs an actual
@@ -23,12 +29,21 @@ test("the packed CLI installs and runs without source or development dependencie
   const cwd = join(root, "invocation");
   const runtime = join(root, "runtime");
   await Promise.all([home, prefix, cwd, runtime].map((path) => mkdir(path)));
-  const env = {
-    PATH: [dirname(process.execPath), "/usr/bin", "/bin", "/usr/sbin", "/sbin"].join(":"),
-    HOME: home,
-    TMPDIR: root,
-    npm_config_userconfig: "/dev/null",
+  const env: NodeJS.ProcessEnv = {
+    ...checkChildEnv(process.env),
+    ...dirEnv({ home, tmp: root }),
+    PATH: [dirname(process.execPath), ...SYSTEM_PATH].join(delimiter),
+    npm_config_userconfig: process.platform === "win32" ? "NUL" : "/dev/null",
     npm_config_update_notifier: "false",
+    ...(process.platform === "win32"
+      ? {
+          AGENT_EVALS_WIN_SANDBOX_CREDENTIALS: join(
+            process.env.LOCALAPPDATA ?? "",
+            "agent-evals",
+            "sandbox-users.json",
+          ),
+        }
+      : {}),
   };
   const npmCommand = async (args: readonly string[], directory: string) => {
     const result = await runCliProcess(t, npm, args, { cwd: directory, env, timeoutMs: 60_000 });
@@ -45,7 +60,9 @@ test("the packed CLI installs and runs without source or development dependencie
     filename: string;
     files: { path: string }[];
   }
-  const metadata = JSON.parse(await npmCommand(["pack", "--json", "--pack-destination", root], project)) as
+  const packOutput = await npmCommand(["pack", "--silent", "--json", "--pack-destination", root], project);
+  const jsonStart = packOutput.indexOf("[");
+  const metadata = JSON.parse(jsonStart >= 0 ? packOutput.slice(jsonStart) : packOutput) as
     PackMetadata[] | Record<string, PackMetadata>;
   // npm 12 keys records by package name; earlier npm releases return an array.
   const packs = Array.isArray(metadata) ? metadata : Object.values(metadata);
@@ -60,7 +77,7 @@ test("the packed CLI installs and runs without source or development dependencie
     cwd,
   );
   const installed = join(prefix, "node_modules", "@lelouchhe", "agent-evals");
-  const bin = join(prefix, "node_modules", ".bin", "agent-evals");
+  const bin = join(prefix, "node_modules", ".bin", process.platform === "win32" ? "agent-evals.cmd" : "agent-evals");
   const require = createRequire(join(installed, "package.json"));
   const installRoot = (await realpath(prefix)) + sep;
   for (const dependency of ["@agentclientprotocol/sdk", "ignore", "re2js", "yaml", "zod"]) {
@@ -82,8 +99,11 @@ test("the packed CLI installs and runs without source or development dependencie
       .update(await readFile(path))
       .digest("hex");
   assert.equal(await hash(join(installed, "dist/cli.js")), await hash(join(project, "dist/cli.js")));
-  assert.notEqual((await stat(bin)).mode & 0o111, 0);
-  const help = spawnSync(bin, ["--help"], { cwd, env, encoding: "utf8", timeout: 5_000 });
+  if (process.platform !== "win32") {
+    assert.notEqual((await stat(bin)).mode & 0o111, 0);
+  }
+  const [helpCmd, ...helpArgs] = wrapExecutableCommand(bin, ["--help"]);
+  const help = spawnSync(helpCmd, helpArgs, { cwd, env, encoding: "utf8", timeout: 5_000, windowsHide: true });
   assert.equal(help.error, undefined);
   assert.equal(help.status, 0, help.stderr);
   assert.match(help.stdout, /Usage: agent-evals/);
@@ -117,22 +137,28 @@ test("the packed CLI installs and runs without source or development dependencie
   };
   const configPath = join(cwd, "case.yml");
   await writeFile(configPath, stringify(config));
-  await writeFile(join(cwd, ".env"), 'MY_KEY="!printf x >> count; printf synthetic-runner-key"\n');
+  const keyScript = join(cwd, "emit-key.mjs");
+  await writeFile(
+    keyScript,
+    'import { appendFileSync } from "node:fs"; appendFileSync("count", "x"); process.stdout.write("synthetic-runner-key\\n");\n',
+  );
+  await writeFile(join(cwd, ".env"), `MY_KEY='!"${process.execPath}" "${keyScript}"'\n`);
   const invoke = async (entry: string, args: readonly string[]) =>
     runCliProcess(t, entry, args, {
       cwd,
       env: { ...env, TMPDIR: runtime },
       timeoutMs: 30_000,
     });
+  const installedEntry = process.platform === "win32" ? join(installed, "dist/cli.js") : bin;
   if (isSandboxPlatformSupported) {
     const agent = await makeAcpAgent(t);
-    const queried = await invoke(bin, ["config", agent.path]);
+    const queried = await invoke(installedEntry, ["config", agent.path]);
     assert.equal(queried.code, 0, queried.stderr);
     assert.match(queried.stdout, /model-a/);
     const queriedBuilt = await invoke(join(project, "dist/cli.js"), ["config", agent.path]);
     assert.equal(queriedBuilt.code, 0, queriedBuilt.stderr);
     assert.deepEqual(parse(queried.stdout), parse(queriedBuilt.stdout));
-    const loggedIn = await invoke(bin, ["login", agent.path]);
+    const loggedIn = await invoke(installedEntry, ["login", agent.path]);
     assert.equal(loggedIn.code, 0, loggedIn.stderr);
     assert.equal(await readFile(join(agent.login, ".auth/token"), "utf8"), "synthetic-token");
 
@@ -158,14 +184,14 @@ test("the packed CLI installs and runs without source or development dependencie
       }),
     );
     const mockResults = join(root, "mock-results");
-    const mockRun = await runCliProcess(t, bin, ["run", mockCase, "--results-dir", mockResults], {
+    const mockRun = await runCliProcess(t, installedEntry, ["run", mockCase, "--results-dir", mockResults], {
       cwd,
       env: { ...env, TMPDIR: root },
       timeoutMs: 30_000,
     });
     assert.equal(mockRun.code, 0, mockRun.stdout + mockRun.stderr);
   }
-  const viewed = await invoke(bin, ["view", configPath]);
+  const viewed = await invoke(installedEntry, ["view", configPath]);
   const built = await invoke(join(project, "dist/cli.js"), ["view", configPath]);
   assert.equal(viewed.code, 0, viewed.stderr);
   assert.equal(viewed.stdout, built.stdout);
@@ -174,7 +200,7 @@ test("the packed CLI installs and runs without source or development dependencie
   assert.ok(!(await readdir(cwd)).includes("count"), "view executed the environment lookup command");
 
   const results = join(root, "results");
-  const run = await invoke(bin, ["run", configPath, "--results-dir", results]);
+  const run = await invoke(installedEntry, ["run", configPath, "--results-dir", results]);
   assert.equal(run.code, 0, run.stdout + run.stderr);
   const ids = await readdir(results);
   assert.equal(ids.length, 1);
@@ -265,7 +291,14 @@ export const checker = {
         checks: [{ $type: "parity", path, matches }],
       }),
     );
-    return await invoke(bin, ["run", extensionCase, "--extension-dir", extensions, "--results-dir", extensionResults]);
+    return await invoke(installedEntry, [
+      "run",
+      extensionCase,
+      "--extension-dir",
+      extensions,
+      "--results-dir",
+      extensionResults,
+    ]);
   };
   const extensionPass = await runExtension("hello");
   assert.equal(extensionPass.code, 0, extensionPass.stdout + extensionPass.stderr);
