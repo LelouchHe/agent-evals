@@ -77,7 +77,7 @@ export const posixPlatformHelpers = {
 
   mockForwarderSpec(): MockForwarderSpec {
     return {
-      assetName: "forwarder.sh",
+      assetPath: fileURLToPath(new URL("./posix-forwarder.sh", import.meta.url)),
       clientPath: fileURLToPath(new URL("./posix-forwarder-client.mjs", import.meta.url)),
       templateName: "forward",
       quote: (value: string) => `'${value.replaceAll("'", "'\\''")}'`,

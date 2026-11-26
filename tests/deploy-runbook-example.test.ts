@@ -25,7 +25,7 @@ import { z } from "zod";
 import { implementationContext, unusedCheckSandbox } from "./helpers/implementation-context.ts";
 import { isSandboxPlatformSupported } from "../src/platform/index.ts";
 
-const EXAMPLE = join(import.meta.dirname, "..", "examples/cases/deploy-runbook");
+const EXAMPLE = join(import.meta.dirname, "..", "examples/cases/deploy-runbook-posix");
 const CASE = join(EXAMPLE, "case.yml");
 
 function actions(loaded: ResolvedCase): Readonly<Record<string, readonly MockRule[]>> {
@@ -243,6 +243,7 @@ const diagnosisRunner: RunnerDefinition<{ readonly content: string }> = {
   type: "write-diagnosis",
   params: z.strictObject({ content: z.string() }),
   mocks: true,
+  home: true,
   create: (params) => ({
     run: async (context) => {
       await writeFile(join(context.workspaceDir, "diagnosis.md"), params.content);
@@ -287,7 +288,7 @@ function deterministicRegistry() {
 test(
   "the worked example's baseline case fails positive checks and passes restraint checks under noop",
   {
-    skip: !isSandboxPlatformSupported,
+    skip: !isSandboxPlatformSupported || process.platform === "win32",
   },
   async (t) => {
     const loaded = await loadCase(CASE, { caseName: "baseline" });
@@ -312,6 +313,7 @@ test(
         ["file", "fail"],
         ["file", "pass"],
         ["file", "pass"],
+        ["file", "pass"],
         ["shell", "fail"],
         ["shell", "fail"],
         ["trace", "fail"],
@@ -324,7 +326,7 @@ test(
 test(
   "both shell checks pass on a valid diagnosis",
   {
-    skip: !isSandboxPlatformSupported,
+    skip: !isSandboxPlatformSupported || process.platform === "win32",
   },
   async (t) => {
     const loaded = await loadCase(CASE, { caseName: "baseline" });
@@ -340,6 +342,7 @@ test(
     assert.deepEqual(
       record.checks.map((check) => [check.checker, check.status]),
       [
+        ["file", "pass"],
         ["file", "pass"],
         ["file", "pass"],
         ["file", "pass"],

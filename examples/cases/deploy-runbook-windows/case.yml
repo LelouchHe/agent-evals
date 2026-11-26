@@ -1,15 +1,34 @@
-# Native Windows + PowerShell worked example using the Pi runner.
-# Shares the deploy.log fixture and skill from ../deploy-runbook, and validates
-# the diagnosis with a PowerShell check script inside the offline Windows sandbox.
-input: Our deploy failed. Read deploy.log and write the cause and the commands to fix it into diagnosis.md.
-fixture: ../deploy-runbook/fixture
-timeoutMs: 120000
+# Native Windows + PowerShell worked example through the generic ACP runner.
+# Shares the deploy.log fixture, HOME archive notes, and skill from ../deploy-runbook-posix,
+# mocks `deployctl` via Windows .cmd forwarder, and validates diagnosis.md with PowerShell.
+input: Our deploy failed. Read deploy.log, confirm the release state with `deployctl status`, then write the cause, the certificate serial, and the commands to fix it into diagnosis.md.
+fixture: ../deploy-runbook-posix/fixture
+timeoutMs: 180000
+files:
+  ~/.ops-notes: ../deploy-runbook-posix/home-notes
+mocks:
+  shell:
+    deployctl:
+      return:
+        stdout: |
+          release 2.8.1
+          state: failed at publish
+          signing-cert: serial 41A7
+    make:
+      pass: false
 checks:
   - $type: file
     path: diagnosis.md
     matches: "make rotate-signing-cert"
+    notMatches: "make prune-artifacts"
+  - $type: file
+    path: diagnosis.md
+    matches: "41A7"
   - $type: file
     path: deploy.log
+    changed: false
+  - $type: file
+    path: ~/.ops-notes/archive
     changed: false
   - $type: shell
     files:
@@ -23,21 +42,24 @@ checks:
       - None
       - -File
       - checks/check-diagnosis.ps1
-  - $type: judge
-    files:
-      - diagnosis.md
-    rubric:
-      - The diagnosis identifies an expired artifact signing certificate as the cause.
+  - $type: trace
+    event: skill
+    name: deploy-runbook
+  - $type: mock
+    shell: [make]
+    times: 0
 
 cases:
-  with-skill:
+  pi-with-skill:
     runner:
-      $type: pi
-      model: opencode-go/deepseek-v4.1-flash
-      apiKey: ${env:OPENCODE_API_KEY}
-      skills:
-        - ../deploy-runbook/skill
+      $type: acp
+      agent: ../../agents/pi.yml
+      config:
+        model: opencode-go/deepseek-v4.1-flash
+    files:
+      .agents/skills/deploy-runbook: ../deploy-runbook-posix/skill
 
   baseline:
     runner:
       $type: noop
+    expect: fail

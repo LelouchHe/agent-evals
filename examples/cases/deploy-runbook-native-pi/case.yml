@@ -1,7 +1,7 @@
-# The ../deploy-runbook evaluation through the native Pi runner, which loads
+# The ../deploy-runbook-posix evaluation through the native Pi runner, which loads
 # skills explicitly instead of from the workspace. It shares that example's assets.
 input: Our deploy failed. Read deploy.log and write the cause and the commands to fix it into diagnosis.md.
-fixture: ../deploy-runbook/fixture
+fixture: ../deploy-runbook-posix/fixture
 timeoutMs: 120000
 checks:
   - $type: file
@@ -28,7 +28,7 @@ cases:
       # Resolved relative to this file and loaded explicitly. Discovered skills,
       # extensions, MCP servers, sessions, and global configuration stay disabled.
       skills:
-        - ../deploy-runbook/skill
+        - ../deploy-runbook-posix/skill
 
   # The empty skills list is meaningful: automatic skill discovery stays disabled.
   without-skill:

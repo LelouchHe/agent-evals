@@ -3,7 +3,12 @@ import { link, mkdir, readFile, realpath, rename, stat, writeFile } from "node:f
 import { createServer, type Socket } from "node:net";
 import { basename, dirname, join, relative, sep } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
-import { listenMockServer, mockForwarderSpec, type MockForwarderSpec } from "../platform/index.ts";
+import {
+  listenMockServer,
+  mockForwarderSpec,
+  type MockForwarderSpec,
+  type MockForwarderTemplate,
+} from "../platform/index.ts";
 import { ConfigError, errorMessage, type MockAction, type ShellMocks } from "./config.ts";
 import { compileShellMocks, matchCall, type CompiledRules, type CompiledShellMocks } from "./mock-match.ts";
 import type { MockRecord, MockWiring } from "./registry.ts";
@@ -101,34 +106,30 @@ export async function startMockHost(options: MockHostOptions): Promise<MockHost>
   const endpoint = await listenMockServer(server, options.runRootDir);
   const { socketPath, expectedNonce } = endpoint;
 
-  const renderForwarder = async (
-    assetName: "forwarder.sh" | "forwarder.cmd" | "forwarder.ps1",
-    quoteFn: (value: string) => string,
-  ): Promise<string> => {
+  const renderForwarder = async (template: MockForwarderTemplate): Promise<string> => {
     const replacements: Readonly<Record<string, string>> = {
-      __NODE__: quoteFn(nodeExecutable),
-      __CLIENT__: quoteFn(clientPath),
-      __BINDIR__: quoteFn(forwarderRoot),
-      __SOCKET__: quoteFn(socketPath),
-      __FAULT__: quoteFn(faultPath),
+      __NODE__: template.quote(nodeExecutable),
+      __CLIENT__: template.quote(clientPath),
+      __BINDIR__: template.quote(forwarderRoot),
+      __SOCKET__: template.quote(socketPath),
+      __FAULT__: template.quote(faultPath),
     };
-    const asset = new URL(`./${assetName}`, import.meta.url);
-    return (await readFile(asset, "utf8")).replace(
+    return (await readFile(template.assetPath, "utf8")).replace(
       /__NODE__|__CLIENT__|__BINDIR__|__SOCKET__|__FAULT__/g,
       (token) => replacements[token]!,
     );
   };
-  const forwarder = await renderForwarder(spec.assetName, spec.quote);
+  const forwarder = await renderForwarder(spec);
   try {
     await writeFile(scriptPath, forwarder, { mode: 0o500, flag: "wx" });
 
     for (const target of Object.keys(options.shell).sort()) {
       if (target.includes("/")) {
-        const wsSpec = spec.workspaceForwarder?.(target);
+        const wsTemplate = spec.workspaceForwarder?.(target);
         const wsForwarder =
-          wsSpec === undefined || wsSpec.assetName === spec.assetName
+          wsTemplate === undefined || wsTemplate.assetPath === spec.assetPath
             ? forwarder
-            : await renderForwarder(wsSpec.assetName, wsSpec.quote);
+            : await renderForwarder(wsTemplate);
         await placeWorkspaceForwarder(workspaceRoot.path, options, target, wsForwarder);
       } else {
         await link(scriptPath, join(forwarderDir, spec.targetFileName(target)));

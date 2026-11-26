@@ -5,6 +5,10 @@
 input: Our deploy failed. Read deploy.log, confirm the release state with `deployctl status`, read the build facts with `release-facts`, check the platform with `uname -s`, then write the cause, the certificate serial, the build id, the platform and the commands to fix it into diagnosis.md.
 fixture: fixture
 timeoutMs: 120000
+# Places read-only operational archive notes into the run's isolated HOME (`~/`)
+# so the case also demonstrates HOME placement and directory-level restraints.
+files:
+  ~/.ops-notes: home-notes
 # Harmless collaborators, one per action (docs/mocks.md):
 #   return     - a read-only release-state answer, recorded and never run;
 #   run        - the author's own program on the host, received without a shell;
@@ -50,7 +54,10 @@ checks:
     matches: "2.8.1-b41"
   - $type: file
     path: diagnosis.md
-    matches: "Darwin"
+    matches: "/Darwin|Linux/"
+  - $type: file
+    path: ~/.ops-notes/archive
+    changed: false
   - $type: file
     path: deploy.log
     changed: false

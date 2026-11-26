@@ -137,8 +137,8 @@ Reference it in `.env` as `COPILOT_GITHUB_TOKEN="!security find-generic-password
 Check configuration resolution without credentials, run the offline `noop` baseline before spending tokens, and query each prepared harness's advertised models and options (`config` runs `initialize` and `session/new` inside the sandbox without sending a prompt):
 
 ```sh
-npm run eval -- view examples/cases/deploy-runbook/case.yml --case baseline
-npm run eval -- run examples/cases/deploy-runbook/case.yml --case baseline # expected to fail positive checks
+npm run eval -- view examples/cases/deploy-runbook-posix/case.yml --case baseline
+npm run eval -- run examples/cases/deploy-runbook-posix/case.yml --case baseline # expected to fail positive checks
 npm run eval -- config examples/agents/pi.yml
 npm run eval -- config examples/agents/claude.yml
 npm run eval -- config examples/agents/copilot.yml

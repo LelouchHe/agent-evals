@@ -13,16 +13,16 @@ export interface ShellLookupHandle {
   readonly terminate: () => void;
 }
 
-export interface MockForwarderSpec {
-  readonly assetName: "forwarder.sh" | "forwarder.cmd";
+export interface MockForwarderTemplate {
+  readonly assetPath: string;
+  readonly quote: (value: string) => string;
+}
+
+export interface MockForwarderSpec extends MockForwarderTemplate {
   readonly clientPath: string;
   readonly templateName: string;
-  readonly quote: (value: string) => string;
   readonly targetFileName: (target: string) => string;
-  readonly workspaceForwarder?: (target: string) => {
-    readonly assetName: "forwarder.sh" | "forwarder.cmd" | "forwarder.ps1";
-    readonly quote: (value: string) => string;
-  };
+  readonly workspaceForwarder?: (target: string) => MockForwarderTemplate;
   readonly resolvePathTargetName: (selfPath: string, forwarderRoot: string) => string | undefined;
 }
 

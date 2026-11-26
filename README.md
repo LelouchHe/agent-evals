@@ -17,7 +17,7 @@ Requirements: Node.js 24+ on macOS (`sandbox-exec`), Linux, or WSL2 (`bubblewrap
 
 ## What a Case Looks Like
 
-A case is one YAML file: a task, a prepared environment, and the checks that judge what the run left behind. Abridged from the [worked example](https://github.com/LelouchHe/agent-evals/blob/main/examples/cases/deploy-runbook/case.yml):
+A case is one YAML file: a task, a prepared environment, and the checks that judge what the run left behind. Abridged from the [worked example](https://github.com/LelouchHe/agent-evals/blob/main/examples/cases/deploy-runbook-posix/case.yml):
 
 ```yaml
 input: Our deploy failed. Read deploy.log, confirm the release state with `deployctl status`, then write the cause and the commands to fix it into diagnosis.md.
@@ -71,24 +71,24 @@ npm install -g @lelouchhe/agent-evals   # or: npx @lelouchhe/agent-evals
 agent-evals --help
 ```
 
-Running a case is macOS-only and needs an invocation `.env` plus a prepared harness directory ([Setup](https://github.com/LelouchHe/agent-evals/blob/main/docs/setup.md)). The worked example below runs from a checkout, because its fixtures and agent files live in the repository.
+Running a case supports macOS, Linux, WSL2, and native Windows ([Platforms](https://github.com/LelouchHe/agent-evals/blob/main/docs/platforms.md)) and needs an invocation `.env` plus a prepared harness directory ([Setup](https://github.com/LelouchHe/agent-evals/blob/main/docs/setup.md)). The worked example below runs from a checkout, because its fixtures and agent files live in the repository.
 
-Follow [Setup](https://github.com/LelouchHe/agent-evals/blob/main/docs/setup.md) once to configure `.env` and prepare the harness directories you want to run, then inspect and run the worked example ([`examples/cases/deploy-runbook`](https://github.com/LelouchHe/agent-evals/blob/main/examples/cases/deploy-runbook/case.yml) — seven named cases across Pi, Claude Code, Copilot CLI and `noop`, exercising project skills, every `mocks.shell` action, hidden check-time `shell` acceptance scripts and all five checkers):
+Follow [Setup](https://github.com/LelouchHe/agent-evals/blob/main/docs/setup.md) once to configure `.env` and prepare the harness directories you want to run, then inspect and run the worked example ([`examples/cases/deploy-runbook-posix`](https://github.com/LelouchHe/agent-evals/blob/main/examples/cases/deploy-runbook-posix/case.yml) — seven named cases across Pi, Claude Code, Copilot CLI and `noop`, exercising project skills, `~/` HOME placement, every `mocks.shell` action, hidden check-time `shell` acceptance scripts and all five checkers):
 
 ```sh
 npm ci
 cp .env.example .env                        # fill in harness paths and keys (see docs/setup.md)
-npm run eval -- view examples/cases/deploy-runbook/case.yml --case pi-with-skill
+npm run eval -- view examples/cases/deploy-runbook-posix/case.yml --case pi-with-skill
 npm run eval -- config examples/agents/pi.yml
-npm run eval -- run examples/cases/deploy-runbook/case.yml --case pi-with-skill
-npm run eval -- run examples/cases/deploy-runbook/case.yml --reps 3 --jobs 3 --retain on-failure --results-dir /tmp/deploy-runbook
+npm run eval -- run examples/cases/deploy-runbook-posix/case.yml --case pi-with-skill
+npm run eval -- run examples/cases/deploy-runbook-posix/case.yml --reps 3 --jobs 3 --retain on-failure --results-dir /tmp/deploy-runbook
 npm run eval -- report --matrix /tmp/deploy-runbook # after a sweep: one row per check
 ```
 
 Additional examples showcase other angles of the toolkit:
 
-- [`deploy-runbook-native`](https://github.com/LelouchHe/agent-evals/blob/main/examples/cases/deploy-runbook-native/case.yml) runs the same task through the native Pi runner using an installed `pi` CLI and provider key alone, with `judge` inheriting the case's runner.
-- [`notes-home`](https://github.com/LelouchHe/agent-evals/blob/main/examples/cases/notes-home/case.yml) demonstrates `~/` HOME placement, disjoint top-level and case `files` merging, directory-level `changed: false` restraints, and glob `path` checks (`{decisions,changelog}.md`).
+- [`deploy-runbook-windows`](https://github.com/LelouchHe/agent-evals/blob/main/examples/cases/deploy-runbook-windows/case.yml) runs the same ACP evaluation natively on Windows with PowerShell checks, `.cmd` mocks, and `~/` HOME placement.
+- [`deploy-runbook-native-pi`](https://github.com/LelouchHe/agent-evals/blob/main/examples/cases/deploy-runbook-native-pi/case.yml) runs the same task through the native Pi runner using an installed `pi` CLI and provider key alone, with `judge` inheriting the case's runner.
 
 ## Documentation
 

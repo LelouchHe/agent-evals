@@ -250,7 +250,7 @@ runner:
 
 `./mocks/release-facts.sh` is the author's own program next to the case file, for example `printf 'build: 2.8.1-b41\n'`; the case's working directory for `run` programs is the case file's directory. The inline agent needs a prepared `deps` directory ([agent files](configuration.md#agent-files)). `agent-evals view case.yml` shows the resolved case and every field's origin.
 
-The repository's [`deploy-runbook`](../examples/cases/deploy-runbook/case.yml) example applies all of this end to end: a mocked release-status command, a hosted facts program, a passing `uname`, and checks for the serial, build id and platform that only those responses contain.
+The repository's [`deploy-runbook-posix`](../examples/cases/deploy-runbook-posix/case.yml) example applies all of this end to end: a mocked release-status command, a hosted facts program, a passing `uname`, and checks for the serial, build id and platform that only those responses contain.
 
 ## `mocks.json`
 

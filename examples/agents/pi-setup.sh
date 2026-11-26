@@ -14,7 +14,9 @@ fi
 case "$(uname -s)-$(uname -m)" in
   Darwin-arm64) PLATFORM="darwin-arm64" ;;
   Darwin-x86_64) PLATFORM="darwin-x64" ;;
-  *) echo "Unsupported platform: $(uname -s)-$(uname -m) (macOS required)" >&2; exit 1 ;;
+  Linux-x86_64) PLATFORM="linux-x64" ;;
+  Linux-aarch64|Linux-arm64) PLATFORM="linux-arm64" ;;
+  *) echo "Unsupported platform: $(uname -s)-$(uname -m)" >&2; exit 1 ;;
 esac
 
 NODE_VERSION="${NODE_VERSION:-v24.22.3}"

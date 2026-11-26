@@ -110,35 +110,37 @@ jobs:
         if: steps.gate.outputs.enabled == 'true'
         run: npm ci && npm run build
 
-      - name: Install @earendil-works/pi-coding-agent
-        if: steps.gate.outputs.enabled == 'true'
-        run: npm install --global @earendil-works/pi-coding-agent
-
-      - name: Run live smoke (POSIX)
+      - name: Run ACP live smoke (POSIX)
         if: steps.gate.outputs.enabled == 'true' && runner.os != 'Windows'
         shell: bash
         env:
           OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
         run: |
+          SMOKE_DIR="$(mktemp -d)"
+          trap 'rm -rf "$SMOKE_DIR" .env' EXIT
+          ./examples/agents/pi-setup.sh "$SMOKE_DIR/pi"
           umask 077
-          printf 'OPENCODE_API_KEY=%s\n' "$OPENCODE_API_KEY" > .env
-          trap 'rm -f .env' EXIT
-          node dist/cli.js run examples/cases/deploy-runbook-native/case.yml --case with-skill
+          printf 'OPENCODE_API_KEY=%s\nPI_DEPS=%s\n' "$OPENCODE_API_KEY" "$SMOKE_DIR/pi/deps" > .env
+          node dist/cli.js run examples/cases/deploy-runbook-posix/case.yml --case pi-with-skill
 
-      - name: Run live smoke (Windows)
+      - name: Run ACP live smoke (Windows)
         if: steps.gate.outputs.enabled == 'true' && runner.os == 'Windows'
         shell: pwsh
         env:
           OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
         run: |
           $ErrorActionPreference = "Stop"
+          $SmokeDir = Join-Path $env:ProgramData "agent-evals\smoke-pi"
           try {
-            Set-Content -Path ".env" -Value "OPENCODE_API_KEY=$env:OPENCODE_API_KEY" -Encoding UTF8
+            pwsh -File examples/agents/pi-setup.ps1 -TargetDir $SmokeDir
+            $PiDeps = Join-Path $SmokeDir "deps"
+            Set-Content -Path ".env" -Value "OPENCODE_API_KEY=$env:OPENCODE_API_KEY`nPI_DEPS=$PiDeps" -Encoding UTF8
             $currentUser = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
             icacls ".env" /inheritance:r /grant:r "${currentUser}:(F)" "SYSTEM:(F)" "Administrators:(F)" | Out-Null
-            node dist/cli.js run examples/cases/deploy-runbook-windows/case.yml --case with-skill
+            node dist/cli.js run examples/cases/deploy-runbook-windows/case.yml --case pi-with-skill
           } finally {
             Remove-Item -Force -ErrorAction SilentlyContinue ".env"
+            Remove-Item -Recurse -Force -ErrorAction SilentlyContinue $SmokeDir
           }
 
       - name: Teardown Windows sandbox users

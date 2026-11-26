@@ -5,61 +5,62 @@ import { test } from "node:test";
 import { stringify } from "yaml";
 import { z } from "zod";
 import { fileChecker } from "../src/checkers/file/index.ts";
-import { judgeChecker } from "../src/checkers/judge/index.ts";
 import { mockChecker } from "../src/checkers/mock/index.ts";
 import { shellChecker } from "../src/checkers/shell/index.ts";
+import { traceChecker } from "../src/checkers/trace/index.ts";
 import { loadCase } from "../src/engine/authoring.ts";
 import { addChecker, addRunner, createRegistry } from "../src/engine/registry.ts";
 import { runEvaluation } from "../src/engine/run.ts";
 import { noopRunner } from "../src/runners/noop/index.ts";
-import { piRunner } from "../src/runners/pi/index.ts";
 import { makeTempDir } from "./helpers/fake-pi-control.ts";
 
 const EXAMPLE = join(import.meta.dirname, "..", "examples", "cases", "deploy-runbook-windows", "case.yml");
 
-test("deploy-runbook-windows example loads cleanly for both with-skill and baseline cases", async () => {
-  const withSkill = await loadCase(EXAMPLE, { caseName: "with-skill" });
-  assert.equal(withSkill.name, "with-skill");
-  assert.equal(withSkill.config.runner.$type, "pi");
-  assert.equal(withSkill.config.checks.length, 4);
+test("deploy-runbook-windows example loads cleanly for both pi-with-skill and baseline cases", async () => {
+  const withSkill = await loadCase(EXAMPLE, { caseName: "pi-with-skill" });
+  assert.equal(withSkill.name, "pi-with-skill");
+  assert.equal(withSkill.config.runner.$type, "acp");
+  assert.equal(withSkill.config.checks.length, 7);
 
   const baseline = await loadCase(EXAMPLE, { caseName: "baseline" });
   assert.equal(baseline.name, "baseline");
   assert.equal(baseline.config.runner.$type, "noop");
+  assert.equal(baseline.config.expect, "fail");
 });
 
 test(
-  "deploy-runbook-windows baseline fails positive checks and passes deploy.log restraint on Windows",
+  "deploy-runbook-windows baseline fails positive checks and passes restraints on Windows",
   { skip: process.platform !== "win32" },
   async (t) => {
     const resultsDir = await makeTempDir(t, "ae-win-example-results-");
     const tempParent = await makeTempDir(t, "ae-win-example-runs-");
     const registry = createRegistry();
     addRunner(registry, noopRunner, "built-in");
-    addRunner(registry, piRunner, "built-in");
     addChecker(registry, fileChecker, "built-in");
     addChecker(registry, shellChecker, "built-in");
-    addChecker(registry, judgeChecker, "built-in");
+    addChecker(registry, traceChecker, "built-in");
+    addChecker(registry, mockChecker, "built-in");
 
     const loaded = await loadCase(EXAMPLE, { caseName: "baseline" });
-    // Drop the model judge check for the model-free noop baseline verification.
-    const modelFree = {
-      ...loaded,
-      config: {
-        ...loaded.config,
-        checks: loaded.config.checks.filter((check) => check.$type !== "judge"),
-      },
-    };
     const record = await runEvaluation({
-      case: modelFree,
+      case: loaded,
       registry,
       resultsDir,
       tempParent,
     });
     assert.equal(record.status, "fail");
     assert.deepEqual(
-      record.checks.map((c) => c.status),
-      ["fail", "pass", "fail"],
+      record.checks.map((c) => [c.checker, c.status]),
+      [
+        ["file", "fail"],
+        ["file", "fail"],
+        ["file", "fail"],
+        ["file", "pass"],
+        ["file", "pass"],
+        ["shell", "fail"],
+        ["trace", "fail"],
+        ["mock", "pass"],
+      ],
     );
   },
 );

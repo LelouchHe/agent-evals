@@ -144,22 +144,20 @@ export const windowsBackend: PlatformBackend = {
   },
 
   mockForwarderSpec(): MockForwarderSpec {
+    const cmdAsset = fileURLToPath(new URL("./forwarder.cmd", import.meta.url));
+    const ps1Asset = fileURLToPath(new URL("./forwarder.ps1", import.meta.url));
+    const quoteCmd = (value: string): string => `"${value.replaceAll('"', '""').replaceAll("%", "%%")}"`;
+    const quotePs1 = (value: string): string => `'${value.replaceAll("'", "''")}'`;
     return {
-      assetName: "forwarder.cmd",
+      assetPath: cmdAsset,
       clientPath: fileURLToPath(new URL("./forwarder-client.mjs", import.meta.url)),
       templateName: "forward.cmd",
-      quote: (value: string) => `"${value.replaceAll('"', '""').replaceAll("%", "%%")}"`,
+      quote: quoteCmd,
       targetFileName: (target: string) => `${target}.cmd`,
       workspaceForwarder: (target: string) =>
         target.toLowerCase().endsWith(".ps1")
-          ? {
-              assetName: "forwarder.ps1",
-              quote: (value: string) => `'${value.replaceAll("'", "''")}'`,
-            }
-          : {
-              assetName: "forwarder.cmd",
-              quote: (value: string) => `"${value.replaceAll('"', '""').replaceAll("%", "%%")}"`,
-            },
+          ? { assetPath: ps1Asset, quote: quotePs1 }
+          : { assetPath: cmdAsset, quote: quoteCmd },
       resolvePathTargetName: (selfPath: string, forwarderRoot: string) => {
         if (dirname(selfPath).toLowerCase() !== forwarderRoot.toLowerCase()) return undefined;
         const raw = basename(selfPath);

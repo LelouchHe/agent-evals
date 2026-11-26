@@ -12,10 +12,10 @@ execFileSync(process.execPath, [tsc, "-p", join(root, "tsconfig.build.json")], {
 
 // Non-TypeScript runtime assets are copied unchanged into their compiled location.
 for (const asset of [
-  "engine/forwarder.sh",
-  "engine/forwarder.cmd",
-  "engine/forwarder.ps1",
+  "platform/posix-forwarder.sh",
   "platform/posix-forwarder-client.mjs",
+  "platform/windows/forwarder.cmd",
+  "platform/windows/forwarder.ps1",
   "platform/windows/forwarder-client.mjs",
   "platform/macos/supervisor.sh",
   "runners/pi/shell-wrapper.sh",

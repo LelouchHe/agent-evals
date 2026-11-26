@@ -3,7 +3,7 @@ import { execFile, spawn } from "node:child_process";
 import { cp, mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { test } from "node:test";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { pathToFileURL } from "node:url";
 import { stringify } from "yaml";
 import { isSandboxPlatformSupported } from "../src/platform/index.ts";
 import { runCliProcess } from "./helpers/cli-process.ts";
@@ -70,12 +70,12 @@ test("package metadata and built runtime assets point at the sole CLI implementa
   assert.ok(cli.startsWith("#!/usr/bin/env node\n"), "dist/cli.js must keep its executable shebang");
   for (const asset of [
     "dist/engine/check-runner.js",
-    "dist/engine/forwarder.sh",
-    "dist/engine/forwarder.cmd",
-    "dist/engine/forwarder.ps1",
     "dist/engine/regex.js",
     "dist/engine/runtime-assets.js",
+    "dist/platform/posix-forwarder.sh",
     "dist/platform/posix-forwarder-client.mjs",
+    "dist/platform/windows/forwarder.cmd",
+    "dist/platform/windows/forwarder.ps1",
     "dist/platform/windows/forwarder-client.mjs",
     "dist/platform/macos/supervisor.sh",
     "dist/runners/pi/supervisor.js",
@@ -234,12 +234,16 @@ test(
     );
     const packageRoot = join(packDir, "package");
     const mocksModule = pathToFileURL(join(packageRoot, "dist", "engine", "mocks.js"));
-    // The host must resolve the asset beside itself inside the package, not from this worktree.
-    assert.equal(
-      fileURLToPath(new URL("./forwarder.sh", mocksModule)),
-      join(packageRoot, "dist", "engine", "forwarder.sh"),
-    );
-    await readFile(join(packageRoot, "dist", "engine", "forwarder.sh"), "utf8");
+    const platformModule = pathToFileURL(join(packageRoot, "dist", "platform", "index.js"));
+    const { mockForwarderSpec } = (await import(platformModule.href)) as typeof import("../src/platform/index.ts");
+    const spec = mockForwarderSpec();
+    const { realpath } = await import("node:fs/promises");
+    const expectedPlatformDir = await realpath(join(packageRoot, "dist", "platform"));
+    // The host must resolve the forwarder assets inside the unpacked package, not from this worktree.
+    assert.ok((await realpath(spec.assetPath)).startsWith(expectedPlatformDir));
+    assert.ok((await realpath(spec.clientPath)).startsWith(expectedPlatformDir));
+    await readFile(spec.assetPath, "utf8");
+    await readFile(spec.clientPath, "utf8");
     // A package resolves its declared dependency from its own tree; give the unpacked copy the
     // installed re2js the engine imports, so the test never falls back to this worktree.
     await cp(join(root, "node_modules", "re2js"), join(packageRoot, "node_modules", "re2js"), { recursive: true });
