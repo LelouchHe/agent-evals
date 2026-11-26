@@ -100,7 +100,7 @@ cases:
   without-skill: {}
 ```
 
-Select a name explicitly, even with one entry. `view` requires it for any `cases` document. `run` instead executes every entry in declaration order when `--case` is omitted, and only the named one when it is given. `cases` must be a non-empty mapping of non-empty string names to mappings. Missing/unknown selection is an error; an ordinary document rejects a case name. The common part is never executed as an extra unnamed case.
+Both `view` and `run` execute or display every entry in declaration order when `--case` is omitted, and only the named one when `--case <name>` is given. `cases` must be a non-empty mapping of non-empty string names to mappings. Unknown selection is an error; an ordinary document rejects a case name. The common part is never executed as an extra unnamed case.
 
 #### Running Every Case
 

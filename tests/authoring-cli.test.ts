@@ -96,6 +96,18 @@ test("view succeeds without Pi or environment values and annotates common versus
   assert.doesNotMatch(result.stdout, /view-secret-value/);
   assert.doesNotMatch(result.stdout, /CANARY-LAUNCHED/);
   await assert.rejects(() => access(lookupMarker), /ENOENT/);
+
+  // Omitting --case displays every case in declaration order, matching `run`.
+  const allCases = await runCli(t, ["view", configPath], {
+    cwd,
+    TMPDIR: cwd,
+    env: { PATH: emptyPath },
+    unsetEnv: ["OPENCODE_API_KEY"],
+  });
+  assert.equal(allCases.code, 0, allCases.stderr);
+  assert.match(allCases.stdout, /^case: "with-skill"$/m);
+  assert.match(allCases.stdout, /^case: "without-skill"$/m);
+  assert.ok(allCases.stdout.indexOf('case: "with-skill"') < allCases.stdout.indexOf('case: "without-skill"'));
 });
 
 test("view shows placeholders and escaped literals as declared without reading .env", async (t) => {

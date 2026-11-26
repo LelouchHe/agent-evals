@@ -7,7 +7,7 @@ import { judgeChecker } from "./checkers/judge/index.ts";
 import { mockChecker } from "./checkers/mock/index.ts";
 import { shellChecker } from "./checkers/shell/index.ts";
 import { traceChecker } from "./checkers/trace/index.ts";
-import { loadCase, loadCases } from "./engine/authoring.ts";
+import { loadCases } from "./engine/authoring.ts";
 import { ConfigError, errorMessage } from "./engine/config.ts";
 import { createEnvSource } from "./engine/env-source.ts";
 import { addChecker, addRunner, createRegistry, loadTrustedImplementations } from "./engine/registry.ts";
@@ -25,13 +25,13 @@ const USAGE = `Usage: agent-evals <command> <config.yml> [options]
 
 Commands:
   run <config.yml>         Execute the selected case, or every case when --case is omitted
-  view <config.yml>        Show the resolved case, its field origins and its placement
+  view <config.yml>        Show the selected case, or every case when --case is omitted
   report <results-dir>...  Print a session report from retained run records
   config <agent.yml>       Query ACP configuration values without prompting
   login <agent.yml>        Run the declared native command and save login files
 
 Options:
-  --case <name>            Named case to select (required by view for files with cases)
+  --case <name>            Named case to select (omitting selects every case in a cases document)
   --reps <n>               Repeat each selected case n times (default: 1)
   --jobs <n>               Maximum concurrent runs (default: 1)
   --retain <mode>          Retain workspace and home (excluding login): none, on-failure, all (default: none)
@@ -90,11 +90,15 @@ async function main(argv: readonly string[]): Promise<number> {
 
   try {
     if (options.command === "view") {
-      const resolved = await loadCase(options.configPath, {
+      const cases = await loadCases(options.configPath, {
         ...(options.caseName === undefined ? {} : { caseName: options.caseName }),
       });
-      const placement = await describePlacement(resolved);
-      process.stdout.write(formatResolvedCase(resolved, { placement, files: options.showFiles }));
+      const rendered: string[] = [];
+      for (const resolved of cases) {
+        const placement = await describePlacement(resolved);
+        rendered.push(formatResolvedCase(resolved, { placement, files: options.showFiles }));
+      }
+      process.stdout.write(rendered.join("\n"));
       return 0;
     }
     if (options.command === "report") {
