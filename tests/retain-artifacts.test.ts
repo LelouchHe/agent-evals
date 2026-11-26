@@ -56,8 +56,12 @@ export const runner = {
         await writeFile(join(context.workspaceDir, "output.txt"), "workspace-artifact\\n");
         await mkdir(join(context.homeDir, "mine", "space", "Plan", "New"), { recursive: true });
         await writeFile(join(context.homeDir, "mine", "space", "Plan", "New", "handover.md"), "saved-in-home\\n");
-        // Hardlink alias to the protected login file and a symlink to a host file must both be excluded.
+        // Hardlink aliases to the protected login file (in both HOME and workspace) and a symlink
+        // to a host file must all be excluded.
         await link(join(context.homeDir, ".secret", "token.json"), join(context.homeDir, "token-alias.json"));
+        await link(join(context.homeDir, ".secret", "token.json"), join(context.workspaceDir, "workspace-token-alias.json"));
+        // A workspace file named result.json must not confuse agent-evals report.
+        await writeFile(join(context.workspaceDir, "result.json"), "not-a-record\\n");
         if (parsed.hostSecret.length > 0) {
           await symlink(parsed.hostSecret, join(context.workspaceDir, "escape-link.txt"));
         }
@@ -165,10 +169,16 @@ test("--retain all copies workspace and home while excluding login files, hardli
     "saved-in-home\n",
   );
 
-  // Protected login files, hardlink aliases, and symlinks must not be copied into artifacts.
+  // Protected login files, hardlink aliases (in HOME or workspace), and symlinks must not be copied.
   await assert.rejects(readFile(join(artifactsDir, "home", ".secret", "token.json")), { code: "ENOENT" });
   await assert.rejects(readFile(join(artifactsDir, "home", "token-alias.json")), { code: "ENOENT" });
+  await assert.rejects(readFile(join(artifactsDir, "workspace", "workspace-token-alias.json")), { code: "ENOENT" });
   await assert.rejects(readFile(join(artifactsDir, "workspace", "escape-link.txt")), { code: "ENOENT" });
+
+  // `report` must ignore workspace files named `result.json` inside `artifacts/`.
+  assert.equal(await readFile(join(artifactsDir, "workspace", "result.json"), "utf8"), "not-a-record\n");
+  const reportRun = await runCliProcess(t, CLI, ["report", resultsDir], { cwd: directory });
+  assert.equal(reportRun.code, 0, reportRun.stderr);
 
   // Sandbox run root is still removed.
   assert.deepEqual(await readdir(runs), []);

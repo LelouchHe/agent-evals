@@ -1,13 +1,17 @@
-import { posix } from "node:path";
+import { lstat, readdir, stat } from "node:fs/promises";
+import { join, posix } from "node:path";
 import { z } from "zod";
 import type { CheckResult, Checker, CheckerContext, CheckerDefinition } from "../../engine/registry.ts";
 import { patternListSchema, runRelativePathSchema } from "../../engine/params.ts";
 import { truncate } from "../../engine/truncate.ts";
 import { searches } from "../../engine/regex.ts";
 import {
+  WorkspacePathError,
+  assertRunRoot,
   isMissing,
   readRunFile,
   readRunTree,
+  resolveWorkspacePath,
   runPathExists,
   type RunRoot,
   type RunTree,
@@ -102,7 +106,7 @@ class FileChecker implements Checker {
     ];
 
     if (isGlob(params.path)) {
-      return this.#checkGlob(target, declared);
+      return this.#checkGlob(target, declared, context.signal);
     }
 
     if (params.exists !== undefined) {
@@ -132,13 +136,14 @@ class FileChecker implements Checker {
   async #checkGlob(
     target: { readonly root: RunRoot; readonly relative: string },
     declared: readonly DeclaredPattern[],
+    signal: AbortSignal,
   ): Promise<readonly CheckResult[]> {
     const params = this.#params;
     const results: CheckResult[] = [];
     let matched: GlobMatches | undefined;
     let globError: string | undefined;
     try {
-      matched = await resolveGlobMatches(target.root, target.relative);
+      matched = await resolveGlobMatches(target.root, target.relative, signal);
     } catch (error) {
       globError = errorMessage(error);
     }
@@ -183,28 +188,36 @@ class FileChecker implements Checker {
       return results;
     }
 
-    const contents: { readonly path: string; readonly text: string }[] = [];
+    // Stream matched files one at a time so aggregate memory stays bounded by one file.
+    const hits: (string | undefined)[] = new Array(declared.length).fill(undefined);
     let readError: string | undefined;
     try {
       for (const rel of matched.files) {
+        if (signal.aborted) {
+          throw new Error("check cancelled");
+        }
         const text = (await readRunFile(target.root, rel)).toString("utf8");
-        contents.push({ path: `${prefix}${rel}`, text });
+        const displayPath = `${prefix}${rel}`;
+        for (const [index, { pattern }] of declared.entries()) {
+          if (hits[index] !== undefined) continue;
+          const found = pattern.regex ? searches(pattern.source, text) : text.includes(pattern.source);
+          if (found) hits[index] = displayPath;
+        }
+        if (hits.every((hit) => hit !== undefined)) break;
       }
     } catch (error) {
       readError = errorMessage(error);
     }
 
-    for (const { kind, pattern } of declared) {
+    for (const [index, { kind, pattern }] of declared.entries()) {
       const subject = `${params.path} ${kind === "matches" ? "matches" : "does not match"} ${display(pattern)}`;
       if (readError !== undefined) {
         results.push(errorResult(subject, readError));
         continue;
       }
-      const hit = contents.find(({ text }) =>
-        pattern.regex ? searches(pattern.source, text) : text.includes(pattern.source),
-      );
+      const hit = hits[index];
       const found = hit !== undefined;
-      const reason = found ? `pattern found in ${hit.path}` : `pattern not found in ${contents.length} matched file(s)`;
+      const reason = found ? `pattern found in ${hit}` : `pattern not found in ${matched.files.length} matched file(s)`;
       results.push({ ...(found === (kind === "matches") ? pass : fail)(reason), subject });
     }
 
@@ -273,7 +286,8 @@ interface GlobMatches {
   readonly files: readonly string[];
 }
 
-async function resolveGlobMatches(root: RunRoot, pattern: string): Promise<GlobMatches> {
+async function resolveGlobMatches(root: RunRoot, pattern: string, signal: AbortSignal): Promise<GlobMatches> {
+  await assertRunRoot(root);
   const normalized = pattern.replaceAll("\\", "/").replace(/^(?:\.\/)+/u, "");
   const segments = normalized.split("/");
   const staticSegments: string[] = [];
@@ -282,23 +296,68 @@ async function resolveGlobMatches(root: RunRoot, pattern: string): Promise<GlobM
     staticSegments.push(segment);
   }
   const baseDir = staticSegments.length === 0 ? "." : staticSegments.join("/");
-  const tree = await readRunTree(root, baseDir);
-  if (tree === undefined) {
+  const startAbs = baseDir === "." ? root.path : await resolveWorkspacePath(root, baseDir);
+  let startStats;
+  try {
+    startStats = await lstat(startAbs);
+  } catch (error) {
+    if (isMissing(error)) return { all: [], files: [] };
+    throw new WorkspacePathError(`could not inspect ${baseDir}: ${errorMessage(error)}`);
+  }
+  if (!startStats.isDirectory()) {
     return { all: [], files: [] };
   }
+
   const all: string[] = [];
   const files: string[] = [];
-  for (const [key, entry] of tree) {
-    if (baseDir === "." && key === "") continue;
-    const relative = baseDir === "." ? key : key === "" ? baseDir : `${baseDir}/${key}`;
-    if (!posix.matchesGlob(relative, normalized)) continue;
-    all.push(relative);
-    if (entry.kind === "file") {
-      files.push(relative);
+
+  const visit = async (dirAbs: string, relPrefix: string): Promise<void> => {
+    if (signal.aborted) {
+      throw new Error("check cancelled");
     }
-  }
-  all.sort();
-  files.sort();
+    const names = (await readdir(dirAbs)).sort();
+    for (const name of names) {
+      if (signal.aborted) {
+        throw new Error("check cancelled");
+      }
+      const childAbs = join(dirAbs, name);
+      const relative = relPrefix === "" ? name : `${relPrefix}/${name}`;
+      let info;
+      try {
+        info = await lstat(childAbs);
+      } catch (error) {
+        if (isMissing(error)) continue;
+        throw new WorkspacePathError(`could not inspect ${relative}: ${errorMessage(error)}`);
+      }
+      if (posix.matchesGlob(relative, normalized)) {
+        if (info.isFile()) {
+          all.push(relative);
+          files.push(relative);
+        } else if (info.isDirectory()) {
+          all.push(relative);
+        } else if (info.isSymbolicLink()) {
+          // Validate symlinks with the exact-path rules: escaping/broken links and special targets error.
+          const resolved = await resolveWorkspacePath(root, relative);
+          const targetInfo = await stat(resolved);
+          if (targetInfo.isFile()) {
+            all.push(relative);
+            files.push(relative);
+          } else if (targetInfo.isDirectory()) {
+            all.push(relative);
+          } else {
+            throw new WorkspacePathError(`not a regular file or directory: ${relative}`);
+          }
+        } else {
+          throw new WorkspacePathError(`not a regular file or directory: ${relative}`);
+        }
+      }
+      if (info.isDirectory()) {
+        await visit(childAbs, relative);
+      }
+    }
+  };
+
+  await visit(startAbs, baseDir === "." ? "" : baseDir);
   return { all, files };
 }
 

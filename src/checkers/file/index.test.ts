@@ -464,6 +464,16 @@ test("file checker supports glob paths with OR matches, AND notMatches, and fail
 
   // changed rejects glob patterns at load time.
   await assert.rejects(() => parse({ path: "Plan/*.md", changed: false }), /changed does not support glob patterns/);
+
+  // Unrelated oversized files under the prefix do not error a non-matching glob.
+  await writeFile(join(dirs.workspace, "huge.bin"), Buffer.alloc(1024 * 1024 + 1, 0x61));
+  const unaffected = await checkRaw({ path: "*.md", exists: true, matches: "top level" }, ctx);
+  assert.deepEqual(statuses(unaffected), ["pass", "pass"]);
+
+  // A broken symlink matching a glob errors instead of passing exists: true.
+  await symlink(join(dirs.root, "missing-target"), join(dirs.workspace, "broken.md"));
+  const brokenGlob = await checkRaw({ path: "broken*.md", exists: true }, ctx);
+  assert.deepEqual(statuses(brokenGlob), ["error"]);
 });
 
 test("a directory answers exists and changed, while the pattern predicates need a file", async (t) => {

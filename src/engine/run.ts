@@ -53,7 +53,7 @@ import { createCheckSandbox } from "./check-sandbox.ts";
 import { parseImplementationParams } from "./params.ts";
 import { truncate, truncateNullable } from "./truncate.ts";
 import { substituteValues, type ValueSource } from "./values.ts";
-import { isMissing, openRunRoot, type RunRoot } from "./workspace.ts";
+import { assertRunRoot, isMissing, openRunRoot, type RunRoot } from "./workspace.ts";
 
 const DEFAULT_TIMEOUT_MS = 300_000;
 const CHECK_ABORT_GRACE_MS = 12_000;
@@ -183,6 +183,8 @@ export async function executeEvaluation(prepared: PreparedEvaluation): Promise<E
   }
 
   let runner: Runner | undefined;
+  let workspaceRoot: RunRoot | undefined;
+  let homeRoot: RunRoot | undefined;
   let cleanup: EvaluationRecord["cleanup"] = { status: "removed" };
   let artifacts: EvaluationRecord["artifacts"] | undefined;
   let protectedPaths: readonly string[] = registered.runner.homeFiles ?? [];
@@ -227,7 +229,7 @@ export async function executeEvaluation(prepared: PreparedEvaluation): Promise<E
       });
     }
     await placeCaseFiles(request.case, join(engineDir, "files", "workspace"), workspaceDir);
-    const workspaceRoot = await openRunRoot(workspaceDir);
+    workspaceRoot = await openRunRoot(workspaceDir);
 
     // The runner places its own HOME content first; the case then overlays it without
     // touching login state, and only what the case placed becomes the HOME baseline.
@@ -271,7 +273,7 @@ export async function executeEvaluation(prepared: PreparedEvaluation): Promise<E
         await rm(homeStaging, { recursive: true, force: true });
       }
     }
-    const homeRoot = await openRunRoot(homeDir);
+    homeRoot = await openRunRoot(homeDir);
 
     // Forwarders are written before the baseline snapshot, so it already holds them.
     const mocks = request.case.config.mocks;
@@ -417,7 +419,7 @@ export async function executeEvaluation(prepared: PreparedEvaluation): Promise<E
       try {
         paths = await createResultDirectory(request.resultsDir, runId);
         const artifactsDir = join(paths.directory, "artifacts");
-        await retainRunArtifacts(workspaceDir, homeDir, artifactsDir, {
+        await retainRunArtifacts(workspaceRoot, homeRoot, artifactsDir, {
           paths: protectedPaths,
           identities: protectedIdentities,
         });
@@ -477,14 +479,23 @@ interface HomeExclusion {
 }
 
 async function retainRunArtifacts(
-  workspaceDir: string,
-  homeDir: string,
+  workspaceRoot: RunRoot | undefined,
+  homeRoot: RunRoot | undefined,
   artifactsDir: string,
   excludeHome: HomeExclusion,
 ): Promise<void> {
   await mkdir(artifactsDir, { recursive: true, mode: 0o700 });
-  await retainTree(workspaceDir, join(artifactsDir, "workspace"));
-  await retainTree(homeDir, join(artifactsDir, "home"), excludeHome);
+  if (workspaceRoot !== undefined) {
+    await assertRunRoot(workspaceRoot);
+    await retainTree(workspaceRoot.path, join(artifactsDir, "workspace"), {
+      paths: [],
+      identities: excludeHome.identities,
+    });
+  }
+  if (homeRoot !== undefined) {
+    await assertRunRoot(homeRoot);
+    await retainTree(homeRoot.path, join(artifactsDir, "home"), excludeHome);
+  }
 }
 
 async function retainTree(sourceDir: string, destinationDir: string, exclude?: HomeExclusion): Promise<void> {

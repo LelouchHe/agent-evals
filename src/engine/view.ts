@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto";
 import { basename } from "node:path";
 import { Document, isMap, isNode, isScalar, isSeq, type Pair } from "yaml";
 import type { FieldOrigin, ResolvedCase, SourceOrigin } from "./config.ts";
@@ -45,29 +46,31 @@ export function formatResolvedCase(resolved: ResolvedCase, options: ViewOptions)
 const MAX_ALIGN_COLUMN = 44;
 
 function formatAnnotatedConfig(resolved: ResolvedCase): string {
+  const marker = `__AE_ORIGIN_${randomBytes(6).toString("hex")}__`;
   const doc = new Document(resolved.config);
   if (isMap(doc.contents)) {
     for (const pair of doc.contents.items) {
       if (!isScalar(pair.key) || typeof pair.key.value !== "string") continue;
       const origin = resolved.origins[pair.key.value];
       if (origin === undefined) continue;
-      applyOrigin(pair, origin);
+      applyOrigin(pair, origin, marker);
     }
   }
-  return alignOriginComments(doc.toString(), basename(resolved.path));
+  return alignOriginComments(doc.toString(), marker);
 }
 
 /**
- * Align trailing `# <file>:<line>` (plus optional `(overrides ...)`) comments to one column,
- * capped so a single long scalar (such as `input`) never pushes other comments far to the right.
+ * Align only the origin comments emitted by this function (tagged with `marker`), so literal
+ * `# ...` text inside user scalars is never altered. Capped so one long scalar does not push
+ * every other line's comment far to the right.
  */
-function alignOriginComments(yamlText: string, fileName: string): string {
-  const escaped = escapeRegExp(fileName);
-  const suffix = new RegExp(`^(.*?) (# ${escaped}:\\d+(?: \\(overrides ${escaped}:\\d+\\))?)$`, "u");
+function alignOriginComments(yamlText: string, marker: string): string {
+  const token = ` #${marker}`;
   const lines = yamlText.trimEnd().split("\n");
   const parsed = lines.map((line): { readonly line: string } | { readonly body: string; readonly comment: string } => {
-    const match = suffix.exec(line);
-    return match === null ? { line } : { body: match[1]!, comment: match[2]! };
+    const index = line.lastIndexOf(token);
+    if (index === -1) return { line };
+    return { body: line.slice(0, index), comment: `#${line.slice(index + token.length)}` };
   });
   let column = 0;
   for (const entry of parsed) {
@@ -84,14 +87,10 @@ function alignOriginComments(yamlText: string, fileName: string): string {
     .join("\n");
 }
 
-function escapeRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
-}
-
-function applyOrigin(pair: Pair, origin: FieldOrigin): void {
+function applyOrigin(pair: Pair, origin: FieldOrigin, marker: string): void {
   const uniform = uniformSource(origin);
   if (uniform !== undefined) {
-    annotatePair(pair, formatSource(uniform));
+    annotatePair(pair, formatSource(uniform, marker));
     return;
   }
   if (origin.kind === "list") {
@@ -99,7 +98,7 @@ function applyOrigin(pair: Pair, origin: FieldOrigin): void {
     for (const [index, item] of pair.value.items.entries()) {
       const entryOrigin = origin.items[index];
       if (entryOrigin === undefined) continue;
-      const comment = formatSource(entryOrigin);
+      const comment = formatSource(entryOrigin, marker);
       if (isMap(item) && item.items[0] !== undefined) {
         annotatePair(item.items[0], comment);
       } else if (isNode(item)) {
@@ -114,7 +113,7 @@ function applyOrigin(pair: Pair, origin: FieldOrigin): void {
       if (!isScalar(entryPair.key) || typeof entryPair.key.value !== "string") continue;
       const childOrigin = origin.entries[entryPair.key.value];
       if (childOrigin !== undefined) {
-        applyOrigin(entryPair, childOrigin);
+        applyOrigin(entryPair, childOrigin, marker);
       }
     }
   }
@@ -148,11 +147,11 @@ function annotatePair(pair: Pair, comment: string): void {
   }
 }
 
-function formatSource(origin: SourceOrigin): string {
+function formatSource(origin: SourceOrigin, marker: string): string {
   const self = `${basename(origin.file)}:${origin.line}`;
-  if (origin.overrides === undefined) return ` ${self}`;
+  if (origin.overrides === undefined) return `${marker} ${self}`;
   const prev = `${basename(origin.overrides.file)}:${origin.overrides.line}`;
-  return ` ${self} (overrides ${prev})`;
+  return `${marker} ${self} (overrides ${prev})`;
 }
 
 function count(value: number, label: string): string {

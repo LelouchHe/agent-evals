@@ -249,6 +249,66 @@ export const runner = {
   assert.ok(!peaks.includes("peak=3"), `concurrency exceeded --jobs 2: ${JSON.stringify(peaks)}`);
 });
 
+test("--jobs serializes runs that share a concurrencyKey", async (t) => {
+  const directory = await makeTempDir(t, "ae-jobs-key-");
+  const runs = join(directory, "runs");
+  const resultsDir = join(directory, "results");
+  const extensionDir = join(directory, "extensions");
+  await mkdir(runs);
+  await mkdir(join(extensionDir, "keyed"), { recursive: true });
+  await writeFile(
+    join(extensionDir, "keyed", "index.mjs"),
+    `
+let active = 0;
+let peak = 0;
+export const runner = {
+  type: "keyed",
+  params: {
+    async safeParseAsync(raw) {
+      return { success: true, data: { key: String(raw.key) } };
+    },
+  },
+  create(parsed) {
+    return {
+      concurrencyKey: parsed.key,
+      async run() {
+        active += 1;
+        if (active > peak) peak = active;
+        await new Promise((resolve) => setTimeout(resolve, 60));
+        const seenPeak = peak;
+        active -= 1;
+        return { finalText: "peak=" + seenPeak, diagnostics: [] };
+      },
+      async stop() {},
+    };
+  },
+};
+`,
+  );
+  const path = join(directory, "case.yml");
+  await writeFile(
+    path,
+    stringify({
+      input: "task",
+      checks: [{ $type: "file", path: "missing.txt", exists: false }],
+      runner: { $type: "keyed", key: "shared-login" },
+      cases: { a: {}, b: {} },
+    }),
+  );
+
+  const run = await runCliProcess(
+    t,
+    CLI,
+    ["run", path, "--jobs", "2", "--extension-dir", extensionDir, "--results-dir", resultsDir],
+    { cwd: directory, env: { ...process.env, TMPDIR: runs } },
+  );
+  assert.equal(run.code, 0, run.stderr);
+  for (const line of caseLines(run.stdout)) {
+    const record: EvaluationRecord = JSON.parse(await readFile(line.result, "utf8"));
+    assert.equal(record.runner.finalText, "peak=1");
+  }
+});
+
 test("--jobs rejects non-positive values and commands other than run", async (t) => {
   const zero = await runDocument(
     t,

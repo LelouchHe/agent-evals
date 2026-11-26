@@ -163,6 +163,25 @@ test("view escapes control characters in selected case labels", async (t) => {
   assert.ok(!result.stdout.includes("\u0007"));
 });
 
+test("view comment alignment does not alter literal comment-like lines inside multiline scalars", async (t) => {
+  const directory = await makeTempDir(t, "ae-view-literal-");
+  const configPath = join(directory, "case.yml");
+  const input = "line one\nnote # case.yml:42\n";
+  await writeFile(
+    configPath,
+    stringify({
+      input,
+      runner: { $type: "noop" },
+      checks: [{ $type: "file", path: "a.txt", exists: false }],
+    }),
+  );
+  const cwd = await makeTempDir(t, "ae-view-literal-cwd-");
+  const result = await runCli(t, ["view", configPath], { cwd, TMPDIR: cwd });
+  assert.equal(result.code, 0, result.stderr);
+  const resolved = extractResolvedYaml(result.stdout) as { input?: string };
+  assert.equal(resolved.input, input);
+});
+
 test("view and run resolve the same configuration payload", async (t) => {
   const fake = await createFakePi(t, "success");
   const directory = await makeTempDir(t, "ae-shared-");

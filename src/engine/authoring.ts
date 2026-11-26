@@ -142,11 +142,16 @@ function composeFieldValue(type: FieldType, commonValue: unknown, caseValue: unk
     if (!isPlainRecord(commonValue) || !isPlainRecord(caseValue)) {
       return isPlainRecord(commonValue) ? caseValue : commonValue;
     }
-    const merged: Record<string, unknown> = { ...commonValue };
+    const merged: Record<string, unknown> = {};
+    for (const [entryKey, value] of Object.entries(commonValue)) {
+      defineOwn(merged, entryKey, value);
+    }
     for (const [entryKey, caseEntry] of Object.entries(caseValue)) {
-      merged[entryKey] = Object.hasOwn(merged, entryKey)
-        ? composeFieldValue(type.child, merged[entryKey], caseEntry)
-        : caseEntry;
+      defineOwn(
+        merged,
+        entryKey,
+        Object.hasOwn(merged, entryKey) ? composeFieldValue(type.child, merged[entryKey], caseEntry) : caseEntry,
+      );
     }
     return merged;
   }
@@ -176,7 +181,7 @@ function extractFieldOrigin(
         ...base,
         line: isNode(pair.key) ? lineAt(pair.key, text) : base.line,
       };
-      entries[pair.key.value] = extractFieldOrigin(type.child, { node: pair.value }, entryBase, text);
+      defineOwn(entries, pair.key.value, extractFieldOrigin(type.child, { node: pair.value }, entryBase, text));
     }
     return { kind: "map", base, entries };
   }
@@ -197,11 +202,18 @@ function extractFieldOrigin(
 function composeFieldOrigin(type: FieldType, common: FieldOrigin, next: FieldOrigin): FieldOrigin {
   if (typeof type !== "string") {
     if (common.kind === "map" && next.kind === "map") {
-      const entries: Record<string, FieldOrigin> = { ...common.entries };
+      const entries: Record<string, FieldOrigin> = {};
+      for (const [entryKey, entryOrigin] of Object.entries(common.entries)) {
+        defineOwn(entries, entryKey, entryOrigin);
+      }
       for (const [entryKey, entryOrigin] of Object.entries(next.entries)) {
-        entries[entryKey] = Object.hasOwn(entries, entryKey)
-          ? composeFieldOrigin(type.child, entries[entryKey]!, entryOrigin)
-          : entryOrigin;
+        defineOwn(
+          entries,
+          entryKey,
+          Object.hasOwn(entries, entryKey)
+            ? composeFieldOrigin(type.child, entries[entryKey]!, entryOrigin)
+            : entryOrigin,
+        );
       }
       return { kind: "map", base: common.base, entries };
     }
@@ -219,6 +231,10 @@ function composeFieldOrigin(type: FieldType, common: FieldOrigin, next: FieldOri
       }
       return next;
   }
+}
+
+function defineOwn<T>(target: Record<string, T>, key: string, value: T): void {
+  Object.defineProperty(target, key, { value, enumerable: true, writable: true, configurable: true });
 }
 
 function isPlainRecord(value: unknown): value is Record<string, unknown> {

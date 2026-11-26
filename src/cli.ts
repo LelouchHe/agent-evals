@@ -187,20 +187,56 @@ async function runCommand(options: CliOptions): Promise<number> {
     }
 
     const slots: (EvaluationRecord | undefined)[] = new Array(prepared.length);
-    let nextIndex = 0;
-    const workerCount = Math.min(options.jobs, prepared.length);
-    await Promise.all(
-      Array.from({ length: workerCount }, async () => {
-        while (true) {
-          // Cancellation stops pulling new work; an error or a failed check does not.
-          if (abort.signal.aborted) return;
-          const index = nextIndex;
-          if (index >= prepared.length) return;
-          nextIndex += 1;
-          slots[index] = await executeEvaluation(prepared[index]!);
+    const pending = prepared.map((_, index) => index);
+    const inFlightKeys = new Set<string>();
+    let firstError: unknown;
+    let active = 0;
+
+    // Event-driven bounded pool: runs sharing a `concurrencyKey` (e.g., persistent ACP login.dir)
+    // serialize while unrelated runs execute concurrently up to `options.jobs`. If any worker
+    // rejects unexpectedly, abort and wait for all active workers to drain before exiting.
+    await new Promise<void>((resolvePool) => {
+      const schedule = () => {
+        while (active < options.jobs && !abort.signal.aborted && firstError === undefined) {
+          const pos = pending.findIndex((index) => {
+            const key = prepared[index]!.registered.runner.concurrencyKey;
+            return key === undefined || !inFlightKeys.has(key);
+          });
+          if (pos === -1) break;
+          const [index] = pending.splice(pos, 1);
+          const entry = prepared[index!]!;
+          const key = entry.registered.runner.concurrencyKey;
+          if (key !== undefined) inFlightKeys.add(key);
+          active += 1;
+          void executeEvaluation(entry)
+            .then(
+              (record) => {
+                slots[index!] = record;
+              },
+              (caught) => {
+                firstError ??= caught;
+                abort.abort();
+              },
+            )
+            .finally(() => {
+              if (key !== undefined) inFlightKeys.delete(key);
+              active -= 1;
+              schedule();
+              if (active === 0 && (pending.length === 0 || abort.signal.aborted || firstError !== undefined)) {
+                resolvePool();
+              }
+            });
         }
-      }),
-    );
+        if (active === 0) {
+          resolvePool();
+        }
+      };
+      schedule();
+    });
+
+    if (firstError !== undefined) {
+      throw firstError;
+    }
 
     const records: EvaluationRecord[] = [];
     const casesPerRep = cases.length;
@@ -388,13 +424,15 @@ async function findResultFiles(path: string): Promise<string[]> {
   if (info.isFile()) {
     return [path];
   }
+  const entries = await readdir(path, { withFileTypes: true });
+  // A directory with `result.json` is a single run record; do not recurse into its `artifacts/`.
+  if (entries.some((entry) => !entry.isDirectory() && entry.name === "result.json")) {
+    return [join(path, "result.json")];
+  }
   const found: string[] = [];
-  for (const entry of await readdir(path, { withFileTypes: true })) {
-    const child = join(path, entry.name);
+  for (const entry of entries) {
     if (entry.isDirectory()) {
-      for (const file of await findResultFiles(child)) found.push(file);
-    } else if (entry.name === "result.json") {
-      found.push(child);
+      for (const file of await findResultFiles(join(path, entry.name))) found.push(file);
     }
   }
   return found.sort();
@@ -414,6 +452,8 @@ function printRecord(record: EvaluationRecord, resultsDir: string): void {
   }
   if (record.artifacts?.status === "retained" && record.artifacts.path !== undefined) {
     lines.push(`  artifacts: ${join(resultsDir, record.runId, record.artifacts.path)}`);
+  } else if (record.artifacts?.status === "failed") {
+    lines.push(`  artifacts: failed — ${record.artifacts.error ?? "unknown error"}`);
   }
   lines.push(`  results: ${join(resultsDir, record.runId, "result.json")}`);
   process.stdout.write(lines.join("\n") + "\n");
@@ -436,7 +476,13 @@ function exitCode(record: EvaluationRecord): number {
 /** One summary line per executed case: name, status and the retained result record. */
 function printCaseLine(record: EvaluationRecord, resultsDir: string, prefix = ""): void {
   const name = record.case.name ?? record.case.path;
-  process.stdout.write(`${prefix}${name}: ${runOutcome(record)} ${join(resultsDir, record.runId, "result.json")}\n`);
+  const retainNote =
+    record.artifacts?.status === "failed"
+      ? ` (artifacts retention failed: ${record.artifacts.error ?? "unknown error"})`
+      : "";
+  process.stdout.write(
+    `${prefix}${name}: ${runOutcome(record)} ${join(resultsDir, record.runId, "result.json")}${retainNote}\n`,
+  );
 }
 
 /** Zero only when every case passed, 1 for failed checks, 2 for anything that could not be judged. */

@@ -362,6 +362,30 @@ test("collection fields (files, checks, mocks) merge recursively and case leaf v
   const deployRule = overridden.config.mocks?.shell.deployctl?.[0]?.action;
   assert.equal(deployRule?.kind, "return");
   assert.equal(deployRule.result.stdout, "custom");
+
+  // Own-property semantics: a case adding a literal `__proto__` key preserves it.
+  const { path: protoPath } = await writeDocument(
+    t,
+    [
+      "input: task",
+      "files:",
+      "  a.txt: src-a.txt",
+      "checks:",
+      "  - $type: file",
+      "    path: a.txt",
+      "    exists: false",
+      "runner:",
+      "  $type: noop",
+      "cases:",
+      "  with-proto:",
+      "    files:",
+      "      __proto__: proto.txt",
+    ],
+    "proto-files.yml",
+  );
+  const protoCase = await loadCase(protoPath, { caseName: "with-proto" });
+  assert.ok(Object.hasOwn(protoCase.config.files ?? {}, "__proto__"));
+  assert.equal(protoCase.config.files?.["__proto__"], "proto.txt");
 });
 
 test("incomplete common or case fragments are allowed only when the combination is complete", async (t) => {

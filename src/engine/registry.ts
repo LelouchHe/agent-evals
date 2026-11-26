@@ -107,6 +107,8 @@ export interface Runner {
   readonly prepareHome?: (context: RunnerContext) => Promise<readonly string[]>;
   /** HOME-relative login files a case may never place over; independent of `prepareHome`. */
   readonly homeFiles?: readonly string[];
+  /** Shared mutable host resource key (e.g., persistent login dir); runs with the same key serialize. */
+  readonly concurrencyKey?: string;
   readonly run: (context: RunnerContext) => Promise<RunnerOutcome>;
   /** Stop the harness and its owned processes. Must be idempotent. */
   readonly stop: () => Promise<void>;
