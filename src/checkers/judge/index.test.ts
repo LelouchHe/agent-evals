@@ -113,6 +113,7 @@ test("judge passes when every rubric statement passes", async (t) => {
   assert.equal(results[0]?.status, "pass");
   assert.equal(results[0]?.checker, "judge");
   assert.equal(results[0]?.subject, "hello.txt exists and contains Hello, world!.");
+  assert.match(results[0]?.reason ?? "", /^\[pi \(test\/judge-model\)\] /);
 });
 
 test("judge preserves a valid failing verdict as a failed check", async (t) => {

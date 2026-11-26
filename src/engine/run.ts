@@ -573,7 +573,7 @@ async function prepareImplementations(
     if (created.concurrencyKey !== undefined) {
       concurrencyKeys.add(created.concurrencyKey);
     }
-    return { type: definition.type, runner: created };
+    return { type: definition.type, label: created.label ?? definition.type, runner: created };
   };
   const context: ImplementationContext = {
     authoringDir: request.case.dir,

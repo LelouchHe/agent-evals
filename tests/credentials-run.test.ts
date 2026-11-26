@@ -110,7 +110,7 @@ test("runner and judge share one cached environment value without leaking it", a
 
   assert.equal(record.status, "pass", record.error);
   assert.equal(record.runner.finalText, "api-key-present");
-  assert.equal(record.checks[0]?.reason, "api-key-present");
+  assert.equal(record.checks[0]?.reason, "[pi (opencode-go/test-judge)] api-key-present");
   assert.equal(record.resolvedConfig.runner.apiKey, "${env:OPENCODE_API_KEY}");
   assert.equal(judgeRunnerApiKey(record), "${env:OPENCODE_API_KEY}");
   assert.equal(await readFile(join(invocation, "count"), "utf8"), "x");
@@ -171,7 +171,7 @@ test("different environment values reach only their own runner and judge process
 
   assert.equal(record.status, "pass", record.error);
   assert.equal(record.runner.finalText, "runner:true");
-  assert.equal(record.checks[0]?.reason, "judge:true");
+  assert.equal(record.checks[0]?.reason, "[pi (deepseek/test-judge)] judge:true");
   assert.equal(await readFile(join(invocation, "opencode-count"), "utf8"), "x");
   assert.equal(await readFile(join(invocation, "deepseek-count"), "utf8"), "x");
   assert.deepEqual(await readdir(tempParent), []);
@@ -318,7 +318,7 @@ test("natural apiKey fields receive ordinary values from arbitrary environment n
   });
   assert.equal(record.status, "pass", record.error);
   assert.equal(record.runner.finalText, "custom:true");
-  assert.equal(record.checks[0]?.reason, "custom:true");
+  assert.equal(record.checks[0]?.reason, "[pi (test/judge-model)] custom:true");
   assert.equal(record.resolvedConfig.runner.apiKey, "${env:MY_RUNNER_KEY}");
   assert.equal(judgeRunnerApiKey(record), "${env:MY_JUDGE_KEY}");
   assert.deepEqual(await readdir(tempParent), []);

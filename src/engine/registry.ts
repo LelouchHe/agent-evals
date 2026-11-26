@@ -109,6 +109,8 @@ export interface Runner {
   readonly homeFiles?: readonly string[];
   /** Shared mutable host resource key (e.g., persistent login dir); runs with the same key serialize. */
   readonly concurrencyKey?: string;
+  /** Short human-readable description of this runner instance (e.g., `pi (provider/model)`). */
+  readonly label?: string;
   readonly run: (context: RunnerContext) => Promise<RunnerOutcome>;
   /** Stop the harness and its owned processes. Must be idempotent. */
   readonly stop: () => Promise<void>;
@@ -121,6 +123,8 @@ export interface Runner {
 /** A runner instance created from a declaration, named by the type that produced it. */
 export interface PreparedRunner {
   readonly type: string;
+  /** Human-readable runner label, defaulting to `type` when the runner does not provide one. */
+  readonly label?: string;
   readonly runner: Runner;
 }
 

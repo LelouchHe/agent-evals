@@ -1,3 +1,4 @@
+import { basename, extname } from "node:path";
 import { methods, type SessionConfigOption } from "@agentclientprotocol/sdk";
 import { z } from "zod";
 import { loadImplementationParameters } from "../../engine/authoring.ts";
@@ -35,7 +36,11 @@ export const acpRunner: RunnerDefinition<AcpRunnerParams> = {
             context.values,
           )
         : { params: params.agent, dir: context.authoringDir };
-    return new AcpRunner(agent.acpCommand, await resolveHarnessHome(agent, dir), params.config);
+    const agentName =
+      typeof params.agent === "string" ? basename(params.agent, extname(params.agent)) : basename(agent.acpCommand[0]);
+    const model = typeof params.config.model === "string" ? params.config.model : undefined;
+    const label = model === undefined ? `acp (${agentName})` : `acp (${agentName}, ${model})`;
+    return new AcpRunner(agent.acpCommand, await resolveHarnessHome(agent, dir), params.config, label);
   },
 };
 
@@ -44,6 +49,7 @@ class AcpRunner implements Runner {
   readonly #home: HarnessHome;
   readonly homeFiles: readonly string[];
   readonly concurrencyKey?: string;
+  readonly label: string;
   readonly #config: SessionConfig;
   #process: SupervisedProcess | undefined;
   #copyBack: (() => Promise<void>) | undefined;
@@ -51,13 +57,14 @@ class AcpRunner implements Runner {
   readonly #trace = new AcpTrace();
   readonly #usage = new AcpUsage();
 
-  constructor(command: readonly [string, ...string[]], home: HarnessHome, config: SessionConfig) {
+  constructor(command: readonly [string, ...string[]], home: HarnessHome, config: SessionConfig, label: string) {
     this.#command = command;
     this.#home = home;
     this.homeFiles = home.login?.files ?? [];
     if (home.login !== undefined) {
       this.concurrencyKey = home.login.dir;
     }
+    this.label = label;
     this.#config = config;
   }
 

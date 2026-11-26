@@ -34,11 +34,13 @@ export const piRunner: RunnerDefinition<PiRunnerParams> = {
 class PiRunner implements Runner {
   readonly #params: PiRunnerParams;
   readonly #authoringDir: string;
+  readonly label: string;
   #stop: (() => Promise<void>) | undefined;
 
   constructor(params: PiRunnerParams, authoringDir: string) {
     this.#params = params;
     this.#authoringDir = authoringDir;
+    this.label = `pi (${params.model})`;
   }
 
   readonly run = async (context: RunnerContext): Promise<RunnerOutcome> => {
