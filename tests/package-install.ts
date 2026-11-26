@@ -150,15 +150,16 @@ test("the packed CLI installs and runs without source or development dependencie
       env: { ...env, TMPDIR: runtime },
       timeoutMs: 30_000,
     });
+  const installedEntry = process.platform === "win32" ? join(installed, "dist/cli.js") : bin;
   if (isSandboxPlatformSupported) {
     const agent = await makeAcpAgent(t);
-    const queried = await invoke(bin, ["config", agent.path]);
+    const queried = await invoke(installedEntry, ["config", agent.path]);
     assert.equal(queried.code, 0, queried.stderr);
     assert.match(queried.stdout, /model-a/);
     const queriedBuilt = await invoke(join(project, "dist/cli.js"), ["config", agent.path]);
     assert.equal(queriedBuilt.code, 0, queriedBuilt.stderr);
     assert.deepEqual(parse(queried.stdout), parse(queriedBuilt.stdout));
-    const loggedIn = await invoke(bin, ["login", agent.path]);
+    const loggedIn = await invoke(installedEntry, ["login", agent.path]);
     assert.equal(loggedIn.code, 0, loggedIn.stderr);
     assert.equal(await readFile(join(agent.login, ".auth/token"), "utf8"), "synthetic-token");
 
@@ -184,14 +185,14 @@ test("the packed CLI installs and runs without source or development dependencie
       }),
     );
     const mockResults = join(root, "mock-results");
-    const mockRun = await runCliProcess(t, bin, ["run", mockCase, "--results-dir", mockResults], {
+    const mockRun = await runCliProcess(t, installedEntry, ["run", mockCase, "--results-dir", mockResults], {
       cwd,
       env: { ...env, TMPDIR: root },
       timeoutMs: 30_000,
     });
     assert.equal(mockRun.code, 0, mockRun.stdout + mockRun.stderr);
   }
-  const viewed = await invoke(bin, ["view", configPath]);
+  const viewed = await invoke(installedEntry, ["view", configPath]);
   const built = await invoke(join(project, "dist/cli.js"), ["view", configPath]);
   assert.equal(viewed.code, 0, viewed.stderr);
   assert.equal(viewed.stdout, built.stdout);
@@ -200,7 +201,7 @@ test("the packed CLI installs and runs without source or development dependencie
   assert.ok(!(await readdir(cwd)).includes("count"), "view executed the environment lookup command");
 
   const results = join(root, "results");
-  const run = await invoke(bin, ["run", configPath, "--results-dir", results]);
+  const run = await invoke(installedEntry, ["run", configPath, "--results-dir", results]);
   assert.equal(run.code, 0, run.stdout + run.stderr);
   const ids = await readdir(results);
   assert.equal(ids.length, 1);
@@ -291,7 +292,14 @@ export const checker = {
         checks: [{ $type: "parity", path, matches }],
       }),
     );
-    return await invoke(bin, ["run", extensionCase, "--extension-dir", extensions, "--results-dir", extensionResults]);
+    return await invoke(installedEntry, [
+      "run",
+      extensionCase,
+      "--extension-dir",
+      extensions,
+      "--results-dir",
+      extensionResults,
+    ]);
   };
   const extensionPass = await runExtension("hello");
   assert.equal(extensionPass.code, 0, extensionPass.stdout + extensionPass.stderr);
