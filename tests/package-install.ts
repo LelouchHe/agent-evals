@@ -61,7 +61,7 @@ test("the packed CLI installs and runs without source or development dependencie
     filename: string;
     files: { path: string }[];
   }
-  const metadata = JSON.parse(await npmCommand(["pack", "--json", "--pack-destination", root], project)) as
+  const metadata = JSON.parse(await npmCommand(["pack", "--silent", "--json", "--pack-destination", root], project)) as
     PackMetadata[] | Record<string, PackMetadata>;
   // npm 12 keys records by package name; earlier npm releases return an array.
   const packs = Array.isArray(metadata) ? metadata : Object.values(metadata);
