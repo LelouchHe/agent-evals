@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises";
 import type { Readable } from "node:stream";
-import { tmpdir } from "node:os";
+import { tmpdir, type as osType } from "node:os";
 import { dirname, join } from "node:path";
 import { test } from "node:test";
 import { setTimeout as delay } from "node:timers/promises";
@@ -18,6 +18,7 @@ import { acpRunner } from "../src/runners/acp/index.ts";
 import { piRunner } from "../src/runners/pi/index.ts";
 import { makeAcpAgent } from "./helpers/acp-agent.ts";
 import { makeTempDir } from "./helpers/fake-pi-control.ts";
+import { isSandboxPlatformSupported } from "../src/platform/index.ts";
 
 const INPUT = "Check the tool declarations.";
 
@@ -44,7 +45,7 @@ const MOCKS = {
 
 test(
   "a shell mock answers an in-sandbox PATH call and records it outside the sandbox",
-  { skip: process.platform !== "darwin" },
+  { skip: !isSandboxPlatformSupported },
   async (t) => {
     const fixture = await makeAcpAgent(t, "mocks");
     const casePath = join(fixture.root, "case.yml");
@@ -357,7 +358,7 @@ checks:
 
 test(
   "a fixed result keeps stdout, stderr and the exit code separate in every combination",
-  { skip: process.platform !== "darwin" },
+  { skip: !isSandboxPlatformSupported },
   async (t) => {
     const root = await makeTempDir(t, "ae-mocks-streams-");
     const host = await startMockHost({
@@ -483,7 +484,7 @@ async function hostOptions(runRootDir: string): Promise<Omit<MockHostOptions, "s
 
 test(
   "pass runs the real command while a target without pass stays denied by absolute path",
-  { skip: process.platform !== "darwin" },
+  { skip: !isSandboxPlatformSupported },
   async (t) => {
     const fixture = await makeAcpAgent(t, "mocks-actions");
     const fixtureFiles = join(fixture.root, "fixture");
@@ -506,13 +507,13 @@ test(
         },
         runner: { $type: "acp", agent: "agent.yml" },
         checks: [
-          { $type: "file", path: "pass-out", matches: "/^Darwin\\n?$/" },
+          { $type: "file", path: "pass-out", matches: `/^${osType()}\\n?$/` },
           { $type: "file", path: "pass-status", matches: "/^0$/" },
           // pass keeps the real binary executable, so an absolute path still runs it.
-          { $type: "file", path: "abs-pass-out", matches: "/^Darwin\\n?$/" },
+          { $type: "file", path: "abs-pass-out", matches: `/^${osType()}\\n?$/` },
           { $type: "file", path: "who-out", matches: "/^mocked-user\\n?$/" },
           { $type: "file", path: "abs-status", matches: "/^126$/" },
-          { $type: "file", path: "abs-err", matches: "Operation not permitted" },
+          { $type: "file", path: "abs-err", matches: "/Operation not permitted|Permission denied/" },
           { $type: "file", path: "script-pass-out", matches: "/^real inspect alpha\\n?$/" },
           { $type: "file", path: "script-return-out", matches: "/^mocked publish\\n?$/" },
           { $type: "file", path: "script-return-status", matches: "/^0$/" },
@@ -552,7 +553,7 @@ test(
 
 test(
   "pass:false refuses the call and keeps the real command denied in the sandbox",
-  { skip: process.platform !== "darwin" },
+  { skip: !isSandboxPlatformSupported },
   async (t) => {
     const fixture = await makeAcpAgent(t, "mocks-refuse");
     const fixtureFiles = join(fixture.root, "fixture");
@@ -577,7 +578,7 @@ test(
           { $type: "file", path: "false-out", matches: "/^$/" },
           // The target cannot pass, so its real binary stays denied by absolute path.
           { $type: "file", path: "abs-status", matches: "/^126$/" },
-          { $type: "file", path: "abs-err", matches: "Operation not permitted" },
+          { $type: "file", path: "abs-err", matches: "/Operation not permitted|Permission denied/" },
           { $type: "file", path: "script-status", matches: "/^126$/" },
           { $type: "file", path: "script-out", matches: "/^scripts/only.sh: Operation not permitted\\n?$/" },
         ],

@@ -1,4 +1,4 @@
-import { execFile } from "node:child_process";
+import { spawn } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { parseEnv } from "node:util";
@@ -85,26 +85,82 @@ async function runLookupCommand(
   let stdout: string;
   try {
     stdout = await new Promise<string>((resolve, reject) => {
-      execFile(
-        "/bin/sh",
-        ["-c", command],
-        {
-          cwd,
-          env: process.env,
-          encoding: "utf8",
-          timeout: COMMAND_TIMEOUT_MS,
-          maxBuffer: COMMAND_MAX_OUTPUT_BYTES,
-          signal,
-          killSignal: "SIGKILL",
-        },
-        (error, output) => {
-          if (error === null) {
-            resolve(output);
-          } else {
-            reject(error);
+      // Spawn in its own process group so abort/timeout kills the shell and any direct child
+      // regardless of whether `/bin/sh` exec-optimizes simple commands (dash vs bash).
+      const child = spawn("/bin/sh", ["-c", command], {
+        cwd,
+        env: process.env,
+        stdio: ["ignore", "pipe", "pipe"],
+        detached: true,
+      });
+      const chunks: Buffer[] = [];
+      let bytes = 0;
+      let settled = false;
+      let timedOut = false;
+      let aborted = false;
+
+      const killGroup = (): void => {
+        if (child.pid !== undefined) {
+          try {
+            process.kill(-child.pid, "SIGKILL");
+          } catch {
+            // Already exited.
           }
-        },
-      );
+        }
+      };
+
+      const finish = (fn: () => void): void => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        signal?.removeEventListener("abort", onAbort);
+        fn();
+      };
+
+      const onAbort = (): void => {
+        aborted = true;
+        killGroup();
+      };
+
+      const timer = setTimeout(() => {
+        timedOut = true;
+        killGroup();
+      }, COMMAND_TIMEOUT_MS);
+
+      signal?.addEventListener("abort", onAbort, { once: true });
+
+      const onData = (chunk: Buffer, collect: boolean): void => {
+        bytes += chunk.length;
+        if (bytes > COMMAND_MAX_OUTPUT_BYTES) {
+          killGroup();
+          finish(() =>
+            reject(Object.assign(new Error("maxBuffer exceeded"), { code: "ERR_CHILD_PROCESS_STDIO_MAXBUFFER" })),
+          );
+          return;
+        }
+        if (collect) chunks.push(chunk);
+      };
+
+      child.stdout.on("data", (chunk: Buffer) => onData(chunk, true));
+      child.stderr.on("data", (chunk: Buffer) => onData(chunk, false));
+      child.on("error", (error) => {
+        finish(() => reject(error));
+      });
+      child.on("close", (code, exitSignal) => {
+        finish(() => {
+          if (aborted) {
+            reject(Object.assign(new Error("aborted"), { code: "ABORT_ERR" }));
+          } else if (timedOut) {
+            reject(Object.assign(new Error("timed out"), { killed: true }));
+          } else if (code === 0) {
+            resolve(Buffer.concat(chunks).toString("utf8"));
+          } else if (code !== null) {
+            reject(Object.assign(new Error("non-zero exit"), { code }));
+          } else {
+            reject(Object.assign(new Error("signalled"), { signal: exitSignal ?? "SIGKILL" }));
+          }
+        });
+      });
     });
   } catch (error) {
     throw classifyCommandError(name, error, signal);

@@ -8,6 +8,7 @@ import { test } from "node:test";
 import { parse, stringify } from "yaml";
 import { runCliProcess } from "./helpers/cli-process.ts";
 import { createFakePi, makeTempDir } from "./helpers/fake-pi-control.ts";
+import { isSandboxPlatformSupported } from "../src/platform/index.ts";
 import { makeAcpAgent } from "./helpers/acp-agent.ts";
 
 // Deliberately separate from *.test.ts: npm run test:package performs an actual
@@ -123,7 +124,7 @@ test("the packed CLI installs and runs without source or development dependencie
       env: { ...env, TMPDIR: runtime },
       timeoutMs: 30_000,
     });
-  if (process.platform === "darwin") {
+  if (isSandboxPlatformSupported) {
     const agent = await makeAcpAgent(t);
     const queried = await invoke(bin, ["config", agent.path]);
     assert.equal(queried.code, 0, queried.stderr);

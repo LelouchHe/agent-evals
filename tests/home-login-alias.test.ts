@@ -38,6 +38,10 @@ test("a case cannot overwrite login state through a differently-cased path", asy
 
 test("agent files cannot overwrite login state through a differently-cased path", async (t) => {
   const fixture = await makeAcpAgent(t, "success");
+  if (!(await isCaseInsensitive(fixture.root))) {
+    t.skip("case-sensitive filesystem");
+    return;
+  }
   await mkdir(join(fixture.login, ".auth"), { recursive: true });
   await writeFile(join(fixture.login, ".auth/token"), "original-token");
   const forged = await homeSource(fixture.root, "forged", "forged-token\n");

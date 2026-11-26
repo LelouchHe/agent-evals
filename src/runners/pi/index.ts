@@ -4,7 +4,7 @@ import { z } from "zod";
 import { ConfigError, errorMessage, resolveAuthoringAsset } from "../../engine/config.ts";
 import { authoringCopyFilter } from "../../engine/files.ts";
 import { nonEmptyTrimmedString } from "../../engine/params.ts";
-import { assertSeatbeltAvailable } from "../../platform/macos/policy.ts";
+import { assertSandboxAvailable } from "../../platform/index.ts";
 import type { Runner, RunnerContext, RunnerDefinition, RunnerOutcome } from "../../engine/registry.ts";
 import { thinkingSchema } from "./params.ts";
 import { invokePi, resolvePiExecutable } from "./session.ts";
@@ -26,7 +26,7 @@ export const piRunner: RunnerDefinition<PiRunnerParams> = {
   async create(params, context) {
     await resolvePiExecutable(params.executable);
     await assertSkillsAvailable(params.skills, context.authoringDir);
-    assertSeatbeltAvailable();
+    assertSandboxAvailable();
     return new PiRunner(params, context.authoringDir);
   },
 };

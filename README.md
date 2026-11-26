@@ -5,14 +5,14 @@
 
 A toolkit for evaluating AI agent systems on the real CLI and harness layer.
 
-Requirements: macOS with `sandbox-exec` and Node.js 24+. The package declares `os: darwin`, so npm refuses to install it on another platform; the CLI is published as `@lelouchhe/agent-evals`, and a run additionally needs an invocation `.env` and prepared harness directories, per [Setup](https://github.com/LelouchHe/agent-evals/blob/main/docs/setup.md). Version 0.1.1 is the first published state — the toolkit, not a finished instrument; [Roadmap](https://github.com/LelouchHe/agent-evals/blob/main/docs/roadmap.md) lists what is still open.
+Requirements: Node.js 24+ on macOS (`sandbox-exec`) or Linux (`bubblewrap` / `bwrap` with unprivileged user namespaces). The package declares `os: ["darwin", "linux"]`; the CLI is published as `@lelouchhe/agent-evals`, and a run additionally needs an invocation `.env` and prepared harness directories, per [Setup](https://github.com/LelouchHe/agent-evals/blob/main/docs/setup.md). [Roadmap](https://github.com/LelouchHe/agent-evals/blob/main/docs/roadmap.md) lists what is still open.
 
 > **Status: pre-1.0.** Breaking changes ship in a minor release until 1.0.
 
 ## Why Agent Evals
 
 - **Evaluate the whole agent system, not a bare model API.** Outcomes depend on the model _plus_ its harness, skills, instructions and tool loop. One generic [ACP runner](https://github.com/LelouchHe/agent-evals/blob/main/docs/configuration.md#acp-runner-type-acp) drives unmodified [Pi](https://github.com/LelouchHe/agent-evals/blob/main/examples/agents/pi.yml), [Claude Code](https://github.com/LelouchHe/agent-evals/blob/main/examples/agents/claude.yml) and [GitHub Copilot CLI](https://github.com/LelouchHe/agent-evals/blob/main/examples/agents/copilot.yml) side by side, so changing a skill, instruction, flag or harness is a controlled experiment.
-- **Host-native OS sandboxing, not Linux containers.** Each run executes on the host under macOS Seatbelt in its own run root with a private `HOME` and workspace ([layout](https://github.com/LelouchHe/agent-evals/blob/main/docs/setup.md#how-isolated-harness-homes-work)). Host toolchains and platform behavior stay real, while operator dotfiles, login keychains, rubrics and check-time acceptance tests stay unreachable to the agent.
+- **Host-native OS sandboxing, not Linux containers.** Each run executes on the host under macOS Seatbelt or Linux `bubblewrap` in its own run root with a private `HOME` and workspace ([layout](https://github.com/LelouchHe/agent-evals/blob/main/docs/setup.md#how-isolated-harness-homes-work)). Host toolchains and platform behavior stay real, while operator dotfiles, login keychains, rubrics and check-time acceptance tests stay unreachable to the agent.
 - **Three evidence sources, deterministic first.** Checks read workspace side effects (`file`, sandboxed `shell`), host-recorded calls to [mocked commands](https://github.com/LelouchHe/agent-evals/blob/main/docs/mocks.md) (`mock`) and the run's trace (`trace`), with an LLM `judge` only where qualitative judgment is needed. A `noop` baseline runner catches checks that pass without an agent.
 
 ## What a Case Looks Like

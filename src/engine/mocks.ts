@@ -4,6 +4,7 @@ import { createServer, type Server, type Socket } from "node:net";
 import { basename, dirname, join, relative, sep } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { tmpdir } from "node:os";
+import { fileURLToPath } from "node:url";
 import { ConfigError, errorMessage, type MockAction, type ShellMocks } from "./config.ts";
 import { compileShellMocks, matchCall, type CompiledRules, type CompiledShellMocks } from "./mock-match.ts";
 import type { MockRecord, MockWiring } from "./registry.ts";
@@ -23,6 +24,7 @@ const EMPTY = Buffer.alloc(0);
 // reply from a single line: capturing the reply would strip the trailing newlines that make an
 // empty stdout or stderr distinguishable. The name it is executed under selects the target.
 const FORWARDER_ASSET = new URL("./forwarder.sh", import.meta.url);
+const FORWARDER_CLIENT = fileURLToPath(new URL("./forwarder-client.mjs", import.meta.url));
 
 export interface MockOutcome {
   /** Every recorded call, in arrival order. */
@@ -72,7 +74,20 @@ export async function startMockHost(options: MockHostOptions): Promise<MockHost>
   // The forwarder canonicalises its own path, so identity comparisons use the real directory.
   const forwarderRoot = await realpath(forwarderDir);
 
+  const nodeExecutable = await realpath(process.execPath);
+  const nodeDirectory = dirname(nodeExecutable);
+  const clientPath = await realpath(FORWARDER_CLIENT);
+  const readableRoots = [
+    ...new Set([
+      nodeDirectory,
+      ...(basename(nodeDirectory) === "bin" ? [dirname(nodeDirectory)] : []),
+      dirname(clientPath),
+    ]),
+  ];
+
   const forwarder = (await readFile(FORWARDER_ASSET, "utf8"))
+    .replace("__NODE__", quote(nodeExecutable))
+    .replace("__CLIENT__", quote(clientPath))
     .replace("__BINDIR__", quote(forwarderRoot))
     .replace("__SOCKET__", quote(socketPath))
     .replace("__FAULT__", quote(faultPath));
@@ -86,7 +101,12 @@ export async function startMockHost(options: MockHostOptions): Promise<MockHost>
     }
   }
 
-  const wiring: MockWiring = { forwarderDir, socketPath, denyTargets: denyTargetsOf(options.shell) };
+  const wiring: MockWiring = {
+    forwarderDir,
+    socketPath,
+    denyTargets: denyTargetsOf(options.shell),
+    readableRoots,
+  };
   const records: MockRecord[] = [];
   const faults: string[] = [];
   /** Process-group leaders still owning descendants we must not leave behind. */

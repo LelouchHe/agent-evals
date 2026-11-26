@@ -1,35 +1,16 @@
-import { spawn, type ChildProcess } from "node:child_process";
+import { spawn } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import type { Readable } from "node:stream";
 import { setTimeout as delay } from "node:timers/promises";
-import { sandboxExecutablePath, sandboxLaunchCommand, writeSeatbeltPolicy, type SandboxPolicy } from "./policy.ts";
+import type { SpawnSupervisedOptions, SupervisedProcess } from "../types.ts";
+import { sandboxExecutablePath, sandboxLaunchCommand, writeSeatbeltPolicy } from "./policy.ts";
+
+export type { SupervisedProcess };
 
 const SUPERVISOR_ASSET = new URL("./supervisor.sh", import.meta.url);
 
-export interface SupervisedProcess {
-  readonly child: ChildProcess;
-  /** Native workload result, not the supervisor's intentional SIGKILL exit. */
-  readonly completion: Promise<number>;
-  readonly stop: () => Promise<void>;
-  /**
-   * The workload's private report pipe at FD 5, present only when requested. FD 5 is not a
-   * standard stream, so it stays out of the workload's own output; `spawn` closes it for the
-   * workload's children, so untrusted descendants cannot write it.
-   */
-  readonly report?: Readable;
-}
-
 /** Start a sandbox-wide-cleanup supervisor; never execute its program on the host. */
-export async function spawnSupervised(options: {
-  readonly policy: SandboxPolicy;
-  readonly policyDirectory: string;
-  readonly command: readonly [string, ...string[]];
-  readonly cwd: string;
-  readonly env: NodeJS.ProcessEnv;
-  readonly interactive: boolean;
-  /** Add a private report pipe at FD 5 for the workload, exposed as `report`. */
-  readonly report?: boolean;
-}): Promise<SupervisedProcess> {
+export async function spawnSupervised(options: SpawnSupervisedOptions): Promise<SupervisedProcess> {
   const executable = sandboxExecutablePath();
   const [policyPath, supervisor] = await Promise.all([
     writeSeatbeltPolicy(options.policyDirectory, options.policy),

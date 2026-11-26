@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { createPiProcess, resolvePiExecutable, stopPiSession } from "../src/runners/pi/session.ts";
 import { makeTempDir } from "./helpers/fake-pi-control.ts";
+import { isSandboxPlatformSupported } from "../src/platform/index.ts";
 
 async function waitDead(pid: number, timeoutMs = 5_000): Promise<boolean> {
   const deadline = performance.now() + timeoutMs;
@@ -21,7 +22,7 @@ async function waitDead(pid: number, timeoutMs = 5_000): Promise<boolean> {
 
 test(
   "real Pi RPC bash cannot make the evaluator signal an unrelated external process group",
-  { skip: process.platform !== "darwin", timeout: 30_000 },
+  { skip: !isSandboxPlatformSupported, timeout: 30_000 },
   async (t) => {
     let executable: string;
     try {

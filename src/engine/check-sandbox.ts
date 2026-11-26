@@ -5,8 +5,7 @@ import { errorMessage } from "./config.ts";
 import { stageCheckFiles } from "./files.ts";
 import type { CheckSandbox, CheckSandboxOutcome } from "./registry.ts";
 import { siblingRuntimeModule } from "./runtime-assets.ts";
-import { SYSTEM_PATH } from "../platform/macos/policy.ts";
-import { spawnSupervised, type SupervisedProcess } from "../platform/macos/supervise.ts";
+import { SYSTEM_PATH, spawnSupervised, type SupervisedProcess } from "../platform/index.ts";
 
 /** How much of a program's combined output a check may keep as its reason. */
 const MAX_OUTPUT_LENGTH = 4_096;

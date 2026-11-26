@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { stringify } from "yaml";
+import { isSandboxPlatformSupported } from "../src/platform/index.ts";
 import { runCliProcess } from "./helpers/cli-process.ts";
 import { createFakePi, makeTempDir } from "./helpers/fake-pi-control.ts";
 
@@ -50,7 +51,7 @@ test("package metadata and built runtime assets point at the sole CLI implementa
     scripts?: Record<string, string>;
   };
   assert.equal(pkg.name, "@lelouchhe/agent-evals");
-  assert.deepEqual(pkg.os, ["darwin"]);
+  assert.deepEqual(pkg.os, ["darwin", "linux"]);
   assert.equal(pkg.bin?.["agent-evals"], "dist/cli.js");
   assert.equal(pkg.scripts?.eval, "node dist/cli.js");
   assert.deepEqual(pkg.files, ["dist", ".env.example"]);
@@ -69,6 +70,7 @@ test("package metadata and built runtime assets point at the sole CLI implementa
   assert.ok(cli.startsWith("#!/usr/bin/env node\n"), "dist/cli.js must keep its executable shebang");
   for (const asset of [
     "dist/engine/check-runner.js",
+    "dist/engine/forwarder-client.mjs",
     "dist/engine/forwarder.sh",
     "dist/engine/regex.js",
     "dist/engine/runtime-assets.js",
@@ -209,7 +211,7 @@ async function run(command: string, args: readonly string[], cwd: string): Promi
 
 test(
   "the packed artifact carries the forwarder its own host loads",
-  { skip: process.platform !== "darwin" },
+  { skip: !isSandboxPlatformSupported },
   async (t) => {
     const packDir = await makeTempDir(t, "ae-pack-");
     await run("npm", ["pack", "--ignore-scripts", "--pack-destination", packDir], root);

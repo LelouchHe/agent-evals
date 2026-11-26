@@ -2,6 +2,7 @@ import { constants, type Stats } from "node:fs";
 import { lstat, open, readdir, realpath } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, posix, relative, resolve, sep } from "node:path";
 import { ConfigError, errorMessage } from "./config.ts";
+import { caseInsensitivePaths } from "../platform/index.ts";
 
 /** Largest file a check will read. Checks stay bounded and predictable. */
 export const MAX_CHECK_BYTES = 1024 * 1024;
@@ -333,5 +334,5 @@ function normalizeProtectedPath(path: string): string {
   if (cleaned.length === 0) return "";
   const normalized = posix.normalize(cleaned).replace(/\/+$/u, "");
   if (normalized === ".") return "";
-  return process.platform === "darwin" ? normalized.toLowerCase() : normalized;
+  return caseInsensitivePaths ? normalized.toLowerCase() : normalized;
 }

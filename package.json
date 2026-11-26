@@ -74,6 +74,7 @@
     "access": "public"
   },
   "os": [
-    "darwin"
+    "darwin",
+    "linux"
   ]
 }

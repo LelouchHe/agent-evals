@@ -5,10 +5,11 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { createPiProcess, resolvePiExecutable, stopPiSession } from "../src/runners/pi/session.ts";
 import { makeTempDir } from "./helpers/fake-pi-control.ts";
+import { isSandboxPlatformSupported } from "../src/platform/index.ts";
 
 test(
   "real Pi RPC bash: the wrapper preserves command output and exit status",
-  { skip: process.platform !== "darwin", timeout: 30_000 },
+  { skip: !isSandboxPlatformSupported, timeout: 30_000 },
   async (t) => {
     let executable: string;
     try {
@@ -48,7 +49,7 @@ test(
 
 test(
   "real Pi RPC bash: a detached background process is terminated before the command returns",
-  { skip: process.platform !== "darwin", timeout: 30_000 },
+  { skip: !isSandboxPlatformSupported, timeout: 30_000 },
   async (t) => {
     let executable: string;
     try {
@@ -120,7 +121,7 @@ test(
 
 test(
   "real Pi RPC bash: stopping the session terminates an active wrapper shell group",
-  { skip: process.platform !== "darwin", timeout: 30_000 },
+  { skip: !isSandboxPlatformSupported, timeout: 30_000 },
   async (t) => {
     let executable: string;
     try {
@@ -199,7 +200,7 @@ test(
 
 test(
   "real Pi RPC bash: early Pi death still leaves tracked shell groups for cleanup",
-  { skip: process.platform !== "darwin", timeout: 30_000 },
+  { skip: !isSandboxPlatformSupported, timeout: 30_000 },
   async (t) => {
     let executable: string;
     try {

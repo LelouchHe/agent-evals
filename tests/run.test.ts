@@ -422,37 +422,43 @@ test("integration: two files entries producing one path fail the run before the 
   assert.deepEqual(await readdir(tempParent), []);
 });
 
-test("integration: a replaced workspace root is rejected instead of reading outside evidence", async (t) => {
-  const outside = await makeTempDir(t, "ae-outside-root-");
-  await writeFile(join(outside, "hello.txt"), "outside-sentinel\n");
-  const runner = await createFakePi(t, "replace-root", outside);
-  const judge = await createFakePi(t, "judge-valid");
-  const { record, tempParent } = await runScenario(t, {
-    runnerExecutable: runner.executable,
-    judgeExecutable: judge.executable,
-    checks: [
-      { $type: "file", path: "hello.txt", exists: true },
-      { $type: "file", path: "hello.txt", matches: "outside-sentinel" },
-      { $type: "file", path: "hello.txt", changed: false },
-      {
-        $type: "judge",
-        runner: { $type: "pi", model: "test/judge-model", executable: judge.executable },
-        files: ["hello.txt"],
-        rubric: ["hello.txt exists"],
-      },
-    ],
-  });
+// On Linux, bwrap bind-mounts the workspace root, so renaming it from inside the sandbox
+// fails with EBUSY before reaching the post-run root check (unit-tested in workspace.test.ts).
+test(
+  "integration: a replaced workspace root is rejected instead of reading outside evidence",
+  { skip: process.platform !== "darwin" },
+  async (t) => {
+    const outside = await makeTempDir(t, "ae-outside-root-");
+    await writeFile(join(outside, "hello.txt"), "outside-sentinel\n");
+    const runner = await createFakePi(t, "replace-root", outside);
+    const judge = await createFakePi(t, "judge-valid");
+    const { record, tempParent } = await runScenario(t, {
+      runnerExecutable: runner.executable,
+      judgeExecutable: judge.executable,
+      checks: [
+        { $type: "file", path: "hello.txt", exists: true },
+        { $type: "file", path: "hello.txt", matches: "outside-sentinel" },
+        { $type: "file", path: "hello.txt", changed: false },
+        {
+          $type: "judge",
+          runner: { $type: "pi", model: "test/judge-model", executable: judge.executable },
+          files: ["hello.txt"],
+          rubric: ["hello.txt exists"],
+        },
+      ],
+    });
 
-  assert.equal(record.status, "error", `checks: ${JSON.stringify(record.checks)}`);
-  assert.equal(record.checks.length, 4);
-  assert.ok(
-    record.checks.every((check) => check.status === "error"),
-    JSON.stringify(record.checks),
-  );
-  assert.match(record.checks.map((check) => check.reason).join(" "), /root|replac|outside/i);
-  assert.equal(await readFile(join(outside, "hello.txt"), "utf8"), "outside-sentinel\n");
-  assert.deepEqual(await readdir(tempParent), []);
-});
+    assert.equal(record.status, "error", `checks: ${JSON.stringify(record.checks)}`);
+    assert.equal(record.checks.length, 4);
+    assert.ok(
+      record.checks.every((check) => check.status === "error"),
+      JSON.stringify(record.checks),
+    );
+    assert.match(record.checks.map((check) => check.reason).join(" "), /root|replac|outside/i);
+    assert.equal(await readFile(join(outside, "hello.txt"), "utf8"), "outside-sentinel\n");
+    assert.deepEqual(await readdir(tempParent), []);
+  },
+);
 
 test("integration: a final provider error is an execution error even with satisfied files", async (t) => {
   const runner = await createFakePi(t, "provider-error");

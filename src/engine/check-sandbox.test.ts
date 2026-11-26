@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { test, type TestContext } from "node:test";
 import { makeTempDir } from "../../tests/helpers/fake-pi-control.ts";
+import { isSandboxPlatformSupported } from "../platform/index.ts";
 import { createCheckSandbox } from "./check-sandbox.ts";
 import type { CheckSandboxOutcome } from "./registry.ts";
 
@@ -50,7 +51,7 @@ function alive(pid: number): boolean {
 test(
   "the check sandbox opens reads but restricts writes to the workspace and private directories",
   {
-    skip: process.platform !== "darwin",
+    skip: !isSandboxPlatformSupported,
   },
   async (t) => {
     const dirs = await setup(t);
@@ -76,7 +77,7 @@ test(
       const denied = await dirs.run(["/bin/sh", "-c", 'printf denied > "$1"', "sh", path]);
       assert.equal(denied.kind, "exited", label);
       assert.notEqual(denied.kind === "exited" ? denied.exitCode : 0, 0, label);
-      assert.match(denied.output, /Operation not permitted/, label);
+      assert.match(denied.output, /Operation not permitted|Read-only file system|Permission denied/, label);
     }
   },
 );
@@ -84,7 +85,7 @@ test(
 test(
   "the check sandbox passes only the operator PATH and private HOME and TMPDIR",
   {
-    skip: process.platform !== "darwin",
+    skip: !isSandboxPlatformSupported,
   },
   async (t) => {
     const dirs = await setup(t);
@@ -112,7 +113,7 @@ test(
 test(
   "the check sandbox denies network connections, loopback included",
   {
-    skip: process.platform !== "darwin",
+    skip: !isSandboxPlatformSupported,
   },
   async (t) => {
     const dirs = await setup(t);
@@ -125,21 +126,21 @@ test(
     const script = [
       "const net = require('node:net');",
       `const socket = net.connect({ host: '127.0.0.1', port: ${port} });`,
-      "socket.on('error', (error) => { console.log(error.code); process.exit(error.code === 'EPERM' ? 0 : 1); });",
+      "socket.on('error', (error) => { console.log(error.code); process.exit(['EPERM', 'ECONNREFUSED', 'ENETUNREACH'].includes(error.code) ? 0 : 1); });",
       "socket.on('connect', () => { console.log('connected'); process.exit(1); });",
       "setTimeout(() => { console.log('timeout'); process.exit(1); }, 5000);",
     ].join(" ");
     const outcome = await dirs.run([process.execPath, "-e", script]);
     assert.equal(outcome.kind, "exited", outcome.output);
     assert.equal(outcome.kind === "exited" ? outcome.exitCode : 1, 0, outcome.output);
-    assert.equal(outcome.output.trim(), "EPERM");
+    assert.match(outcome.output.trim(), /^(?:EPERM|ECONNREFUSED|ENETUNREACH)$/);
   },
 );
 
 test(
   "a program that cannot start, dies from a signal or overruns is an error outcome",
   {
-    skip: process.platform !== "darwin",
+    skip: !isSandboxPlatformSupported,
   },
   async (t) => {
     const dirs = await setup(t);
@@ -191,7 +192,7 @@ test(
 test(
   "ordinary exit codes stay exits while a real signal is reported as signalled",
   {
-    skip: process.platform !== "darwin",
+    skip: !isSandboxPlatformSupported,
   },
   async (t) => {
     const dirs = await setup(t);
@@ -214,7 +215,7 @@ test(
 test(
   "a file that exists but cannot be executed is a start failure, not an exit status",
   {
-    skip: process.platform !== "darwin",
+    skip: !isSandboxPlatformSupported,
   },
   async (t) => {
     const dirs = await setup(t);
@@ -232,18 +233,20 @@ test(
     assert.equal(broken.kind, "failed", broken.output);
     assert.match(broken.kind === "failed" ? broken.reason : "", /ENOENT/);
 
-    // Without a shebang the kernel reports ENOEXEC instead of running it.
-    await writeFile(join(dirs.workspace, "no-shebang.sh"), "exit 0\n", { mode: 0o755 });
-    const noShebang = await dirs.run(["./no-shebang.sh"]);
-    assert.equal(noShebang.kind, "failed", noShebang.output);
-    assert.match(noShebang.kind === "failed" ? noShebang.reason : "", /ENOEXEC/);
+    // Without a shebang macOS reports ENOEXEC; Linux glibc execvp falls back to /bin/sh per POSIX.
+    if (process.platform === "darwin") {
+      await writeFile(join(dirs.workspace, "no-shebang.sh"), "exit 0\n", { mode: 0o755 });
+      const noShebang = await dirs.run(["./no-shebang.sh"]);
+      assert.equal(noShebang.kind, "failed", noShebang.output);
+      assert.match(noShebang.kind === "failed" ? noShebang.reason : "", /ENOEXEC/);
+    }
   },
 );
 
 test(
   "relative and empty PATH entries resolve from the workspace, not the engine's directory",
   {
-    skip: process.platform !== "darwin",
+    skip: !isSandboxPlatformSupported,
   },
   async (t) => {
     const dirs = await setup(t);
@@ -277,7 +280,7 @@ test(
 test(
   "a background child cannot forge or delay the check report",
   {
-    skip: process.platform !== "darwin",
+    skip: !isSandboxPlatformSupported,
   },
   async (t) => {
     const dirs = await setup(t);
@@ -325,7 +328,7 @@ test(
 test(
   "staged check files are placed into the workspace before the program runs",
   {
-    skip: process.platform !== "darwin",
+    skip: !isSandboxPlatformSupported,
   },
   async (t) => {
     const dirs = await setup(t);
@@ -344,7 +347,7 @@ test(
 test(
   "staged check files copy directory trees and parent-relative sources",
   {
-    skip: process.platform !== "darwin",
+    skip: !isSandboxPlatformSupported,
   },
   async (t) => {
     const dirs = await setup(t);
@@ -364,7 +367,7 @@ test(
 test(
   "staged check files honour the source directory's .agentevalsignore",
   {
-    skip: process.platform !== "darwin",
+    skip: !isSandboxPlatformSupported,
   },
   async (t) => {
     const dirs = await setup(t);
@@ -386,7 +389,7 @@ test(
 test(
   "a destination leaf symlink is replaced inside the sandbox instead of written through",
   {
-    skip: process.platform !== "darwin",
+    skip: !isSandboxPlatformSupported,
   },
   async (t) => {
     const dirs = await setup(t);
@@ -414,7 +417,7 @@ test(
 test(
   "an ancestor symlink is refused inside the sandbox and the outside stays untouched",
   {
-    skip: process.platform !== "darwin",
+    skip: !isSandboxPlatformSupported,
   },
   async (t) => {
     for (const inside of [false, true]) {
@@ -439,7 +442,7 @@ test(
 test(
   "a directory where a staged file goes is a placement error",
   {
-    skip: process.platform !== "darwin",
+    skip: !isSandboxPlatformSupported,
   },
   async (t) => {
     const dirs = await setup(t);
@@ -458,7 +461,7 @@ test(
 test(
   "the untrusted program cannot write the engine's staged tree",
   {
-    skip: process.platform !== "darwin",
+    skip: !isSandboxPlatformSupported,
   },
   async (t) => {
     const dirs = await setup(t);
@@ -477,14 +480,14 @@ test(
     );
     assert.equal(outcome.kind, "exited", outcome.output);
     assert.notEqual(outcome.kind === "exited" ? outcome.exitCode : 0, 0);
-    assert.match(outcome.output, /Operation not permitted/);
+    assert.match(outcome.output, /Operation not permitted|Read-only file system|Permission denied/);
   },
 );
 
 test(
   "an already-aborted check neither stages nor launches",
   {
-    skip: process.platform !== "darwin",
+    skip: !isSandboxPlatformSupported,
   },
   async (t) => {
     const dirs = await setup(t);

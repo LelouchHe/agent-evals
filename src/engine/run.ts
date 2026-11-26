@@ -2,7 +2,7 @@ import { randomBytes } from "node:crypto";
 import { copyFile, cp, lstat, mkdir, readdir, realpath, rm, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { assertSeatbeltAvailable } from "../platform/macos/policy.ts";
+import { assertSandboxAvailable } from "../platform/index.ts";
 import {
   ConfigError,
   errorMessage,
@@ -639,7 +639,7 @@ async function prepareImplementations(
     validateFiles: (files) => validateCheckFiles(files, request.case.dir, "check files", signal),
     ...(mockTargets === undefined ? {} : { mockTargets }),
     runnerSupportsHome,
-    validateCheckPlatform: async () => assertSeatbeltAvailable(),
+    validateCheckPlatform: async () => assertSandboxAvailable(),
     createRunner,
   };
   const { runner } = await createRunner();

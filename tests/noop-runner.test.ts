@@ -14,6 +14,7 @@ import { runEvaluation } from "../src/engine/run.ts";
 import { noopRunner } from "../src/runners/noop/index.ts";
 import { piRunner } from "../src/runners/pi/index.ts";
 import { createFakePi, makeTempDir } from "./helpers/fake-pi-control.ts";
+import { isSandboxPlatformSupported } from "../src/platform/index.ts";
 
 async function runNoop(
   t: TestContext,
@@ -64,7 +65,7 @@ test("the noop runner takes no parameters", () => {
 test(
   "the noop runner completes with mocks, an empty trace and no usage",
   {
-    skip: process.platform !== "darwin",
+    skip: !isSandboxPlatformSupported,
   },
   async (t) => {
     const judge = await createFakePi(t, "judge-valid");
@@ -105,7 +106,7 @@ test(
 test(
   "a case that needs the agent fails under noop while restraint still holds",
   {
-    skip: process.platform !== "darwin",
+    skip: !isSandboxPlatformSupported,
   },
   async (t) => {
     const { record } = await runNoop(t, {
@@ -131,7 +132,7 @@ test(
 test(
   "the noop baseline's empty trace makes a message assertion an error, not a vacuous pass",
   {
-    skip: process.platform !== "darwin",
+    skip: !isSandboxPlatformSupported,
   },
   async (t) => {
     const { record } = await runNoop(t, {
@@ -153,7 +154,7 @@ test(
 test(
   "the fixture copy excludes a directory named by a directory-only pattern",
   {
-    skip: process.platform !== "darwin",
+    skip: !isSandboxPlatformSupported,
   },
   async (t) => {
     const { record } = await runNoop(

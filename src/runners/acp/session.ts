@@ -11,7 +11,7 @@ import {
 } from "@agentclientprotocol/sdk";
 import { Readable, Writable } from "node:stream";
 import { errorMessage } from "../../engine/config.ts";
-import type { SupervisedProcess } from "../../platform/macos/supervise.ts";
+import type { SupervisedProcess } from "../../platform/index.ts";
 
 /**
  * Initialize the agent, create one session in `cwd` and run `use` while the

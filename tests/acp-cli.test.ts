@@ -8,12 +8,13 @@ import { test } from "node:test";
 import { stringify } from "yaml";
 import { makeAcpAgent } from "./helpers/acp-agent.ts";
 import { runCliProcess } from "./helpers/cli-process.ts";
+import { isSandboxPlatformSupported } from "../src/platform/index.ts";
 
 const cli = join(import.meta.dirname, "../src/cli.ts");
 
 test(
   "config queries actual ACP values without prompting and copies back only original login files",
-  { skip: process.platform !== "darwin" },
+  { skip: !isSandboxPlatformSupported },
   async (t) => {
     const fixture = await makeAcpAgent(t);
     await mkdir(join(fixture.login, ".auth"), { recursive: true });
@@ -38,7 +39,7 @@ test(
 
 test(
   "login exports declared files from a first login, not arbitrary new HOME state",
-  { skip: process.platform !== "darwin" },
+  { skip: !isSandboxPlatformSupported },
   async (t) => {
     const fixture = await makeAcpAgent(t);
     const result = await runCliProcess(t, cli, ["login", fixture.path], {
@@ -56,7 +57,7 @@ test(
 
 test(
   "invalid configured directories are configuration errors before launching",
-  { skip: process.platform !== "darwin" },
+  { skip: !isSandboxPlatformSupported },
   async (t) => {
     const fixture = await makeAcpAgent(t);
     for (const [change, field] of [
@@ -80,7 +81,7 @@ test(
 
 test(
   "re-login failure remains visible when copy-back rejects mutated original credentials",
-  { skip: process.platform !== "darwin" },
+  { skip: !isSandboxPlatformSupported },
   async (t) => {
     const fixture = await makeAcpAgent(t, "mutate-failure");
     await mkdir(join(fixture.login, ".auth"), { recursive: true });
@@ -99,7 +100,7 @@ test(
 
 test(
   "failed re-login still preserves a refreshed original credential",
-  { skip: process.platform !== "darwin" },
+  { skip: !isSandboxPlatformSupported },
   async (t) => {
     const fixture = await makeAcpAgent(t, "refresh-failure");
     await mkdir(join(fixture.login, ".auth"), { recursive: true });
@@ -116,7 +117,7 @@ test(
 );
 
 for (const scenario of ["failure", "forgery", "symlink", "fifo"]) {
-  test(`login rejects ${scenario} without saving credentials`, { skip: process.platform !== "darwin" }, async (t) => {
+  test(`login rejects ${scenario} without saving credentials`, { skip: !isSandboxPlatformSupported }, async (t) => {
     const fixture = await makeAcpAgent(t, scenario);
     const outside = join(fixture.root, "outside-token");
     await writeFile(outside, "outside-secret");
@@ -144,7 +145,7 @@ for (const scenario of ["failure", "forgery", "symlink", "fifo"]) {
 
 test(
   "config denies deps writes and operator file reads while retaining refreshed login state",
-  { skip: process.platform !== "darwin" },
+  { skip: !isSandboxPlatformSupported },
   async (t) => {
     const fixture = await makeAcpAgent(t, "security");
     const outside = join(fixture.root, "operator-file");
@@ -171,7 +172,7 @@ test(
 
 test(
   "config reports ACP authentication requirements without a prompt",
-  { skip: process.platform !== "darwin" },
+  { skip: !isSandboxPlatformSupported },
   async (t) => {
     const fixture = await makeAcpAgent(t, "auth");
     const result = await runCliProcess(t, cli, ["config", fixture.path], {
@@ -186,7 +187,7 @@ test(
 
 test(
   "agent YAML shares invocation .env expansion, quoted literals, caching and declaring-file paths",
-  { skip: process.platform !== "darwin" },
+  { skip: !isSandboxPlatformSupported },
   async (t) => {
     const fixture = await makeAcpAgent(t);
     const definitions = join(fixture.root, "definitions");
@@ -253,7 +254,7 @@ test("helpers reject invalid schemas, YAML reuse and run-only flags before launc
 
 test(
   "helpers reject overlapping software/login roots and a run directory inside deps",
-  { skip: process.platform !== "darwin" },
+  { skip: !isSandboxPlatformSupported },
   async (t) => {
     const fixture = await makeAcpAgent(t);
     for (const [change, message] of [
@@ -278,7 +279,7 @@ for (const scenario of ["wait", "mutate-wait"]) {
     scenario === "wait"
       ? "login cancellation stops the workload without exporting files"
       : "re-login cancellation remains visible when original credentials become unsafe",
-    { skip: process.platform !== "darwin", timeout: 15000 },
+    { skip: !isSandboxPlatformSupported, timeout: 15000 },
     async (t) => {
       const fixture = await makeAcpAgent(t, scenario);
       if (scenario === "mutate-wait") {

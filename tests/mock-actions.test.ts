@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { mkdir, readFile, realpath, rm, stat, writeFile } from "node:fs/promises";
+import { type as osType } from "node:os";
 import { join } from "node:path";
 import type { Readable } from "node:stream";
 import { test } from "node:test";
@@ -419,7 +420,7 @@ test("a false rule refuses only its own calls while another rule can pass", asyn
 
   const passed = await call(join(server.wiring.forwarderDir, "uname"), ["-s"]);
   assert.equal(passed.status, 0);
-  assert.equal(passed.stdout.trim(), "Darwin");
+  assert.equal(passed.stdout.trim(), osType());
   await server.close();
 });
 

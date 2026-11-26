@@ -2,34 +2,13 @@ import { execFileSync } from "node:child_process";
 import { realpathSync } from "node:fs";
 import { open } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
+import type { CreateSandboxPolicyOptions, SandboxPolicy } from "../types.ts";
 
+export type { SandboxPolicy };
 export const SYSTEM_PATH = ["/usr/bin", "/bin", "/usr/sbin", "/sbin"] as const;
 
-export interface SandboxPolicy {
-  /** Read and write access. */
-  readonly writableRoots: readonly string[];
-  /** Read-only access. */
-  readonly readableRoots: readonly string[];
-  /**
-   * Read everything the host user can read, as the check sandbox does after the evaluated agent
-   * stopped. It replaces `readableRoots` for the read clauses.
-   */
-  readonly readAll?: boolean;
-  /** Read-only single files, such as a launcher script. */
-  readonly readableFiles?: readonly string[];
-  /** Executables the sandbox may not start, such as the real binary behind a mocked command. */
-  readonly denyExecutables?: readonly string[];
-  /** Interactive terminal device; allow termios mode changes, not arbitrary ioctl operations. */
-  readonly terminal?: string;
-  readonly allowNetwork: boolean;
-}
-
 /** Add macOS system access and current-terminal handling to caller-owned roots. */
-export function createSandboxPolicy(
-  options: Pick<SandboxPolicy, "writableRoots" | "readableRoots" | "allowNetwork" | "denyExecutables"> & {
-    readonly interactive: boolean;
-  },
-): SandboxPolicy {
+export function createSandboxPolicy(options: CreateSandboxPolicyOptions): SandboxPolicy {
   const terminal =
     options.interactive && process.stdin.isTTY
       ? execFileSync("/usr/bin/tty", { stdio: ["inherit", "pipe", "ignore"], encoding: "utf8" }).trim()
@@ -49,7 +28,8 @@ export function createSandboxPolicy(
       ...(options.allowNetwork ? ["/private/var/db/mds"] : []),
       ...options.readableRoots,
     ],
-    readableFiles: ["/var", "/etc"],
+    readableFiles: ["/var", "/etc", ...(options.readableFiles ?? [])],
+    ...(options.writableFiles === undefined ? {} : { writableFiles: options.writableFiles }),
     ...(options.denyExecutables === undefined ? {} : { denyExecutables: options.denyExecutables }),
     allowNetwork: options.allowNetwork,
     ...(terminal === undefined ? {} : { terminal }),
@@ -62,9 +42,10 @@ export function createSandboxPolicy(
  */
 export function renderSeatbeltPolicy(policy: SandboxPolicy): string {
   const writable = normalize(policy.writableRoots);
+  const writableFiles = normalize(policy.writableFiles ?? []);
   const readable = normalize([...policy.readableRoots, ...policy.writableRoots]);
   const terminals = policy.terminal === undefined ? [] : normalize([policy.terminal, "/dev/tty"]);
-  const files = normalize([...(policy.readableFiles ?? []), ...terminals]);
+  const files = normalize([...(policy.readableFiles ?? []), ...writableFiles, ...terminals]);
   const readClauses = [
     '(literal "/")',
     ...readable.map((path) => `(subpath ${quote(path)})`),
@@ -105,6 +86,7 @@ export function renderSeatbeltPolicy(policy: SandboxPolicy): string {
   const terminalClauses = terminals.map((path) => `(literal ${quote(path)})`);
   const writeClauses = [
     ...writable.map((path) => `(subpath ${quote(path)})`),
+    ...writableFiles.map((path) => `(literal ${quote(path)})`),
     ...terminalClauses,
     '(literal "/dev/null")',
   ];

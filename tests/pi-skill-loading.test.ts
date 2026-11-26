@@ -4,10 +4,11 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { resolvePiExecutable, createPiProcess } from "../src/runners/pi/session.ts";
 import { makeTempDir } from "./helpers/fake-pi-control.ts";
+import { isSandboxPlatformSupported } from "../src/platform/index.ts";
 
 test(
   "real Pi loads an explicit skill inside the isolated sandbox without a model call",
-  { skip: process.platform !== "darwin" },
+  { skip: !isSandboxPlatformSupported },
   async (t) => {
     let executable: string;
     try {
@@ -50,7 +51,7 @@ test(
   },
 );
 
-test("real Pi rejects malformed skill frontmatter", { skip: process.platform !== "darwin" }, async (t) => {
+test("real Pi rejects malformed skill frontmatter", { skip: !isSandboxPlatformSupported }, async (t) => {
   let executable: string;
   try {
     executable = await resolvePiExecutable("pi");
