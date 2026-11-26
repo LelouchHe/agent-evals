@@ -32,6 +32,7 @@ export {
   expectMockArgs,
   expectMockTarget,
   mockTargetIdentity,
+  type ImplementationRecord,
   type MockArgs,
   type MockArgument,
   type MockPattern,
