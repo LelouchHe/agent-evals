@@ -149,17 +149,17 @@ To prepare Pi on Windows and run the native Windows ACP example:
 ```powershell
 pwsh -NoProfile -File examples/agents/pi-setup.ps1 C:\agent-evals-home\pi
 # Add OPENCODE_API_KEY and PI_DEPS=C:\agent-evals-home\pi\deps to .env, then:
-npm run eval -- run examples/cases/deploy-runbook-windows/case.yml --case pi-with-skill
+agent-evals run examples/cases/deploy-runbook-windows/case.yml --case pi-with-skill
 ```
 
 ## Verify Readiness
 
-Check configuration resolution without credentials, run the offline `noop` baseline before spending tokens, and query each prepared harness's advertised models and options (`config` runs `initialize` and `session/new` inside the sandbox without sending a prompt):
+Check configuration resolution without credentials, run the offline `noop` baseline before spending tokens, and query each prepared harness's advertised models and options (`config` runs `initialize` and `session/new` inside the sandbox without sending a prompt; from a source checkout without a global install, substitute `npm run eval --` for `agent-evals`):
 
 ```sh
-npm run eval -- view examples/cases/deploy-runbook-posix/case.yml --case baseline
-npm run eval -- run examples/cases/deploy-runbook-posix/case.yml --case baseline # expected to fail positive checks
-npm run eval -- config examples/agents/pi.yml
-npm run eval -- config examples/agents/claude.yml
-npm run eval -- config examples/agents/copilot.yml
+agent-evals view examples/cases/deploy-runbook-posix/case.yml --case baseline
+agent-evals run examples/cases/deploy-runbook-posix/case.yml --case baseline # expected to fail positive checks
+agent-evals config examples/agents/pi.yml
+agent-evals config examples/agents/claude.yml
+agent-evals config examples/agents/copilot.yml
 ```

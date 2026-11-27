@@ -69,16 +69,15 @@ agent-evals --help
 
 ### Try the Worked Examples
 
-From a repository checkout, configure `.env` and prepare at least one harness ([Setup](https://github.com/LelouchHe/agent-evals/blob/main/docs/setup.md)), then run:
+The worked examples live under `examples/` in this repository. After configuring `.env` and preparing at least one harness ([Setup](https://github.com/LelouchHe/agent-evals/blob/main/docs/setup.md)), run them with `agent-evals` (or `npx @lelouchhe/agent-evals` without a global install):
 
 ```sh
-npm ci
 cp .env.example .env                        # fill in harness paths and keys (see docs/setup.md)
-npm run eval -- view examples/cases/deploy-runbook-posix/case.yml --case pi-with-skill
-npm run eval -- config examples/agents/pi.yml
-npm run eval -- run examples/cases/deploy-runbook-posix/case.yml --case pi-with-skill
-npm run eval -- run examples/cases/deploy-runbook-posix/case.yml --reps 3 --jobs 3 --retain on-failure --results-dir /tmp/deploy-runbook
-npm run eval -- report --matrix /tmp/deploy-runbook
+agent-evals view examples/cases/deploy-runbook-posix/case.yml --case pi-with-skill
+agent-evals config examples/agents/pi.yml
+agent-evals run examples/cases/deploy-runbook-posix/case.yml --case pi-with-skill
+agent-evals run examples/cases/deploy-runbook-posix/case.yml --reps 3 --jobs 3 --retain on-failure --results-dir /tmp/deploy-runbook
+agent-evals report --matrix /tmp/deploy-runbook
 ```
 
 Three worked examples cover the main workflows:
@@ -113,6 +112,8 @@ Delivered milestone records (`M1`–`M5`) are preserved under [`docs/archive/`](
 ## Development
 
 ```sh
+npm ci
+npm run eval -- --help # rebuild dist/ and run the CLI from a source checkout
 npm run check          # ESLint, Prettier, TypeScript, build, and deterministic model-free tests
 npm run test:package   # Pack tarball, install into an external prefix, and verify the installed CLI
 ```
