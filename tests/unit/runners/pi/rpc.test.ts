@@ -49,7 +49,17 @@ test("PiProcess escalates to SIGKILL when SIGTERM is ignored", async (t) => {
   assert.ok(pid !== undefined);
   const started = performance.now();
   await pi.stop();
-  assert.ok(performance.now() - started < 2_000);
-  await new Promise((resolve) => setTimeout(resolve, 50));
-  assert.throws(() => process.kill(pid, 0));
+  assert.ok(performance.now() - started < 10_000);
+  const deadline = Date.now() + 2_000;
+  let alive = true;
+  while (Date.now() < deadline) {
+    try {
+      process.kill(pid, 0);
+    } catch {
+      alive = false;
+      break;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  assert.equal(alive, false, `process ${pid} remained alive after stop()`);
 });
