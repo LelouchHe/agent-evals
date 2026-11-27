@@ -4,6 +4,14 @@ Requirements: Node.js 24+ on macOS (`/usr/bin/sandbox-exec`), Linux, WSL2 (`bubb
 
 ## Install the CLI
 
+Install the published npm package globally (or invoke it on demand with `npx`):
+
+```sh
+npm install -g @lelouchhe/agent-evals   # or: npx @lelouchhe/agent-evals
+agent-evals setup sandbox               # verify host sandbox (on Windows, run once as Administrator)
+agent-evals --help
+```
+
 From a source checkout (`npm run eval` rebuilds `dist/` first):
 
 ```sh
@@ -11,15 +19,15 @@ npm ci
 npm run eval -- --help
 ```
 
-To install the private package into a separate prefix (for example to run concurrent evaluations without rebuilding `dist/` underneath them):
+To install a local checkout build into a separate prefix (for example to run concurrent evaluations without rebuilding `dist/` underneath them):
 
 ```sh
-npm pack --pack-destination /tmp
-npm install --prefix /tmp/agent-evals-install /tmp/agent-evals-0.1.1.tgz
+TARBALL=$(npm pack --silent --pack-destination /tmp | tail -n 1)
+npm install --prefix /tmp/agent-evals-install "/tmp/$TARBALL"
 /tmp/agent-evals-install/node_modules/.bin/agent-evals --help
 ```
 
-Both entry points execute the same built `dist/cli.js`. The tarball includes built runtime assets, package metadata, `README.md`, `LICENSE` and `.env.example`, never source/tests/dev tooling or actual `.env` files. It is a Node.js package, not a standalone binary; installation does not require the source checkout, TypeScript, Husky or Git metadata.
+All entry points execute the same built `dist/cli.js`. The published tarball includes built runtime assets (including `dist/platform/windows/win-sandbox.exe` for native Windows), package metadata, `README.md`, `LICENSE` and `.env.example`, never source/tests/dev tooling or actual `.env` files. Installation does not require the source checkout, TypeScript, Husky or Git metadata.
 
 ## Credentials and `.env`
 
