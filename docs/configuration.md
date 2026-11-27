@@ -5,12 +5,13 @@ The run/view commands resolve one YAML file into one executable case. ACP prepar
 ## Commands
 
 ```sh
+agent-evals setup sandbox [--teardown]
 agent-evals config agent.yml
 agent-evals login agent.yml
-agent-evals view case.yml [--case name]
+agent-evals view case.yml [--case name] [--files]
 agent-evals run case.yml [--case name] [--reps n] [--jobs n] \
   [--retain none|on-failure|all] [--results-dir path] [--extension-dir path]
-agent-evals report results-dir...
+agent-evals report results-dir... [--matrix]
 ```
 
 The development form is `npm run eval -- <command>`; both entry points execute the same built CLI. Flags are parsed by Node's `util.parseArgs`: `--name=value`, separate option values, `--` before dash-prefixed positionals, `--version`/`-V`, and `--help`/`-h` are supported. Use `--case=-name` for a dash-prefixed case name.
@@ -299,7 +300,7 @@ Runs an author's program after the run and judges its exit status; use it for ou
 
 The program starts in the workspace root in the engine's check sandbox: open reads, writes only beneath the workspace and a private HOME and temporary directory, no network, and only `PATH`, `HOME` and `TMPDIR` in its environment (`PATH` is the operator's). It is supervised like the harness, so its whole process tree ends with the check. Exit `0` passes; any other exit fails with the tail of its output as the reason; a program that cannot start, dies from a signal or exceeds the check deadline (`timeoutMs`) is an error, not a failed judgment.
 
-The engine validates `files` when the case loads, and the check sandbox copies it into the live workspace just before the program starts, after the agent stopped, so the agent never saw those bytes during the run. Placed files stay for later checks and disappear with the run root; they are not part of the baseline. When the case loads, the engine checks that every source exists and that two entries do not produce the same file, so a missing source is a configuration error rather than a check result. Placement runs inside the check sandbox, so Seatbelt's write policy contains it even against a concurrent race. It also never follows a destination symlink: a symlinked ancestor is a check error, and anything at a file's destination is removed before the copy, so an agent-planted symlink or hard link cannot redirect the write outside the workspace. A directory where a file goes is a check error.
+The engine validates `files` when the case loads, and the check sandbox copies it into the live workspace just before the program starts, after the agent stopped, so the agent never saw those bytes during the run. Placed files stay for later checks and disappear with the run root; they are not part of the baseline. When the case loads, the engine checks that every source exists and that two entries do not produce the same file, so a missing source is a configuration error rather than a check result. Placement runs inside the check sandbox, so the sandbox's write policy contains it even against a concurrent race. It also never follows a destination symlink: a symlinked ancestor is a check error, and anything at a file's destination is removed before the copy, so an agent-planted symlink or hard link cannot redirect the write outside the workspace. A directory where a file goes is a check error.
 
 A shell check runs in the live workspace, in declaration order, so a `file` `changed: false` check that must see the agent's result unchanged belongs before it. Mocks are closed when checks run: a mocked `PATH` command is not on the check's `PATH`, and a mocked workspace script reaches only a closed host. The sandbox policy is fixed and has no case syntax; a `judge` runs its declared runner in its own run root instead, so its sandbox is that runner's.
 

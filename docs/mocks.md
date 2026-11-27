@@ -191,7 +191,7 @@ npm:
 - **Scalars are strings.** A YAML number is compared as its text, so `-n: 5` matches `-n 5`. A literal `true` or `false` must be quoted, since unquoted booleans mean required and forbidden.
 - **No `and`/`or`/`not` operators.** Entries written together must all hold; alternatives are a regex alternation or another rule, exclusion is `false` or an earlier rule.
 - **Options before the subcommand break the prefix.** `gh --repo foo/bar pr create` does not match `[pr, create]`; use a bare map, which gives up the order between those tokens.
-- **Ordered per target.** The first matching rule wins; a rule without `args` is the fallback. When no rule matches, the call is still recorded, the real command does not run, and the forwarder exits `126` with `<target>: Operation not permitted` on stderr — the shape of a Seatbelt denial, without naming mocks. An explicit `pass: false` rule refuses the same way.
+- **Ordered per target.** The first matching rule wins; a rule without `args` is the fallback. When no rule matches, the call is still recorded, the real command does not run, and the forwarder exits `126` with `<target>: Operation not permitted` on stderr — the shape of a sandbox denial, without naming mocks. An explicit `pass: false` rule refuses the same way.
 
 Not expressible yet: repeated options (`-e A=1 -e B=2`), exact argument lists (a bare `make`), combined short options (`-rf`) and regex flags.
 
@@ -270,7 +270,7 @@ The repository's [`deploy-runbook-posix`](../examples/cases/deploy-runbook-posix
 
 ## Current Limitations
 
-- **Only the `acp` runner exercises them**, and only inside its macOS Seatbelt sandbox; `noop` accepts `mocks` without calling them, and Linux is unsupported.
+- **Only the `acp` runner exercises them**, inside its host sandbox (macOS, Linux/WSL2, and native Windows); `noop` accepts `mocks` without calling them.
 - **`PATH` interception and denial are not a proof of absence.** A target with any `pass: true` rule keeps its real binary runnable, so an absolute-path call still runs it; the case can prove a `PATH` call, not that no other call happened. A target that cannot `pass` has its resolved real binary denied, which turns an absolute-path bypass into a failure.
 - **Only bare names and workspace files.** Shell builtins, harness-internal tools, `PATH` entries added by the agent, and a script executed from outside its declared workspace path are not covered.
 - **Standard input is not forwarded** to `return` or `run`; a mock downstream of a pipe answers without seeing the piped data. `pass` inherits it.

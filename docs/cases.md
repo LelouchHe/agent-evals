@@ -4,19 +4,19 @@ Treat a case like a test: arrange an environment, send input, observe what happe
 
 ## The Test Model
 
-| Testing concept    | Agent evaluation                                                                                            | Status                                    |
-| ------------------ | ----------------------------------------------------------------------------------------------------------- | ----------------------------------------- |
-| Input              | The user's prompts: the first message and any later turns.                                                  | First message only.                       |
-| Output             | The messages the agent returns to the user. A view of the trace, not a separate record.                     | ACP runner; `trace` `event: message`.     |
-| Trace              | How the agent ran: messages, reasoning, tool requests and results, skill loading, usage.                    | ACP runner; `trace` and `judge`.          |
-| Interactions       | Calls that reached a collaborator, recorded by its mock.                                                    | Shell mocks on `acp`; `mock` checks.      |
-| Side effects       | Changes to the environment: files, commands, network and other state.                                       | Files and commands.                       |
-| Fixture            | Fixed initial data: the workspace tree copied first, or user data a case places under `~/`.                 | `fixture`, `files` with `~/`.             |
-| Environment        | Everything the agent runs in: workspace, HOME, harness configuration (skills, settings), mocks and sandbox. | Workspace, HOME, harness files, Seatbelt. |
-| Setup / teardown   | Each environment component prepares and removes itself; YAML declares components, not procedures.           | Built-in components only.                 |
-| Mock               | A case-owned substitute for a collaborator that controls its responses and records calls to it.             | `mocks.shell`: return, run, pass.         |
-| Assertion          | A check of observed evidence.                                                                               | `checks`.                                 |
-| Parameterized test | Named cases that share common fields.                                                                       | `cases`.                                  |
+| Testing concept    | Agent evaluation                                                                                            | Status                                        |
+| ------------------ | ----------------------------------------------------------------------------------------------------------- | --------------------------------------------- |
+| Input              | The user's prompts: the first message and any later turns.                                                  | First message only.                           |
+| Output             | The messages the agent returns to the user. A view of the trace, not a separate record.                     | ACP runner; `trace` `event: message`.         |
+| Trace              | How the agent ran: messages, reasoning, tool requests and results, skill loading, usage.                    | ACP runner; `trace` and `judge`.              |
+| Interactions       | Calls that reached a collaborator, recorded by its mock.                                                    | Shell mocks on `acp`; `mock` checks.          |
+| Side effects       | Changes to the environment: files, commands, network and other state.                                       | Files and commands.                           |
+| Fixture            | Fixed initial data: the workspace tree copied first, or user data a case places under `~/`.                 | `fixture`, `files` with `~/`.                 |
+| Environment        | Everything the agent runs in: workspace, HOME, harness configuration (skills, settings), mocks and sandbox. | Workspace, HOME, harness files, host sandbox. |
+| Setup / teardown   | Each environment component prepares and removes itself; YAML declares components, not procedures.           | Built-in components only.                     |
+| Mock               | A case-owned substitute for a collaborator that controls its responses and records calls to it.             | `mocks.shell`: return, run, pass.             |
+| Assertion          | A check of observed evidence.                                                                               | `checks`.                                     |
+| Parameterized test | Named cases that share common fields.                                                                       | `cases`.                                      |
 
 ### Anything Can Be the Subject
 

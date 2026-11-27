@@ -51,7 +51,7 @@ The normalized event schema and trace retention layout are not defined yet. No t
 
 Keep evaluation on the host OS under its own sandbox rather than making Linux containers the universal environment. Platform/runtime behavior, such as a harness using PowerShell instead of Bash, is itself relevant to evaluation.
 
-The intended coverage is macOS, Linux and Windows, beginning with macOS and then Linux. Each backend must state its actual capabilities and fail closed when a required restriction is unavailable; common test inputs/checks do not imply identical guarantees.
+macOS (Seatbelt), Linux/WSL2 (`bubblewrap`), and native Windows (dedicated sandbox users + Restricted Token + Job Object + Firewall) are supported; see [Platforms](platforms.md). Each backend states its actual capabilities and fails closed when a required restriction is unavailable; common test inputs/checks do not imply identical guarantees.
 
 ## Open Questions
 
